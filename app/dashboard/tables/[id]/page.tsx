@@ -6,6 +6,11 @@ import { useState, useRef, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { CSVExport } from "@/components/csv-export"
+import { CSVImport } from "@/components/csv-import"
+import { CompleteExport } from "@/components/complete-export"
+import { CompleteImport } from "@/components/complete-import"
+import { TextFormattingToolbar } from "@/components/text-formatting-toolbar"
 import {
   ArrowLeft,
   Download,
@@ -35,6 +40,16 @@ interface Cell {
   value: string
 }
 
+interface CellFormatting {
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  alignment?: "left" | "center" | "right"
+  textColor?: string
+  backgroundColor?: string
+  fontSize?: number
+}
+
 export default function TableEditorPage() {
   const router = useRouter()
   const [projectName, setProjectName] = useState("Untitled Project")
@@ -42,11 +57,64 @@ export default function TableEditorPage() {
   const [numCols, setNumCols] = useState(1)
   const [cells, setCells] = useState<{ [key: string]: string }>({})
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null)
+  const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set())
+  const [isSelecting, setIsSelecting] = useState(false)
+  const [selectionStart, setSelectionStart] = useState<{ row: number; col: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
   const [columnWidths, setColumnWidths] = useState<{ [key: number]: number }>({ 0: 150 })
   const [rowHeights, setRowHeights] = useState<{ [key: number]: number }>({})
+  const [cellFormatting, setCellFormattingState] = useState<{ [key: string]: CellFormatting }>({})
+  const [mergedCells, setMergedCells] = useState<{ [key: string]: { rowSpan: number; colSpan: number } }>({})
+  const [sortColumn, setSortColumn] = useState<number | null>(null)
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
   const resizingRef = useRef<{ col?: number; row?: number; startPos: number; startSize: number } | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
+
+  // Helper function to calculate optimal column width based on content
+  const calculateOptimalWidth = (colIndex: number): number => {
+    const canvas = document.createElement("canvas")
+    const context = canvas.getContext("2d")
+    if (!context) return 150
+
+    context.font = "14px system-ui, -apple-system, sans-serif" // Match the app's font size
+    
+    // Get the column header label width
+    const headerLabel = getColumnLabel(colIndex)
+    const headerWidth = context.measureText(headerLabel).width + 20 // Add padding
+
+    // Get the maximum width of all cells in the column
+    let maxCellWidth = 0
+    for (let row = 0; row < numRows; row++) {
+      const cellValue = getCellValue(row, colIndex)
+      const cellWidth = context.measureText(cellValue).width + 16 // Add padding for cell content
+      maxCellWidth = Math.max(maxCellWidth, cellWidth)
+    }
+
+    // Return the maximum of header and cell widths, with a minimum of 50px and maximum of 500px
+    return Math.min(500, Math.max(50, Math.max(headerWidth, maxCellWidth)))
+  }
+
+  // Helper function to calculate optimal row height based on content
+  const calculateOptimalHeight = (rowIndex: number): number => {
+    const canvas = document.createElement("canvas")
+    const context = canvas.getContext("2d")
+    if (!context) return 36
+
+    context.font = "14px system-ui, -apple-system, sans-serif"
+    
+    // Get the maximum height needed for text in this row
+    let maxHeight = 24 // Minimum height
+    for (let col = 0; col < numCols; col++) {
+      const cellValue = getCellValue(rowIndex, col)
+      // Rough estimation: approximately 14px per line, assuming width constraint
+      const lines = Math.max(1, Math.ceil(cellValue.length / 30))
+      const estimatedHeight = lines * 18 + 8 // 18px per line + padding
+      maxHeight = Math.max(maxHeight, estimatedHeight)
+    }
+
+    // Return height with minimum of 24px and maximum of 200px
+    return Math.min(200, Math.max(24, maxHeight))
+  }
 
   const onMouseDown = (e: React.MouseEvent, colIndex: number) => {
     e.preventDefault()
@@ -68,6 +136,22 @@ export default function TableEditorPage() {
     }
     document.addEventListener("mousemove", onMouseMove)
     document.addEventListener("mouseup", onMouseUp)
+  }
+
+  const onColumnHeaderDoubleClick = (colIndex: number) => {
+    const optimalWidth = calculateOptimalWidth(colIndex)
+    setColumnWidths((prev) => ({
+      ...prev,
+      [colIndex]: optimalWidth,
+    }))
+  }
+
+  const onRowHeaderDoubleClick = (rowIndex: number) => {
+    const optimalHeight = calculateOptimalHeight(rowIndex)
+    setRowHeights((prev) => ({
+      ...prev,
+      [rowIndex]: optimalHeight,
+    }))
   }
 
   const onMouseMove = (e: MouseEvent) => {
@@ -117,10 +201,79 @@ export default function TableEditorPage() {
     setCells({ ...cells, [`${row}-${col}`]: value })
   }
 
-  const handleCellClick = (row: number, col: number) => {
-    setSelectedCell({ row, col })
-    setEditingCell({ row, col })
+  const handleCellClick = (row: number, col: number, e?: React.MouseEvent) => {
+    const cellKey = `${row}-${col}`
+
+    if (e?.ctrlKey || e?.metaKey) {
+      // Ctrl+Click: Toggle individual cell in selection
+      setSelectedCells((prev) => {
+        const newSelection = new Set(prev)
+        if (newSelection.has(cellKey)) {
+          newSelection.delete(cellKey)
+        } else {
+          newSelection.add(cellKey)
+        }
+        return newSelection
+      })
+      setSelectedCell({ row, col })
+      setEditingCell(null)
+    } else if (e?.shiftKey && selectedCell) {
+      // Shift+Click: Select range from last selected to current cell
+      const newSelection = new Set<string>()
+      const minRow = Math.min(selectedCell.row, row)
+      const maxRow = Math.max(selectedCell.row, row)
+      const minCol = Math.min(selectedCell.col, col)
+      const maxCol = Math.max(selectedCell.col, col)
+
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          newSelection.add(`${r}-${c}`)
+        }
+      }
+      setSelectedCells(newSelection)
+      setSelectedCell({ row, col })
+      setEditingCell(null)
+    } else {
+      // Single click: Clear previous selection and select only this cell
+      setSelectedCell({ row, col })
+      setSelectedCells(new Set([cellKey]))
+      setEditingCell({ row, col })
+    }
   }
+
+  const handleCellMouseDown = (row: number, col: number, e?: React.MouseEvent) => {
+    if (!e?.ctrlKey && !e?.metaKey && !e?.shiftKey) {
+      setIsSelecting(true)
+      setSelectionStart({ row, col })
+      setSelectedCell({ row, col })
+      setSelectedCells(new Set([`${row}-${col}`]))
+    }
+  }
+
+  const handleCellMouseEnter = (row: number, col: number) => {
+    if (isSelecting && selectionStart) {
+      const minRow = Math.min(selectionStart.row, row)
+      const maxRow = Math.max(selectionStart.row, row)
+      const minCol = Math.min(selectionStart.col, col)
+      const maxCol = Math.max(selectionStart.col, col)
+
+      const newSelection = new Set<string>()
+      for (let r = minRow; r <= maxRow; r++) {
+        for (let c = minCol; c <= maxCol; c++) {
+          newSelection.add(`${r}-${c}`)
+        }
+      }
+      setSelectedCells(newSelection)
+    }
+  }
+
+  useEffect(() => {
+    const handleMouseUp = () => {
+      setIsSelecting(false)
+    }
+    document.addEventListener("mouseup", handleMouseUp)
+    return () => document.removeEventListener("mouseup", handleMouseUp)
+  }, [])
 
   const handleCellKeyDown = (e: React.KeyboardEvent, row: number, col: number) => {
     if (e.key === "Enter") {
@@ -153,6 +306,228 @@ export default function TableEditorPage() {
 
   const handleAddColumn = () => {
     setNumCols(numCols + 1)
+  }
+
+  const handleDeduplicate = () => {
+    // Create a Set to track seen rows
+    const seenRows = new Set<string>()
+    const newCells: { [key: string]: string } = {}
+    const newFormatting: { [key: string]: CellFormatting } = {}
+    let newRowIndex = 0
+    let duplicatesRemoved = 0
+
+    // Iterate through each row
+    for (let row = 0; row < numRows; row++) {
+      // Get all cell values for this row
+      const rowData: string[] = []
+      for (let col = 0; col < numCols; col++) {
+        rowData.push(getCellValue(row, col))
+      }
+      const rowKey = JSON.stringify(rowData)
+
+      // Check if we've seen this row before
+      if (!seenRows.has(rowKey)) {
+        seenRows.add(rowKey)
+        
+        // Copy cells to new row index
+        for (let col = 0; col < numCols; col++) {
+          const oldKey = `${row}-${col}`
+          const newKey = `${newRowIndex}-${col}`
+          const value = getCellValue(row, col)
+          if (value) {
+            newCells[newKey] = value
+          }
+          
+          // Copy formatting
+          const oldFormat = cellFormatting[oldKey]
+          if (oldFormat && Object.keys(oldFormat).length > 0) {
+            newFormatting[newKey] = oldFormat
+          }
+        }
+        newRowIndex++
+      } else {
+        duplicatesRemoved++
+      }
+    }
+
+    // Update state
+    setNumRows(newRowIndex)
+    setCells(newCells)
+    setCellFormattingState(newFormatting)
+    setSelectedCell(null)
+    setSelectedCells(new Set())
+    
+    // Show feedback
+    if (duplicatesRemoved > 0) {
+      alert(`Removed ${duplicatesRemoved} duplicate row(s). Total rows: ${newRowIndex}`)
+    } else {
+      alert('No duplicate rows found.')
+    }
+  }
+
+  const handleSort = () => {
+    if (numCols === 0 || numRows === 0) {
+      alert('No data to sort')
+      return
+    }
+
+    const columnInput = prompt(
+      `Enter column to sort by (A-${getColumnLabel(numCols - 1)}):`,
+      sortColumn !== null ? getColumnLabel(sortColumn) : 'A'
+    )
+
+    if (!columnInput) return
+
+    // Convert column letter to index
+    let colIndex = 0
+    for (let i = 0; i < columnInput.length; i++) {
+      colIndex = colIndex * 26 + (columnInput.charCodeAt(i) - 64)
+    }
+    colIndex = colIndex - 1
+
+    if (colIndex < 0 || colIndex >= numCols) {
+      alert(`Invalid column. Please enter a column between A and ${getColumnLabel(numCols - 1)}`)
+      return
+    }
+
+    // Check if we're sorting the same column
+    const newSortOrder = sortColumn === colIndex && sortOrder === "asc" ? "desc" : "asc"
+
+    // Create array of rows with their original indices
+    const rowIndices = Array.from({ length: numRows }, (_, i) => i)
+
+    // Sort rows based on column values
+    rowIndices.sort((rowA, rowB) => {
+      const valueA = getCellValue(rowA, colIndex).toLowerCase()
+      const valueB = getCellValue(rowB, colIndex).toLowerCase()
+
+      // Try numeric comparison first
+      const numA = parseFloat(valueA)
+      const numB = parseFloat(valueB)
+
+      let comparison = 0
+      if (!isNaN(numA) && !isNaN(numB)) {
+        comparison = numA - numB
+      } else {
+        comparison = valueA.localeCompare(valueB)
+      }
+
+      return newSortOrder === "asc" ? comparison : -comparison
+    })
+
+    // Reorganize cells and formatting based on sorted order
+    const newCells: { [key: string]: string } = {}
+    const newFormatting: { [key: string]: CellFormatting } = {}
+
+    rowIndices.forEach((oldRowIndex, newRowIndex) => {
+      for (let col = 0; col < numCols; col++) {
+        const oldKey = `${oldRowIndex}-${col}`
+        const newKey = `${newRowIndex}-${col}`
+        const value = getCellValue(oldRowIndex, col)
+        if (value) {
+          newCells[newKey] = value
+        }
+
+        const oldFormat = cellFormatting[oldKey]
+        if (oldFormat && Object.keys(oldFormat).length > 0) {
+          newFormatting[newKey] = oldFormat
+        }
+      }
+    })
+
+    setCells(newCells)
+    setCellFormattingState(newFormatting)
+    setSortColumn(colIndex)
+    setSortOrder(newSortOrder)
+    setSelectedCell(null)
+    setSelectedCells(new Set())
+
+    const orderText = newSortOrder === "asc" ? "ascending" : "descending"
+    alert(`Sorted by column ${getColumnLabel(colIndex)} in ${orderText} order`)
+  }
+
+  const handleImportCSVData = (importedCells: { [key: string]: string }, rows: number, cols: number) => {
+    setNumCols(cols)
+    setNumRows(rows)
+    setCells(importedCells)
+    // Preserve existing cell formatting on import
+  }
+
+  const handleImportCompleteData = (
+    importedCells: { [key: string]: string },
+    importedFormatting: { [key: string]: CellFormatting },
+    rows: number,
+    cols: number
+  ) => {
+    setNumCols(cols)
+    setNumRows(rows)
+    setCells(importedCells)
+    setCellFormattingState(importedFormatting)
+  }
+
+  const getCellFormatting = (row: number, col: number): CellFormatting => {
+    return cellFormatting[`${row}-${col}`] || {}
+  }
+
+  const setCellFormatting = (row: number, col: number, format: CellFormatting) => {
+    setCellFormattingState((prev) => ({
+      ...prev,
+      [`${row}-${col}`]: format,
+    }))
+  }
+
+  const mergeCells = () => {
+    if (selectedCells.size === 0) return
+
+    // Convert selected cells to array and find bounds
+    const cellArray = Array.from(selectedCells).map((key) => {
+      const [row, col] = key.split('-').map(Number)
+      return { row, col }
+    })
+
+    const startRow = Math.min(...cellArray.map((c) => c.row))
+    const endRow = Math.max(...cellArray.map((c) => c.row))
+    const startCol = Math.min(...cellArray.map((c) => c.col))
+    const endCol = Math.max(...cellArray.map((c) => c.col))
+
+    const rowSpan = endRow - startRow + 1
+    const colSpan = endCol - startCol + 1
+
+    setMergedCells((prev) => ({
+      ...prev,
+      [`${startRow}-${startCol}`]: { rowSpan, colSpan },
+    }))
+
+    // Clear selection
+    setSelectedCell({ row: startRow, col: startCol })
+    setSelectedCells(new Set([`${startRow}-${startCol}`]))
+  }
+
+  const unmergeCells = () => {
+    if (!selectedCell) return
+
+    const key = `${selectedCell.row}-${selectedCell.col}`
+    setMergedCells((prev) => {
+      const newMerged = { ...prev }
+      delete newMerged[key]
+      return newMerged
+    })
+  }
+
+  const isCellMerged = (row: number, col: number): boolean => {
+    return !!mergedCells[`${row}-${col}`]
+  }
+
+  const getMergeInfo = (row: number, col: number) => {
+    return mergedCells[`${row}-${col}`] || { rowSpan: 1, colSpan: 1 }
+  }
+
+  const isRangeSelected = (): boolean => {
+    return selectedCells.size > 1
+  }
+
+  const isInSelectedRange = (row: number, col: number): boolean => {
+    return selectedCells.has(`${row}-${col}`)
   }
 
   return (
@@ -208,16 +583,13 @@ export default function TableEditorPage() {
           <Upload className="h-4 w-4" />
           Connect API
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2">
-          <Download className="h-4 w-4" />
-          Import CSV
-        </Button>
+        <CSVImport onImport={handleImportCSVData} />
         <div className="h-4 w-px bg-border" />
         <Button variant="ghost" size="sm" className="gap-2">
           <Filter className="h-4 w-4" />
           Filter
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2">
+        <Button variant="ghost" size="sm" className="gap-2" onClick={handleSort}>
           <ArrowUpDown className="h-4 w-4" />
           Sort
         </Button>
@@ -225,7 +597,7 @@ export default function TableEditorPage() {
           <Columns3 className="h-4 w-4" />
           Columns
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2">
+        <Button variant="ghost" size="sm" className="gap-2" onClick={handleDeduplicate}>
           <Trash2 className="h-4 w-4" />
           Dedupe
         </Button>
@@ -237,10 +609,22 @@ export default function TableEditorPage() {
           </kbd>
         </Button>
         <div className="flex-1" />
-        <Button variant="ghost" size="sm" className="gap-2">
-          <Download className="h-4 w-4" />
-          Export CSV
-        </Button>
+        <CSVExport
+          projectName={projectName}
+          numRows={numRows}
+          numCols={numCols}
+          getCellValue={getCellValue}
+          getColumnLabel={getColumnLabel}
+        />
+        <CompleteExport
+          projectName={projectName}
+          numRows={numRows}
+          numCols={numCols}
+          getCellValue={getCellValue}
+          getCellFormatting={getCellFormatting}
+          getColumnLabel={getColumnLabel}
+        />
+        <CompleteImport onImport={handleImportCompleteData} />
         <Button variant="ghost" size="sm" className="gap-2">
           <Share2 className="h-4 w-4" />
           Share
@@ -251,6 +635,19 @@ export default function TableEditorPage() {
           <Users className="h-4 w-4" />
         </Button>
       </div>
+
+      {/* Text Formatting Toolbar */}
+      <TextFormattingToolbar
+        selectedCell={selectedCell}
+        selectedCells={selectedCells}
+        getCellFormatting={getCellFormatting}
+        setCellFormatting={setCellFormatting}
+        getColumnLabel={getColumnLabel}
+        isRangeSelected={isRangeSelected}
+        isCellMerged={isCellMerged}
+        onMergeCells={mergeCells}
+        onUnmergeCells={unmergeCells}
+      />
 
       <div className="flex-1 overflow-auto">
         <div className="inline-block min-w-full">
@@ -266,7 +663,8 @@ export default function TableEditorPage() {
                   <th
                     key={colIndex}
                     style={{ width: columnWidths[colIndex] || 150 }}
-                    className="relative border-b border-r border-border bg-muted p-2 text-center text-xs font-medium text-muted-foreground"
+                    className="relative border-b border-r border-border bg-muted p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
+                    onDoubleClick={() => onColumnHeaderDoubleClick(colIndex)}
                   >
                     {getColumnLabel(colIndex)}
                     {/* Resize handle */}
@@ -291,7 +689,9 @@ export default function TableEditorPage() {
               {Array.from({ length: numRows }).map((_, rowIndex) => (
                 <tr key={rowIndex} style={{ height: rowHeights[rowIndex] || 36 }} className="group hover:bg-muted/20">
                   {/* Row number */}
-                  <td className="relative left-0 z-10 border-b border-r border-border bg-muted/80 p-2 text-center text-xs font-medium text-muted-foreground">
+                  <td className="relative left-0 z-10 border-b border-r border-border bg-muted/80 p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
+                      onDoubleClick={() => onRowHeaderDoubleClick(rowIndex)}
+                  >
                     {rowIndex + 1}
                     {/* Resize handle */}
                     <div
@@ -301,32 +701,127 @@ export default function TableEditorPage() {
                   </td>
                   {/* Cells */}
                   {Array.from({ length: numCols }).map((_, colIndex) => {
+                    // Skip cells that are part of a merge (covered by another cell)
+                    const isCoveredByMerge = Object.entries(mergedCells).some(([key, merge]) => {
+                      const [mergeRow, mergeCol] = key.split('-').map(Number)
+                      return (
+                        rowIndex >= mergeRow &&
+                        rowIndex < mergeRow + merge.rowSpan &&
+                        colIndex >= mergeCol &&
+                        colIndex < mergeCol + merge.colSpan &&
+                        !(rowIndex === mergeRow && colIndex === mergeCol)
+                      )
+                    })
+
+                    if (isCoveredByMerge) return null
+
                     const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === colIndex
                     const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex
                     const width = columnWidths[colIndex] || 150
                     const height = rowHeights[rowIndex] || 36
+                    const formatting = getCellFormatting(rowIndex, colIndex)
+                    const cellValue = getCellValue(rowIndex, colIndex)
+                    const fontSize = formatting.fontSize || 14
+                    const charWidth = fontSize * 0.6 // Approximate character width (roughly 60% of font size)
+                    const paddingLeft = 2 + charWidth // Base padding + one character width
+                    const mergeInfo = getMergeInfo(rowIndex, colIndex)
+
+                    const cellStyle: React.CSSProperties = {
+                      width,
+                      height,
+                      backgroundColor: formatting.backgroundColor,
+                      color: formatting.textColor,
+                      fontSize: `${fontSize}px`,
+                      fontWeight: formatting.bold ? "bold" : "normal",
+                      fontStyle: formatting.italic ? "italic" : "normal",
+                      textDecoration: formatting.underline ? "underline" : "none",
+                      textAlign: formatting.alignment || "left",
+                      paddingLeft: `${paddingLeft}px`,
+                      paddingRight: "8px",
+                      paddingTop: "4px",
+                      paddingBottom: "4px",
+                    }
+
                     return (
                       <td
                         key={colIndex}
-                        style={{ width, height }}
-                        className={`border-b border-r border-border p-0 ${
+                        rowSpan={mergeInfo.rowSpan}
+                        colSpan={mergeInfo.colSpan}
+                        style={{
+                          width,
+                          height,
+                          backgroundColor: formatting.backgroundColor,
+                          borderBottom: "1px solid var(--border)",
+                          borderRight: "1px solid var(--border)",
+                          padding: 0,
+                        }}
+                        className={`${
                           isSelected ? "ring-2 ring-inset ring-primary" : ""
+                        } ${
+                          isInSelectedRange(rowIndex, colIndex) ? "bg-primary/20" : ""
                         }`}
-                        onClick={() => handleCellClick(rowIndex, colIndex)}
+                        onClick={(e) => handleCellClick(rowIndex, colIndex, e)}
+                        onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
+                        onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
+                        title={cellValue}
                       >
                         {isEditing ? (
-                          <Input
+                          <input
                             ref={editInputRef}
-                            value={getCellValue(rowIndex, colIndex)}
+                            value={cellValue}
                             onChange={(e) => setCellValue(rowIndex, colIndex, e.target.value)}
                             onKeyDown={(e) => handleCellKeyDown(e, rowIndex, colIndex)}
                             onBlur={() => setEditingCell(null)}
-                            style={{ height }}
-                            className="w-full rounded-none border-none bg-background px-2 text-sm focus-visible:ring-0"
+                            type="text"
+                            autoComplete="off"
+                            style={{ 
+                              width: "100%",
+                              height: "100%",
+                              color: formatting.textColor || "inherit",
+                              backgroundColor: "transparent",
+                              fontSize: `${fontSize}px`,
+                              fontWeight: formatting.bold ? "bold" : "normal",
+                              fontStyle: formatting.italic ? "italic" : "normal",
+                              textDecoration: formatting.underline ? "underline" : "none",
+                              textAlign: formatting.alignment || "left",
+                              paddingLeft: `${paddingLeft}px`,
+                              paddingRight: "8px",
+                              paddingTop: "0px",
+                              paddingBottom: "0px",
+                              boxSizing: "border-box",
+                              margin: 0,
+                              border: "none",
+                              outline: "none",
+                              lineHeight: "1",
+                              fontFamily: "inherit",
+                              letterSpacing: "inherit",
+                              verticalAlign: "top",
+                            }}
                           />
                         ) : (
-                          <div style={{ width, height }} className="truncate px-2 py-2 text-sm">
-                            {getCellValue(rowIndex, colIndex)}
+                          <div 
+                            style={{
+                              width: "100%",
+                              height: "100%",
+                              display: "flex",
+                              alignItems: "center",
+                              justifyContent: formatting.alignment === "center" ? "center" : formatting.alignment === "right" ? "flex-end" : "flex-start",
+                              color: formatting.textColor,
+                              fontSize: `${fontSize}px`,
+                              fontWeight: formatting.bold ? "bold" : "normal",
+                              fontStyle: formatting.italic ? "italic" : "normal",
+                              textDecoration: formatting.underline ? "underline" : "none",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              paddingLeft: formatting.alignment === "left" ? `${paddingLeft}px` : "8px",
+                              paddingRight: formatting.alignment === "right" ? `${paddingLeft}px` : "8px",
+                              paddingTop: "0px",
+                              paddingBottom: "0px",
+                              boxSizing: "border-box",
+                            }}
+                          >
+                            {cellValue}
                           </div>
                         )}
                       </td>

@@ -1,0 +1,90 @@
+
+
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+// User model
+model User {
+  id    String     @id @default(cuid())
+  email String     @unique
+  name  String?
+  password String?
+  avatar String?
+  role  String     @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dashboards Dashboard[]
+  tables     Table[]
+  rows       TableRow[]
+}
+
+// Dashboard model
+model Dashboard {
+  id    String     @id @default(cuid())
+  title String
+  description String?
+  userId String
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tables Table[]
+
+  @@index([userId])
+}
+
+// Table model
+model Table {
+  id    String     @id @default(cuid())
+  name  String
+  description String?
+  dashboardId String
+  dashboard Dashboard @relation(fields: [dashboardId], references: [id], onDelete: Cascade)
+  userId String
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rows TableRow[]
+  columns TableColumn[]
+
+  @@index([dashboardId])
+  @@index([userId])
+}
+
+// Table Column model
+model TableColumn {
+  id    String     @id @default(cuid())
+  name  String
+  type  String     @default("text")
+  order Int
+  tableId String
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tableId])
+}
+
+// Table Row model
+model TableRow {
+  id    String     @id @default(cuid())
+  tableId String
+  table Table @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  userId String
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  data  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([tableId])
+  @@index([userId])
+}
