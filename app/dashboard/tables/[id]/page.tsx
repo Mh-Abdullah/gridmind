@@ -8,8 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CSVExport } from "@/components/csv-export"
 import { CSVImport } from "@/components/csv-import"
-import { CompleteExport } from "@/components/complete-export"
-import { CompleteImport } from "@/components/complete-import"
 import { TextFormattingToolbar } from "@/components/text-formatting-toolbar"
 import {
   ArrowLeft,
@@ -453,18 +451,6 @@ export default function TableEditorPage() {
     // Preserve existing cell formatting on import
   }
 
-  const handleImportCompleteData = (
-    importedCells: { [key: string]: string },
-    importedFormatting: { [key: string]: CellFormatting },
-    rows: number,
-    cols: number
-  ) => {
-    setNumCols(cols)
-    setNumRows(rows)
-    setCells(importedCells)
-    setCellFormattingState(importedFormatting)
-  }
-
   const getCellFormatting = (row: number, col: number): CellFormatting => {
     return cellFormatting[`${row}-${col}`] || {}
   }
@@ -616,15 +602,6 @@ export default function TableEditorPage() {
           getCellValue={getCellValue}
           getColumnLabel={getColumnLabel}
         />
-        <CompleteExport
-          projectName={projectName}
-          numRows={numRows}
-          numCols={numCols}
-          getCellValue={getCellValue}
-          getCellFormatting={getCellFormatting}
-          getColumnLabel={getColumnLabel}
-        />
-        <CompleteImport onImport={handleImportCompleteData} />
         <Button variant="ghost" size="sm" className="gap-2">
           <Share2 className="h-4 w-4" />
           Share
@@ -855,9 +832,6 @@ export default function TableEditorPage() {
               }
             }}
           />
-          <Button variant="ghost" size="sm">
-            Auto scroll off
-          </Button>
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span>Records: {numRows} rows</span>
