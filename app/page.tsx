@@ -10,6 +10,14 @@ export default function WelcomePage() {
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-foreground">Welcome to GridMind</h1>
         </div>
+        <div className="flex gap-4">
+          <Button variant="outline" asChild>
+            <Link href="/login">Login</Link>
+          </Button>
+          <Button asChild>
+            <Link href="/register">Sign Up</Link>
+          </Button>
+        </div>
       </header>
 
       {/* Content */}
@@ -24,10 +32,10 @@ export default function WelcomePage() {
 
           <div className="flex gap-4 justify-center">
             <Button asChild size="lg">
-              <Link href="/dashboard/tables">Get Started</Link>
+              <Link href="/register">Get Started</Link>
             </Button>
             <Button variant="outline" size="lg" asChild>
-              <Link href="/docs">Learn More</Link>
+              <Link href="/login">Login to Dashboard</Link>
             </Button>
           </div>
         </div>

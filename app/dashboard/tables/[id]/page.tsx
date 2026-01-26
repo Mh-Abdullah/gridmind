@@ -546,12 +546,12 @@ export default function TableEditorPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          {/* <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <span>Cols synced</span>
           </div>
           <div className="flex items-center gap-1 text-xs text-muted-foreground">
             <span>Rows synced</span>
-          </div>
+          </div> */}
           <Button variant="default" size="sm" className="gap-2">
             <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />

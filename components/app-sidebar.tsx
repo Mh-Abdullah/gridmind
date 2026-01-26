@@ -26,12 +26,14 @@ import {
 } from "@/components/ui/dropdown-menu"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
+import { useAuth } from "@/lib/auth-context"
 
 interface AppSidebarProps {
   className?: string
 }
 
 export function AppSidebar({ className }: AppSidebarProps) {
+  const { logout, user } = useAuth()
   console.log("AppSidebar rendering")
   const [creditsUsed, setCreditsUsed] = React.useState(0)
   const [projectsUsed, setProjectsUsed] = React.useState(0)
@@ -127,21 +129,32 @@ export function AppSidebar({ className }: AppSidebarProps) {
             <Button variant="ghost" className="w-full justify-between px-2 hover:bg-sidebar-accent">
               <div className="flex items-center gap-2">
                 <Avatar className="h-8 w-8">
-                  <AvatarFallback className="bg-primary text-primary-foreground">MA</AvatarFallback>
+                  <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">
+                    {user?.name?.split(" ").map(n => n[0]).join("").toUpperCase() || "U"}
+                  </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-start text-left">
-                  <span className="text-xs font-medium text-sidebar-foreground">Muhammad Ab...</span>
-                  <span className="text-xs text-muted-foreground">mh.abdulla.267@g...</span>
+                  <span className="text-xs font-medium text-sidebar-foreground truncate max-w-[100px]">{user?.name || "User"}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-[100px]">{user?.email}</span>
                 </div>
               </div>
               <ChevronDown className="h-4 w-4 text-muted-foreground" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56">
-            <DropdownMenuItem>Profile</DropdownMenuItem>
-            <DropdownMenuItem>Account Settings</DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              <div className="flex flex-col gap-1">
+                <p className="text-sm font-medium">{user?.name}</p>
+                <p className="text-xs text-muted-foreground">{user?.email}</p>
+              </div>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>Log out</DropdownMenuItem>
+            <DropdownMenuItem disabled>Profile</DropdownMenuItem>
+            <DropdownMenuItem disabled>Account Settings</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => logout()} className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer">
+              Log out
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

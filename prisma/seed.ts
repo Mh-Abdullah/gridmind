@@ -1,4 +1,6 @@
+import "dotenv/config";
 import { prisma } from "../lib/prisma";
+import { hashPassword } from "../lib/auth";
 
 async function main() {
   console.log("Seeding database...");
@@ -10,24 +12,46 @@ async function main() {
   await prisma.dashboard.deleteMany({});
   await prisma.user.deleteMany({});
 
+  // Create admin user
+  const adminUser = await prisma.user.create({
+    data: {
+      email: "mh.abdulla.688@gmail.com",
+      name: "Muhammad Abdullah",
+      password: hashPassword("1234"),
+      role: "admin",
+    },
+  });
+
+  console.log("Created admin user:", {
+    id: adminUser.id,
+    email: adminUser.email,
+    name: adminUser.name,
+    role: adminUser.role,
+  });
+
   // Create a test user
   const user = await prisma.user.create({
     data: {
       email: "test@example.com",
       name: "Test User",
-      password: "hashed_password_here",
-      role: "admin",
+      password: hashPassword("test1234"),
+      role: "user",
     },
   });
 
-  console.log("Created user:", user);
+  console.log("Created test user:", {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+  });
 
-  // Create a dashboard
+  // Create a dashboard for admin
   const dashboard = await prisma.dashboard.create({
     data: {
       title: "Sales Dashboard",
       description: "Track sales and revenue metrics",
-      userId: user.id,
+      userId: adminUser.id,
     },
   });
 
@@ -39,7 +63,7 @@ async function main() {
       name: "Sales Data",
       description: "Monthly sales records",
       dashboardId: dashboard.id,
-      userId: user.id,
+      userId: adminUser.id,
     },
   });
 
@@ -80,7 +104,7 @@ async function main() {
     prisma.tableRow.create({
       data: {
         tableId: table.id,
-        userId: user.id,
+        userId: adminUser.id,
         data: {
           Date: "2026-01-01",
           Revenue: 5000,
@@ -91,7 +115,7 @@ async function main() {
     prisma.tableRow.create({
       data: {
         tableId: table.id,
-        userId: user.id,
+        userId: adminUser.id,
         data: {
           Date: "2026-01-02",
           Revenue: 6200,
@@ -103,7 +127,15 @@ async function main() {
 
   console.log("Created rows:", rows);
 
-  console.log("✅ Database seeded successfully!");
+  console.log("\n✅ Database seeded successfully!");
+  console.log("\n🔐 Admin Credentials:");
+  console.log("   Email: mh.abdulla.688@gmail.com");
+  console.log("   Password: 1234");
+  console.log("   Role: admin");
+  console.log("\n📝 Test User Credentials:");
+  console.log("   Email: test@example.com");
+  console.log("   Password: test1234");
+  console.log("   Role: user");
 }
 
 main()

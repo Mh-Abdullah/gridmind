@@ -5,9 +5,23 @@ import { AppFooter } from "@/components/app-footer"
 import { Button } from "@/components/ui/button"
 import { Table2, Search, Wand2, Upload, Instagram, MessageSquare, MapPin, PlaySquare, FolderPlus } from "lucide-react"
 import { useRouter } from "next/navigation"
+import { useAuth } from "@/lib/auth-context"
+import { useEffect } from "react"
 
 export default function TablesPage() {
   const router = useRouter()
+  const { user, loading } = useAuth()
+
+  // Protect the page - only logged in regular users can access
+  useEffect(() => {
+    if (!loading && !user) {
+      router.push("/login")
+      return
+    }
+    if (!loading && user?.role === "admin") {
+      router.push("/dashboard-admin")
+    }
+  }, [user, loading, router])
 
   const projectOptions = [
     { icon: Table2, label: "Blank table", description: "Start with an empty table" },
@@ -22,6 +36,14 @@ export default function TablesPage() {
     { icon: Instagram, label: "Scrape Instagram", color: "text-pink-500" },
     { icon: MessageSquare, label: "Scrape Reactions", color: "text-blue-500" },
   ]
+
+  if (loading) {
+    return (
+      <div className="flex h-screen items-center justify-center">
+        <p>Loading...</p>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen">
