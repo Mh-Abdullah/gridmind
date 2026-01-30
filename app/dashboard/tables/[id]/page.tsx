@@ -65,8 +65,15 @@ export default function TableEditorPage() {
   const [mergedCells, setMergedCells] = useState<{ [key: string]: { rowSpan: number; colSpan: number } }>({})
   const [sortColumn, setSortColumn] = useState<number | null>(null)
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
+  const [showCopyNotification, setShowCopyNotification] = useState(false)
   const resizingRef = useRef<{ col?: number; row?: number; startPos: number; startSize: number } | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
+  const clipboardRef = useRef<{ cells: { [key: string]: string }; minRow: number; minCol: number; maxRow: number; maxCol: number } | null>(null)
+  const selectedCellsRef = useRef(selectedCells)
+  const selectedCellRef = useRef(selectedCell)
+  const cellsRef = useRef(cells)
+  const editingCellRef = useRef(editingCell)
+  const pastePendingRef = useRef(false)
 
   // Helper function to calculate optimal column width based on content
   const calculateOptimalWidth = (colIndex: number): number => {
@@ -191,6 +198,95 @@ export default function TableEditorPage() {
     }
   }, [editingCell])
 
+  // Function ref that always has fresh values
+  const handlePasteRef = useRef<() => void>(() => {})
+  
+  // Update the paste function whenever cells changes
+  useEffect(() => {
+    handlePasteRef.current = () => {
+      if (!clipboardRef.current || !selectedCellRef.current) return
+      
+      const { cells: clipboardCells, minRow, minCol } = clipboardRef.current
+      const { row: pasteRow, col: pasteCol } = selectedCellRef.current
+      
+      console.log('INSIDE handlePasteRef - cells:', cells)
+      const rowOffset = pasteRow - minRow
+      const colOffset = pasteCol - minCol
+      
+      const newCells = { ...cells }  // Use current cells state, not ref
+      Object.entries(clipboardCells).forEach(([key, value]) => {
+        const [origRow, origCol] = key.split('-').map(Number)
+        const newRow = origRow + rowOffset
+        const newCol = origCol + colOffset
+        
+        if (newRow >= 0 && newCol >= 0) {
+          newCells[`${newRow}-${newCol}`] = value
+        }
+      })
+      
+      console.log('Pasted cells:', newCells)
+      setCells(newCells)
+    }
+  }, [cells])  // Update whenever cells changes
+  useEffect(() => {
+    selectedCellsRef.current = selectedCells
+    selectedCellRef.current = selectedCell
+    cellsRef.current = cells
+    editingCellRef.current = editingCell
+  }, [selectedCells, selectedCell, cells, editingCell])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!editingCellRef.current && (e.ctrlKey || e.metaKey)) {
+        if (e.key === 'c' || e.key === 'C') {
+          e.preventDefault()
+          // Inline copy logic
+          console.log('Copy pressed, selectedCells size:', selectedCellsRef.current.size, 'selectedCell:', selectedCellRef.current)
+          if (selectedCellsRef.current.size === 0 || !selectedCellRef.current) {
+            console.log('No cells selected')
+            return
+          }
+
+          const selectedArray = Array.from(selectedCellsRef.current).map((key: any) => {
+            const [row, col] = key.split('-').map(Number)
+            return { row, col }
+          })
+
+          const minRow = Math.min(...selectedArray.map(c => c.row))
+          const maxRow = Math.max(...selectedArray.map(c => c.row))
+          const minCol = Math.min(...selectedArray.map(c => c.col))
+          const maxCol = Math.max(...selectedArray.map(c => c.col))
+
+          const clipboardData: { [key: string]: string } = {}
+          selectedArray.forEach(({ row, col }: any) => {
+            const cellKey = `${row}-${col}`
+            clipboardData[cellKey] = cellsRef.current[cellKey] || ""
+          })
+
+          console.log('Copied cells:', clipboardData)
+          clipboardRef.current = {
+            cells: clipboardData,
+            minRow,
+            minCol,
+            maxRow,
+            maxCol,
+          }
+          console.log('Clipboard stored in ref:', clipboardRef.current)
+          
+          setShowCopyNotification(true)
+          setTimeout(() => setShowCopyNotification(false), 2000)
+        } else if (e.key === 'v' || e.key === 'V') {
+          e.preventDefault()
+          console.log('Paste pressed')
+          handlePasteRef.current()
+        }
+      }
+    }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   const getCellValue = (row: number, col: number): string => {
     return cells[`${row}-${col}`] || ""
   }
@@ -200,6 +296,7 @@ export default function TableEditorPage() {
   }
 
   const handleCellClick = (row: number, col: number, e?: React.MouseEvent) => {
+    console.log('handleCellClick called:', { row, col })
     const cellKey = `${row}-${col}`
 
     if (e?.ctrlKey || e?.metaKey) {
@@ -211,6 +308,7 @@ export default function TableEditorPage() {
         } else {
           newSelection.add(cellKey)
         }
+        console.log('After ctrl+click, selectedCells:', newSelection)
         return newSelection
       })
       setSelectedCell({ row, col })
@@ -232,11 +330,18 @@ export default function TableEditorPage() {
       setSelectedCell({ row, col })
       setEditingCell(null)
     } else {
-      // Single click: Clear previous selection and select only this cell
+      // Single click: Select the cell only (NO edit mode)
       setSelectedCell({ row, col })
       setSelectedCells(new Set([cellKey]))
-      setEditingCell({ row, col })
+      setEditingCell(null)
     }
+  }
+
+  const handleCellDoubleClick = (row: number, col: number) => {
+    // Double-click: Enter edit mode
+    setSelectedCell({ row, col })
+    setSelectedCells(new Set([`${row}-${col}`]))
+    setEditingCell({ row, col })
   }
 
   const handleCellMouseDown = (row: number, col: number, e?: React.MouseEvent) => {
@@ -261,6 +366,7 @@ export default function TableEditorPage() {
           newSelection.add(`${r}-${c}`)
         }
       }
+      console.log('After drag, selectedCells:', newSelection)
       setSelectedCells(newSelection)
     }
   }
@@ -274,21 +380,33 @@ export default function TableEditorPage() {
   }, [])
 
   const handleCellKeyDown = (e: React.KeyboardEvent, row: number, col: number) => {
-    if (e.key === "Enter") {
-      setEditingCell(null)
-      if (row < numRows - 1) {
-        setSelectedCell({ row: row + 1, col })
-        setEditingCell({ row: row + 1, col })
+    // When a cell is selected and user starts typing, enter edit mode
+    if (!editingCell && selectedCell?.row === row && selectedCell?.col === col) {
+      if (e.key === "Enter") {
+        e.preventDefault()
+        setEditingCell({ row, col })
+      } else if (e.key !== "Tab" && e.key !== "Escape" && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.key.length === 1) {
+        // Any printable character: Enter edit mode
+        e.preventDefault()
+        setEditingCell({ row, col })
+        // The character will be added by the input field's onChange after it mounts
       }
-    } else if (e.key === "Tab") {
-      e.preventDefault()
-      setEditingCell(null)
-      if (col < numCols - 1) {
-        setSelectedCell({ row, col: col + 1 })
-        setEditingCell({ row, col: col + 1 })
+    } else if (editingCell?.row === row && editingCell?.col === col) {
+      // Already editing
+      if (e.key === "Enter") {
+        setEditingCell(null)
+        if (row < numRows - 1) {
+          setSelectedCell({ row: row + 1, col })
+        }
+      } else if (e.key === "Tab") {
+        e.preventDefault()
+        setEditingCell(null)
+        if (col < numCols - 1) {
+          setSelectedCell({ row, col: col + 1 })
+        }
+      } else if (e.key === "Escape") {
+        setEditingCell(null)
       }
-    } else if (e.key === "Escape") {
-      setEditingCell(null)
     }
   }
 
@@ -626,7 +744,9 @@ export default function TableEditorPage() {
         onUnmergeCells={unmergeCells}
       />
 
-      <div className="flex-1 overflow-auto">
+      <div className="flex-1 overflow-auto" tabIndex={0} onKeyDown={(e) => {
+        selectedCell && handleCellKeyDown(e as any, selectedCell.row, selectedCell.col);
+      }}>
         <div className="inline-block min-w-full">
           <table className="border-collapse">
             <thead>
@@ -731,6 +851,7 @@ export default function TableEditorPage() {
                           borderBottom: "1px solid var(--border)",
                           borderRight: "1px solid var(--border)",
                           padding: 0,
+                          userSelect: "none",
                         }}
                         className={`${
                           isSelected ? "ring-2 ring-inset ring-primary" : ""
@@ -738,6 +859,7 @@ export default function TableEditorPage() {
                           isInSelectedRange(rowIndex, colIndex) ? "bg-primary/20" : ""
                         }`}
                         onClick={(e) => handleCellClick(rowIndex, colIndex, e)}
+                        onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
                         onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
                         onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
                         title={cellValue}
@@ -796,6 +918,8 @@ export default function TableEditorPage() {
                               paddingTop: "0px",
                               paddingBottom: "0px",
                               boxSizing: "border-box",
+                              userSelect: "none",
+                              WebkitUserSelect: "none",
                             }}
                           >
                             {cellValue}
@@ -845,6 +969,13 @@ export default function TableEditorPage() {
           </Button>
         </div>
       </div>
+
+      {/* Copy Notification */}
+      {showCopyNotification && (
+        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg">
+          Copied {selectedCells.size} cell(s)
+        </div>
+      )}
     </div>
   )
 }
