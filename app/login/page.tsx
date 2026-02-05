@@ -104,15 +104,7 @@ export default function LoginPage() {
         </p>
 
         {/* Demo credentials hint */}
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-          <p className="text-sm text-gray-700">
-            <strong>Admin Demo:</strong>
-            <br />
-            Email: mh.abdulla.688@gmail.com
-            <br />
-            Password: 1234
-          </p>
-        </div>
+        
       </div>
     </div>
   );

@@ -13,6 +13,7 @@ import {
   PlayCircle,
   MessageSquare,
   ChevronDown,
+  LogOut,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -51,7 +52,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
   ]
 
   return (
-    <aside className={cn("flex h-screen w-57 flex-col border-r border-border bg-sidebar", className)}>
+    <aside className={cn("flex h-screen w-64 flex-col border-r border-border bg-sidebar", className)}>
       {/* Brand */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
@@ -71,7 +72,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-6 overflow-y-auto px-3">
+      <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-4">
         {/* Platform Section */}
         <div>
           <h3 className="mb-2 px-2 text-xs font-medium text-muted-foreground">Platform</h3>
@@ -80,7 +81,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
               <Link
                 key={item.label}
                 href={item.href}
-                className="flex items-center gap-3 rounded-md px-2 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
               >
                 <item.icon className="h-4 w-4" />
                 {item.label}
@@ -144,16 +145,21 @@ export function AppSidebar({ className }: AppSidebarProps) {
           <DropdownMenuContent align="end" className="w-56">
             <DropdownMenuItem disabled>
               <div className="flex flex-col gap-1">
-                <p className="text-sm font-medium">{user?.name}</p>
+                <p className="text-sm font-medium">{user?.name || "User"}</p>
                 <p className="text-xs text-muted-foreground">{user?.email}</p>
               </div>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem disabled>Profile</DropdownMenuItem>
-            <DropdownMenuItem disabled>Account Settings</DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard/account">Account Settings</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard/preferences">Preferences</Link>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => logout()} className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer">
-              Log out
+            <DropdownMenuItem onClick={() => logout()}>
+              <LogOut className="mr-2 h-4 w-4" />
+              <span>Log out</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

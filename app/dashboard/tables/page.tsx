@@ -46,32 +46,38 @@ export default function TablesPage() {
   }
 
   return (
-    <div className="flex h-screen">
+    <div className="flex h-screen bg-background">
       <AppSidebar />
 
-      <main className="flex flex-1 flex-col overflow-hidden">
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col">
         {/* Header */}
-        <header className="flex items-center justify-between border-b border-border px-8 py-4">
-          <div className="flex items-center gap-3">
-            <Table2 className="h-5 w-5 text-muted-foreground" />
-            <h1 className="text-lg font-semibold text-foreground">Tables</h1>
+        <header className="border-b border-border bg-background px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Table2 className="h-5 w-5 text-muted-foreground" />
+              <h1 className="text-2xl font-bold text-foreground">Tables</h1>
+            </div>
+            <Button variant="default" size="sm" className="gap-2">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <path d="M12 17h.01" />
+              </svg>
+              Need Help?
+            </Button>
           </div>
-          <Button variant="default" size="sm" className="gap-2">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <path d="M12 17h.01" />
-            </svg>
-            Need Help?
-          </Button>
         </header>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-8">
-          <div className="mx-auto max-w-7xl space-y-8">
+        {/* Main Content Area */}
+        <main className="flex-1 overflow-auto p-6">
+          {/* Welcome Section */}
+          <div className="mb-8">
+            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! 👑</h2>
+          </div>
             {/* Create New Project Section */}
-            <section>
-              <h2 className="mb-6 text-xl font-semibold text-foreground">Create a new project</h2>
+            <section className="mb-8">
+              <h2 className="mb-4 text-xl font-bold text-foreground">Create a new project</h2>
 
               <div className="grid gap-4 grid-cols-3 sm:grid-cols-6">
                 {projectOptions.map((option) => (
@@ -108,7 +114,7 @@ export default function TablesPage() {
             {/* Projects & Folders Section */}
             <section>
               <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-xl font-semibold text-foreground">Projects & Folders</h2>
+                <h2 className="text-xl font-bold text-foreground">Projects & Folders</h2>
                 <Button variant="ghost" size="sm" className="gap-2">
                   <FolderPlus className="h-4 w-4" />
                   Add Folder
@@ -133,12 +139,11 @@ export default function TablesPage() {
                 </div>
               </div>
             </section>
-          </div>
-        </div>
+        </main>
 
         {/* Footer */}
         {/* <AppFooter /> */}
-      </main>
+      </div>
     </div>
   )
 }
