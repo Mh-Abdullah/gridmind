@@ -1,6 +1,7 @@
 "use client";
 
 import { useAuth } from "@/lib/auth-context";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AdminSidebar } from "@/components/admin-sidebar";
@@ -69,6 +70,7 @@ export default function AdminDashboardPage() {
         <header className="border-b border-border bg-background px-6 py-4">
           <div className="flex items-center justify-between">
             <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+            <ThemeToggle />
           </div>
         </header>
 

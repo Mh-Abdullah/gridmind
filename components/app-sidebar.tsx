@@ -81,7 +81,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
               <Link
                 key={item.label}
                 href={item.href}
-                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                className="flex items-center gap-3 rounded-md px-3 py-2 text-sm text-sidebar-foreground transition-colors hover:bg-sidebar-hover hover:text-sidebar-foreground"
               >
                 <item.icon className="h-4 w-4" />
                 {item.label}
@@ -127,7 +127,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
       <div className="border-t border-sidebar-border p-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="w-full justify-between px-2 hover:bg-sidebar-accent">
+            <Button variant="ghost" className="w-full justify-between px-2 hover:bg-sidebar-hover">
               <div className="flex items-center gap-2">
                 <Avatar className="h-8 w-8">
                   <AvatarFallback className="bg-primary text-primary-foreground text-xs font-semibold">

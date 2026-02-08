@@ -1,5 +1,6 @@
 import { AppFooter } from "@/components/app-footer"
 import { Button } from "@/components/ui/button"
+import { ThemeToggle } from "@/components/theme-toggle"
 import Link from "next/link"
 
 export default function WelcomePage() {
@@ -10,7 +11,8 @@ export default function WelcomePage() {
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-foreground">Welcome to GridMind</h1>
         </div>
-        <div className="flex gap-4">
+        <div className="flex gap-4 items-center">
+          <ThemeToggle />
           <Button variant="outline" asChild>
             <Link href="/login">Login</Link>
           </Button>

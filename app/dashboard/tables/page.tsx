@@ -3,6 +3,7 @@
 import { AppSidebar } from "@/components/app-sidebar"
 import { AppFooter } from "@/components/app-footer"
 import { Button } from "@/components/ui/button"
+import { ThemeToggle } from "@/components/theme-toggle"
 import { Table2, Search, Wand2, Upload, Instagram, MessageSquare, MapPin, PlaySquare, FolderPlus } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
@@ -58,14 +59,17 @@ export default function TablesPage() {
               <Table2 className="h-5 w-5 text-muted-foreground" />
               <h1 className="text-2xl font-bold text-foreground">Tables</h1>
             </div>
-            <Button variant="default" size="sm" className="gap-2">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                <path d="M12 17h.01" />
-              </svg>
-              Need Help?
-            </Button>
+            <div className="flex items-center gap-4">
+              <ThemeToggle />
+              <Button variant="default" size="sm" className="gap-2">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                  <path d="M12 17h.01" />
+                </svg>
+                Need Help?
+              </Button>
+            </div>
           </div>
         </header>
 
@@ -84,7 +88,7 @@ export default function TablesPage() {
                   <Button
                     key={option.label}
                     variant="outline"
-                    className="h-auto flex items-center gap-2 p-4 hover:bg-accent bg-transparent"
+                    className="h-auto flex items-center gap-2 p-4 hover:bg-hover bg-transparent"
                     onClick={() => {
                       if (option.label === "Blank table") {
                         router.push(`/dashboard/tables/new`)
@@ -102,7 +106,7 @@ export default function TablesPage() {
                   <Button
                     key={option.label}
                     variant="outline"
-                    className="h-auto flex items-center gap-2 p-4 hover:bg-accent bg-transparent col-span-3"
+                    className="h-auto flex items-center gap-2 p-4 hover:bg-hover bg-transparent col-span-3"
                   >
                     <option.icon className={`h-5 w-5 ${option.color}`} />
                     <span className="font-medium text-foreground">{option.label}</span>
