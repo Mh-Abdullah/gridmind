@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { convexClient } from "@/lib/convex-server";
+import { api } from "@/convex/_generated/api";
 
 export async function GET() {
   try {
-    // Try to run a simple query to verify database connection
-    const userCount = await prisma.user.count();
+    // Try to run a simple query to verify Convex connection
+    const userCount = await convexClient.query(api.users.countUsers, {});
     
     return NextResponse.json({
       status: "ok",
-      message: "Database connection successful",
+      message: "Convex connection successful",
       userCount,
     });
   } catch (error) {
@@ -17,7 +18,7 @@ export async function GET() {
     return NextResponse.json(
       {
         status: "error",
-        message: "Database connection failed",
+        message: "Convex connection failed",
         error: errorMessage,
       },
       { status: 500 }

@@ -44,6 +44,65 @@ export const getSpreadsheet = query({
   },
 });
 
+// Get all spreadsheets for a user
+export const getSpreadsheetsByUser = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const spreadsheets = await ctx.db
+      .query("spreadsheets")
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+      .collect();
+    
+    // Sort by updatedAt descending (most recent first)
+    return spreadsheets.sort((a, b) => b.updatedAt - a.updatedAt);
+  },
+});
+
+// Delete a spreadsheet and all its related data
+export const deleteSpreadsheet = mutation({
+  args: { spreadsheetId: v.id("spreadsheets") },
+  handler: async (ctx, args) => {
+    // Delete all cells
+    const cells = await ctx.db
+      .query("cells")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const cell of cells) {
+      await ctx.db.delete(cell._id);
+    }
+    
+    // Delete all cell formatting
+    const formatting = await ctx.db
+      .query("cellFormatting")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const fmt of formatting) {
+      await ctx.db.delete(fmt._id);
+    }
+    
+    // Delete all column widths
+    const widths = await ctx.db
+      .query("columnWidths")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const w of widths) {
+      await ctx.db.delete(w._id);
+    }
+    
+    // Delete all row heights
+    const heights = await ctx.db
+      .query("rowHeights")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const h of heights) {
+      await ctx.db.delete(h._id);
+    }
+    
+    // Delete the spreadsheet itself
+    await ctx.db.delete(args.spreadsheetId);
+  },
+});
+
 // Update spreadsheet metadata (rows, cols, name)
 export const updateSpreadsheetMetadata = mutation({
   args: {

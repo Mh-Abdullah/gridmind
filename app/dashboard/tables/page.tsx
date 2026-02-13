@@ -3,15 +3,32 @@
 import { AppSidebar } from "@/components/app-sidebar"
 import { AppFooter } from "@/components/app-footer"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Table2, Search, Wand2, Upload, Instagram, MessageSquare, MapPin, PlaySquare, FolderPlus } from "lucide-react"
+import { Table2, Search, Wand2, Upload, Instagram, MessageSquare, MapPin, PlaySquare, FolderPlus, Trash2, X } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
+import { useQuery, useMutation } from "convex/react"
+import { api } from "@/convex/_generated/api"
+import { Id } from "@/convex/_generated/dataModel"
 
 export default function TablesPage() {
   const router = useRouter()
   const { user, loading } = useAuth()
+  const [showNameModal, setShowNameModal] = useState(false)
+  const [newTableName, setNewTableName] = useState("")
+  const [isCreating, setIsCreating] = useState(false)
+
+  // Fetch user's spreadsheets from Convex
+  const spreadsheets = useQuery(
+    api.spreadsheets.getSpreadsheetsByUser,
+    user?.id ? { userId: user.id } : "skip"
+  )
+
+  // Mutations
+  const createSpreadsheet = useMutation(api.spreadsheets.getOrCreateSpreadsheet)
+  const deleteSpreadsheet = useMutation(api.spreadsheets.deleteSpreadsheet)
 
   // Protect the page - only logged in regular users can access
   useEffect(() => {
@@ -23,6 +40,52 @@ export default function TablesPage() {
       router.push("/dashboard-admin")
     }
   }, [user, loading, router])
+
+  const handleCreateTable = async () => {
+    if (!newTableName.trim() || !user?.id) return
+    
+    setIsCreating(true)
+    try {
+      // Generate a unique tableId
+      const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      
+      await createSpreadsheet({
+        tableId,
+        userId: user.id,
+        name: newTableName.trim(),
+      })
+      
+      setShowNameModal(false)
+      setNewTableName("")
+      
+      // Navigate to the new table
+      router.push(`/dashboard/tables/${tableId}`)
+    } catch (error) {
+      console.error("Failed to create table:", error)
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
+  const handleDeleteTable = async (spreadsheetId: Id<"spreadsheets">) => {
+    if (!confirm("Are you sure you want to delete this table? This action cannot be undone.")) {
+      return
+    }
+    
+    try {
+      await deleteSpreadsheet({ spreadsheetId })
+    } catch (error) {
+      console.error("Failed to delete table:", error)
+    }
+  }
+
+  const formatDate = (timestamp: number) => {
+    return new Date(timestamp).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    })
+  }
 
   const projectOptions = [
     { icon: Table2, label: "Blank table", description: "Start with an empty table" },
@@ -91,7 +154,7 @@ export default function TablesPage() {
                     className="h-auto flex items-center gap-2 p-4 hover:bg-hover bg-transparent"
                     onClick={() => {
                       if (option.label === "Blank table") {
-                        router.push(`/dashboard/tables/new`)
+                        setShowNameModal(true)
                       }
                     }}
                   >
@@ -134,13 +197,49 @@ export default function TablesPage() {
                   <div>Actions</div>
                 </div>
 
-                {/* Empty State */}
-                <div className="flex min-h-50 items-center justify-center py-12">
-                  <div className="text-center">
-                    <Table2 className="mx-auto mb-3 h-12 w-12 text-muted-foreground/50" />
-                    <p className="text-sm text-muted-foreground">No projects yet. Create your first project above.</p>
+                {/* Table List or Empty State */}
+                {spreadsheets === undefined ? (
+                  <div className="flex min-h-50 items-center justify-center py-12">
+                    <p className="text-sm text-muted-foreground">Loading...</p>
                   </div>
-                </div>
+                ) : spreadsheets.length === 0 ? (
+                  <div className="flex min-h-50 items-center justify-center py-12">
+                    <div className="text-center">
+                      <Table2 className="mx-auto mb-3 h-12 w-12 text-muted-foreground/50" />
+                      <p className="text-sm text-muted-foreground">No projects yet. Create your first project above.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    {spreadsheets.map((sheet) => (
+                      <div
+                        key={sheet._id}
+                        className="grid grid-cols-4 gap-4 border-b border-border px-6 py-4 hover:bg-muted/50 cursor-pointer transition-colors"
+                        onClick={() => router.push(`/dashboard/tables/${sheet.tableId}`)}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Table2 className="h-4 w-4 text-muted-foreground" />
+                          <span className="font-medium text-foreground">{sheet.name}</span>
+                        </div>
+                        <div className="text-muted-foreground">{sheet.numCols}</div>
+                        <div className="text-muted-foreground">{formatDate(sheet.updatedAt)}</div>
+                        <div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteTable(sheet._id)
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </section>
         </main>
@@ -148,6 +247,63 @@ export default function TablesPage() {
         {/* Footer */}
         {/* <AppFooter /> */}
       </div>
+
+      {/* Create Table Modal */}
+      {showNameModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-foreground">Create New Table</h3>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={() => {
+                  setShowNameModal(false)
+                  setNewTableName("")
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="mb-4">
+              <label htmlFor="tableName" className="block text-sm font-medium text-foreground mb-2">
+                Table Name
+              </label>
+              <Input
+                id="tableName"
+                type="text"
+                placeholder="Enter table name..."
+                value={newTableName}
+                onChange={(e) => setNewTableName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && newTableName.trim()) {
+                    handleCreateTable()
+                  }
+                }}
+                autoFocus
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowNameModal(false)
+                  setNewTableName("")
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleCreateTable}
+                disabled={!newTableName.trim() || isCreating}
+              >
+                {isCreating ? "Creating..." : "Create Table"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

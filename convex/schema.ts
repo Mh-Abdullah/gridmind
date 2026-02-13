@@ -2,9 +2,21 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  // Users table
+  users: defineTable({
+    email: v.string(),
+    name: v.optional(v.string()),
+    password: v.string(), // hashed password
+    avatar: v.optional(v.string()),
+    role: v.string(), // "user" or "admin"
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_email", ["email"]),
+
   // Spreadsheet documents - stores the main table metadata
   spreadsheets: defineTable({
-    tableId: v.string(), // Links to Prisma Table ID
+    tableId: v.string(),
     userId: v.string(),
     name: v.string(),
     numRows: v.number(),

@@ -108,7 +108,7 @@ Trying to access protected routes without login?
 | Can't access dashboard | Make sure you're logged in |
 | Can't see admin panel | Login as admin only |
 | Token expired | Logout and login again |
-| Database connection error | Check DATABASE_URL in .env |
+| Convex connection error | Check NEXT_PUBLIC_CONVEX_URL in .env |
 
 ---
 
@@ -118,6 +118,7 @@ Check these files:
 - [AUTHENTICATION_SETUP.md](AUTHENTICATION_SETUP.md) - Full technical details
 - [lib/auth.ts](lib/auth.ts) - Auth functions
 - [middleware.ts](middleware.ts) - Route protection
+- [convex/users.ts](convex/users.ts) - User database functions
 - [app/api/auth/](app/api/auth/) - API endpoints
 
 Enjoy! 🎉

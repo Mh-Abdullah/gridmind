@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+import { convexClient } from "@/lib/convex-server";
+import { api } from "@/convex/_generated/api";
 import { comparePassword, generateToken } from "@/lib/auth";
 
 export async function POST(request: NextRequest) {
@@ -14,10 +15,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find user
-    const user = await prisma.user.findUnique({
-      where: { email },
-    });
+    // Find user in Convex
+    const user = await convexClient.query(api.users.getUserByEmail, { email });
 
     if (!user || !user.password) {
       return NextResponse.json(
@@ -37,7 +36,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate token
-    const token = generateToken(user.id, user.email, user.role);
+    const token = generateToken(user._id, user.email, user.role);
     console.log(`[Login API] Generated token: ${token.substring(0, 50)}...`);
     console.log(`[Login API] JWT_SECRET from env: ${process.env.JWT_SECRET ? "Set" : "Not set"}`);
 
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest) {
       {
         message: "Login successful",
         user: {
-          id: user.id,
+          id: user._id,
           email: user.email,
           name: user.name,
           role: user.role,

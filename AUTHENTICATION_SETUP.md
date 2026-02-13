@@ -34,10 +34,10 @@ Your GridMind application now has a complete role-based authentication system wi
 - Global `useAuth()` hook for accessing user data and auth methods
 - Automatic token persistence using localStorage
 
-### 6. **Database Structure**
-- User model updated with hashed passwords
+### 6. **Database (Convex)**
+- Users stored in Convex database
 - Role field supports: `user`, `admin`
-- Relationships: Users → Dashboards, Tables, Rows
+- Real-time sync capabilities
 
 ---
 
@@ -65,7 +65,12 @@ Role: User
 lib/
 ├── auth.ts                    # Auth utilities (hashing, tokens)
 ├── auth-context.tsx          # Auth state management
-└── prisma.ts                 # Prisma client
+└── convex-server.ts          # Server-side Convex client
+
+convex/
+├── schema.ts                 # Convex database schema
+├── users.ts                  # User management functions
+└── spreadsheets.ts           # Spreadsheet functions
 
 app/
 ├── login/page.tsx            # Login page
@@ -83,9 +88,6 @@ app/
     └── dashboard-admin/page.tsx # Admin panel
 
 middleware.ts                 # Route protection & redirects
-prisma/
-├── schema.prisma            # Database schema
-└── seed.ts                  # Database seeding
 ```
 
 ---
@@ -157,7 +159,7 @@ Middleware Validates Token on Each Request
 
 Required in `.env`:
 ```
-DATABASE_URL="your-neon-connection-string"
+NEXT_PUBLIC_CONVEX_URL="your-convex-deployment-url"
 JWT_SECRET="your-secret-key"
 ```
 

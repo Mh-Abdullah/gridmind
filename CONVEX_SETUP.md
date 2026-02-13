@@ -81,8 +81,16 @@ The top header shows the current sync status:
 The Convex schema (`convex/schema.ts`) defines:
 
 ```typescript
+users            // User accounts
+  ├─ email       // Unique email
+  ├─ name        // Display name
+  ├─ password    // Hashed password
+  ├─ role        // "user" or "admin"
+  ├─ createdAt   // Timestamp
+  └─ updatedAt   // Timestamp
+
 spreadsheets     // Main spreadsheet metadata
-  ├─ tableId     // Links to Prisma Table ID
+  ├─ tableId     // Unique table identifier
   ├─ userId      // Owner
   ├─ name        // Project name
   ├─ numRows     // Grid dimensions
