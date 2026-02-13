@@ -2,14 +2,16 @@
 
 import type React from "react"
 
-import { useState, useRef, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useRef, useEffect, useCallback } from "react"
+import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { CSVExport } from "@/components/csv-export"
 import { CSVImport } from "@/components/csv-import"
 import { TextFormattingToolbar } from "@/components/text-formatting-toolbar"
+import { useAuth } from "@/lib/auth-context"
+import { useSpreadsheetSync } from "@/lib/use-spreadsheet-sync"
 import {
   ArrowLeft,
   Download,
@@ -23,6 +25,10 @@ import {
   Sparkles,
   Upload,
   Users,
+  Loader2,
+  Cloud,
+  CloudOff,
+  Check,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -51,22 +57,39 @@ interface CellFormatting {
 
 export default function TableEditorPage() {
   const router = useRouter()
-  const [projectName, setProjectName] = useState("Untitled Project")
-  const [numRows, setNumRows] = useState(1)
-  const [numCols, setNumCols] = useState(1)
-  const [cells, setCells] = useState<{ [key: string]: string }>({})
+  const params = useParams()
+  const { user } = useAuth()
+  const tableId = params?.id as string || "default"
+  const userId = user?.id || "anonymous"
+
+  // Real-time sync with Convex
+  const sync = useSpreadsheetSync({
+    tableId,
+    userId,
+    initialName: "Untitled Project",
+  })
+
+  // Local state that syncs with Convex
+  const [projectName, setProjectNameLocal] = useState("Untitled Project")
+  const [numRows, setNumRowsLocal] = useState(1)
+  const [numCols, setNumColsLocal] = useState(1)
+  const [cells, setCellsLocal] = useState<{ [key: string]: string }>({})
+  const [columnWidths, setColumnWidthsLocal] = useState<{ [key: number]: number }>({ 0: 150 })
+  const [rowHeights, setRowHeightsLocal] = useState<{ [key: number]: number }>({})
+  const [cellFormatting, setCellFormattingState] = useState<{ [key: string]: CellFormatting }>({})
+  
+  // UI state (not synced)
   const [selectedCell, setSelectedCell] = useState<{ row: number; col: number } | null>(null)
   const [selectedCells, setSelectedCells] = useState<Set<string>>(new Set())
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectionStart, setSelectionStart] = useState<{ row: number; col: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
-  const [columnWidths, setColumnWidths] = useState<{ [key: number]: number }>({ 0: 150 })
-  const [rowHeights, setRowHeights] = useState<{ [key: number]: number }>({})
-  const [cellFormatting, setCellFormattingState] = useState<{ [key: string]: CellFormatting }>({})
   const [mergedCells, setMergedCells] = useState<{ [key: string]: { rowSpan: number; colSpan: number } }>({})
   const [sortColumn, setSortColumn] = useState<number | null>(null)
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
   const [showCopyNotification, setShowCopyNotification] = useState(false)
+  const [isInitialized, setIsInitialized] = useState(false)
+  
   const resizingRef = useRef<{ col?: number; row?: number; startPos: number; startSize: number } | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
   const clipboardRef = useRef<{ cells: { [key: string]: string }; minRow: number; minCol: number; maxRow: number; maxCol: number } | null>(null)
@@ -75,6 +98,107 @@ export default function TableEditorPage() {
   const cellsRef = useRef(cells)
   const editingCellRef = useRef(editingCell)
   const pastePendingRef = useRef(false)
+
+  // Initialize local state from Convex data
+  useEffect(() => {
+    if (!isInitialized && sync.spreadsheet) {
+      setCellsLocal(sync.cells)
+      setCellFormattingState(sync.cellFormatting as { [key: string]: CellFormatting })
+      setColumnWidthsLocal(sync.columnWidths)
+      setRowHeightsLocal(sync.rowHeights)
+      setNumRowsLocal(sync.spreadsheet.numRows || 1)
+      setNumColsLocal(sync.spreadsheet.numCols || 1)
+      setProjectNameLocal(sync.spreadsheet.name || "Untitled Project")
+      setIsInitialized(true)
+    }
+  }, [sync.spreadsheet, sync.cells, isInitialized])
+
+  // Keep cells in sync with Convex (real-time updates from other clients)
+  useEffect(() => {
+    if (isInitialized) {
+      setCellsLocal(sync.cells)
+    }
+  }, [sync.cells, isInitialized])
+
+  // Wrapped setters that sync to Convex
+  const setCells = useCallback((newCells: { [key: string]: string } | ((prev: { [key: string]: string }) => { [key: string]: string })) => {
+    if (typeof newCells === 'function') {
+      setCellsLocal(prev => {
+        const updated = newCells(prev)
+        // Sync changed cells to Convex
+        const changedCells: { [key: string]: string } = {}
+        for (const key of Object.keys(updated)) {
+          if (updated[key] !== prev[key]) {
+            changedCells[key] = updated[key]
+          }
+        }
+        if (Object.keys(changedCells).length > 0) {
+          sync.setCellsBatch(changedCells)
+        }
+        return updated
+      })
+    } else {
+      setCellsLocal(newCells)
+      sync.setCellsBatch(newCells)
+    }
+  }, [sync])
+
+  const setNumRows = useCallback((rows: number) => {
+    setNumRowsLocal(rows)
+    sync.setMetadata({ numRows: rows })
+  }, [sync])
+
+  const setNumCols = useCallback((cols: number) => {
+    setNumColsLocal(cols)
+    sync.setMetadata({ numCols: cols })
+  }, [sync])
+
+  const setProjectName = useCallback((name: string) => {
+    setProjectNameLocal(name)
+    sync.setMetadata({ name })
+  }, [sync])
+
+  const setColumnWidths = useCallback((widths: { [key: number]: number } | ((prev: { [key: number]: number }) => { [key: number]: number })) => {
+    if (typeof widths === 'function') {
+      setColumnWidthsLocal(prev => {
+        const updated = widths(prev)
+        // Find changed columns and sync
+        for (const key of Object.keys(updated)) {
+          const colIndex = parseInt(key)
+          if (updated[colIndex] !== prev[colIndex]) {
+            sync.setColumnWidth(colIndex, updated[colIndex])
+          }
+        }
+        return updated
+      })
+    } else {
+      setColumnWidthsLocal(widths)
+      for (const [key, value] of Object.entries(widths)) {
+        sync.setColumnWidth(parseInt(key), value)
+      }
+    }
+  }, [sync])
+
+  const setRowHeights = useCallback((heights: { [key: number]: number } | ((prev: { [key: number]: number }) => { [key: number]: number })) => {
+    if (typeof heights === 'function') {
+      setRowHeightsLocal(prev => {
+        const updated = heights(prev)
+        // Find changed rows and sync
+        for (const key of Object.keys(updated)) {
+          const rowIndex = parseInt(key)
+          if (updated[rowIndex] !== prev[rowIndex]) {
+            sync.setRowHeight(rowIndex, updated[rowIndex])
+          }
+        }
+        return updated
+      })
+    } else {
+      setRowHeightsLocal(heights)
+      for (const [key, value] of Object.entries(heights)) {
+        sync.setRowHeight(parseInt(key), value)
+      }
+    }
+  }, [sync])
 
   // Helper function to calculate optimal column width based on content
   const calculateOptimalWidth = (colIndex: number): number => {
@@ -293,7 +417,9 @@ export default function TableEditorPage() {
   }
 
   const setCellValue = (row: number, col: number, value: string) => {
-    setCells({ ...cells, [`${row}-${col}`]: value })
+    const cellKey = `${row}-${col}`
+    setCellsLocal(prev => ({ ...prev, [cellKey]: value }))
+    sync.setCellValue(row, col, value)
   }
 
   const handleCellClick = (row: number, col: number, e?: React.MouseEvent) => {
@@ -579,6 +705,8 @@ export default function TableEditorPage() {
       ...prev,
       [`${row}-${col}`]: format,
     }))
+    // Sync formatting to Convex
+    sync.setCellFormatting(row, col, format)
   }
 
   const mergeCells = () => {
@@ -654,6 +782,30 @@ export default function TableEditorPage() {
           </div>
           <div className="flex items-center gap-2">
             <div className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Autorun Off</div>
+            {/* Real-time sync status indicator */}
+            <div className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs">
+              {sync.isSaving ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
+                  <span className="text-blue-500">Saving...</span>
+                </>
+              ) : sync.lastSaved ? (
+                <>
+                  <Cloud className="h-3 w-3 text-green-500" />
+                  <span className="text-green-500">Saved</span>
+                </>
+              ) : sync.isLoading ? (
+                <>
+                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                  <span className="text-muted-foreground">Loading...</span>
+                </>
+              ) : (
+                <>
+                  <CloudOff className="h-3 w-3 text-yellow-500" />
+                  <span className="text-yellow-500">Offline</span>
+                </>
+              )}
+            </div>
             <Button variant="ghost" size="icon" className="h-7 w-7">
               <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <circle cx="12" cy="12" r="10" />

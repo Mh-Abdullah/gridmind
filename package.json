@@ -10,7 +10,10 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:seed": "node prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "convex:dev": "convex dev",
+    "convex:deploy": "convex deploy",
+    "convex:codegen": "convex codegen"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
@@ -25,6 +28,7 @@
     "bcryptjs": "^3.0.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "convex": "^1.31.7",
     "dotenv": "^17.2.3",
     "js-cookie": "^3.0.5",
     "jsonwebtoken": "^9.0.3",
