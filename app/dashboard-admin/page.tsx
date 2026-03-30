@@ -78,7 +78,7 @@ export default function AdminDashboardPage() {
         <main className="flex-1 overflow-auto p-6">
           {/* Welcome Section */}
           <div className="mb-8">
-            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! 👑</h2>
+            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! </h2>
             <p className="text-muted-foreground">Manage users and monitor your GridMind platform</p>
           </div>
 

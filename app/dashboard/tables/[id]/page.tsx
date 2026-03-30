@@ -10,6 +10,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { CSVExport } from "@/components/csv-export"
 import { CSVImport } from "@/components/csv-import"
 import { TextFormattingToolbar } from "@/components/text-formatting-toolbar"
+import { AIChatPanel } from "@/components/ai-chat-panel"
 import { useAuth } from "@/lib/auth-context"
 import { useSpreadsheetSync } from "@/lib/use-spreadsheet-sync"
 import {
@@ -24,11 +25,13 @@ import {
   Trash2,
   Sparkles,
   Upload,
-  Users,
   Loader2,
   Cloud,
   CloudOff,
   Check,
+  X,
+  ChevronUp,
+  ChevronDown,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -90,8 +93,23 @@ export default function TableEditorPage() {
   const [showCopyNotification, setShowCopyNotification] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
   
+  // Search state
+  const [showSearch, setShowSearch] = useState(false)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [searchResults, setSearchResults] = useState<{ row: number; col: number }[]>([])
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0)
+  
+  // Filter state
+  const [showFilter, setShowFilter] = useState(false)
+  const [filters, setFilters] = useState<{ column: number; value: string; operator: "contains" | "equals" | "not-contains" | "not-equals" }[]>([])
+  const [filteredRows, setFilteredRows] = useState<number[] | null>(null)
+  
+  // AI Chat state
+  const [showAIChat, setShowAIChat] = useState(false)
+  
   const resizingRef = useRef<{ col?: number; row?: number; startPos: number; startSize: number } | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const clipboardRef = useRef<{ cells: { [key: string]: string }; minRow: number; minCol: number; maxRow: number; maxCol: number } | null>(null)
   const selectedCellsRef = useRef(selectedCells)
   const selectedCellRef = useRef(selectedCell)
@@ -363,7 +381,18 @@ export default function TableEditorPage() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!editingCellRef.current && (e.ctrlKey || e.metaKey)) {
-        if (e.key === 'c' || e.key === 'C') {
+        if (e.key === 'i' || e.key === 'I') {
+          e.preventDefault()
+          setShowAIChat(prev => !prev)
+        } else if (e.key === 'f' || e.key === 'F') {
+          e.preventDefault()
+          setShowSearch(prev => {
+            if (!prev) {
+              setTimeout(() => searchInputRef.current?.focus(), 100)
+            }
+            return true
+          })
+        } else if (e.key === 'c' || e.key === 'C') {
           e.preventDefault()
           // Inline copy logic
           console.log('Copy pressed, selectedCells size:', selectedCellsRef.current.size, 'selectedCell:', selectedCellRef.current)
@@ -689,6 +718,142 @@ export default function TableEditorPage() {
     alert(`Sorted by column ${getColumnLabel(colIndex)} in ${orderText} order`)
   }
 
+  // Search functionality
+  const handleSearch = useCallback((term: string) => {
+    setSearchTerm(term)
+    if (!term.trim()) {
+      setSearchResults([])
+      setCurrentSearchIndex(0)
+      return
+    }
+
+    const results: { row: number; col: number }[] = []
+    const lowerTerm = term.toLowerCase()
+    
+    for (let row = 0; row < numRows; row++) {
+      for (let col = 0; col < numCols; col++) {
+        const cellValue = getCellValue(row, col).toLowerCase()
+        if (cellValue.includes(lowerTerm)) {
+          results.push({ row, col })
+        }
+      }
+    }
+    
+    setSearchResults(results)
+    setCurrentSearchIndex(0)
+    
+    // Navigate to first result
+    if (results.length > 0) {
+      setSelectedCell(results[0])
+      setSelectedCells(new Set([`${results[0].row}-${results[0].col}`]))
+    }
+  }, [numRows, numCols, cells])
+
+  const navigateSearchResult = (direction: 'next' | 'prev') => {
+    if (searchResults.length === 0) return
+    
+    let newIndex = currentSearchIndex
+    if (direction === 'next') {
+      newIndex = (currentSearchIndex + 1) % searchResults.length
+    } else {
+      newIndex = (currentSearchIndex - 1 + searchResults.length) % searchResults.length
+    }
+    
+    setCurrentSearchIndex(newIndex)
+    const result = searchResults[newIndex]
+    setSelectedCell(result)
+    setSelectedCells(new Set([`${result.row}-${result.col}`]))
+  }
+
+  const toggleSearch = () => {
+    setShowSearch(prev => {
+      if (!prev) {
+        // Opening search, focus input after render
+        setTimeout(() => searchInputRef.current?.focus(), 100)
+      } else {
+        // Closing search, clear search state
+        setSearchTerm("")
+        setSearchResults([])
+        setCurrentSearchIndex(0)
+      }
+      return !prev
+    })
+  }
+
+  const isSearchMatch = (row: number, col: number): boolean => {
+    return searchResults.some(r => r.row === row && r.col === col)
+  }
+
+  const isCurrentSearchMatch = (row: number, col: number): boolean => {
+    if (searchResults.length === 0) return false
+    const current = searchResults[currentSearchIndex]
+    return current?.row === row && current?.col === col
+  }
+
+  // Filter functionality
+  const applyFilters = useCallback(() => {
+    if (filters.length === 0) {
+      setFilteredRows(null)
+      return
+    }
+
+    const matchingRows: number[] = []
+    
+    for (let row = 0; row < numRows; row++) {
+      let rowMatches = true
+      
+      for (const filter of filters) {
+        const cellValue = getCellValue(row, filter.column).toLowerCase()
+        const filterValue = filter.value.toLowerCase()
+        
+        switch (filter.operator) {
+          case 'contains':
+            if (!cellValue.includes(filterValue)) rowMatches = false
+            break
+          case 'equals':
+            if (cellValue !== filterValue) rowMatches = false
+            break
+          case 'not-contains':
+            if (cellValue.includes(filterValue)) rowMatches = false
+            break
+          case 'not-equals':
+            if (cellValue === filterValue) rowMatches = false
+            break
+        }
+        
+        if (!rowMatches) break
+      }
+      
+      if (rowMatches) {
+        matchingRows.push(row)
+      }
+    }
+    
+    setFilteredRows(matchingRows)
+  }, [filters, numRows, numCols, cells])
+
+  // Apply filters when filters change
+  useEffect(() => {
+    applyFilters()
+  }, [filters, applyFilters])
+
+  const addFilter = () => {
+    setFilters(prev => [...prev, { column: 0, value: "", operator: "contains" }])
+  }
+
+  const updateFilter = (index: number, updates: Partial<typeof filters[0]>) => {
+    setFilters(prev => prev.map((f, i) => i === index ? { ...f, ...updates } : f))
+  }
+
+  const removeFilter = (index: number) => {
+    setFilters(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const clearAllFilters = () => {
+    setFilters([])
+    setFilteredRows(null)
+  }
+
   const handleImportCSVData = (importedCells: { [key: string]: string }, rows: number, cols: number) => {
     setNumCols(cols)
     setNumRows(rows)
@@ -831,15 +996,25 @@ export default function TableEditorPage() {
 
       {/* Toolbar */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-2">
-        <Button variant="ghost" size="sm" className="gap-2">
+        {/* <Button variant="ghost" size="sm" className="gap-2">
           <Upload className="h-4 w-4" />
           Connect API
-        </Button>
+        </Button> */}
         <CSVImport onImport={handleImportCSVData} />
         <div className="h-4 w-px bg-border" />
-        <Button variant="ghost" size="sm" className="gap-2">
+        <Button 
+          variant={showFilter ? "secondary" : "ghost"} 
+          size="sm" 
+          className="gap-2"
+          onClick={() => setShowFilter(!showFilter)}
+        >
           <Filter className="h-4 w-4" />
           Filter
+          {filters.length > 0 && (
+            <span className="rounded-full bg-primary px-1.5 text-xs text-primary-foreground">
+              {filters.length}
+            </span>
+          )}
         </Button>
         <Button variant="ghost" size="sm" className="gap-2" onClick={handleSort}>
           <ArrowUpDown className="h-4 w-4" />
@@ -853,7 +1028,12 @@ export default function TableEditorPage() {
           <Trash2 className="h-4 w-4" />
           Dedupe
         </Button>
-        <Button variant="ghost" size="sm" className="gap-2">
+        <Button 
+          variant={showSearch ? "secondary" : "ghost"} 
+          size="sm" 
+          className="gap-2"
+          onClick={toggleSearch}
+        >
           <Search className="h-4 w-4" />
           Search
           <kbd className="pointer-events-none ml-1 hidden h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-xs font-medium opacity-100 sm:flex">
@@ -872,10 +1052,14 @@ export default function TableEditorPage() {
           <Share2 className="h-4 w-4" />
           Share
         </Button>
-        <Button variant="default" size="sm" className="gap-2">
+        <Button 
+          variant={showAIChat ? "secondary" : "default"} 
+          size="sm" 
+          className="gap-2"
+          onClick={() => setShowAIChat(!showAIChat)}
+        >
           <Sparkles className="h-4 w-4" />
-          AI Agent
-          <Users className="h-4 w-4" />
+          Grid AI
         </Button>
       </div>
 
@@ -892,9 +1076,152 @@ export default function TableEditorPage() {
         onUnmergeCells={unmergeCells}
       />
 
-      <div className="flex-1 overflow-auto" tabIndex={0} onKeyDown={(e) => {
-        selectedCell && handleCellKeyDown(e as any, selectedCell.row, selectedCell.col);
-      }}>
+      {/* Search Bar */}
+      {showSearch && (
+        <div className="flex items-center gap-2 border-b border-border bg-muted/30 px-4 py-2">
+          <Search className="h-4 w-4 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Search in cells..."
+            value={searchTerm}
+            onChange={(e) => handleSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                navigateSearchResult(e.shiftKey ? 'prev' : 'next')
+              } else if (e.key === 'Escape') {
+                toggleSearch()
+              }
+            }}
+            className="h-8 w-64 text-sm"
+          />
+          {searchResults.length > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {currentSearchIndex + 1} of {searchResults.length}
+            </span>
+          )}
+          {searchTerm && searchResults.length === 0 && (
+            <span className="text-xs text-muted-foreground">No results</span>
+          )}
+          <div className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => navigateSearchResult('prev')}
+              disabled={searchResults.length === 0}
+            >
+              <ChevronUp className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => navigateSearchResult('next')}
+              disabled={searchResults.length === 0}
+            >
+              <ChevronDown className="h-4 w-4" />
+            </Button>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={toggleSearch}
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      {/* Filter Panel */}
+      {showFilter && (
+        <div className="border-b border-border bg-muted/30 px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">Filters</span>
+              {filteredRows !== null && (
+                <span className="text-xs text-muted-foreground">
+                  ({filteredRows.length} of {numRows} rows)
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {filters.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={clearAllFilters}>
+                  Clear All
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                onClick={() => setShowFilter(false)}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+          
+          <div className="space-y-2">
+            {filters.map((filter, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <select
+                  value={filter.column}
+                  onChange={(e) => updateFilter(index, { column: parseInt(e.target.value) })}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+                >
+                  {Array.from({ length: numCols }).map((_, colIndex) => (
+                    <option key={colIndex} value={colIndex}>
+                      Column {getColumnLabel(colIndex)}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={filter.operator}
+                  onChange={(e) => updateFilter(index, { operator: e.target.value as typeof filter.operator })}
+                  className="h-8 rounded-md border border-border bg-background px-2 text-sm"
+                >
+                  <option value="contains">Contains</option>
+                  <option value="equals">Equals</option>
+                  <option value="not-contains">Does not contain</option>
+                  <option value="not-equals">Does not equal</option>
+                </select>
+                <Input
+                  type="text"
+                  placeholder="Filter value..."
+                  value={filter.value}
+                  onChange={(e) => updateFilter(index, { value: e.target.value })}
+                  className="h-8 w-48 text-sm"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7"
+                  onClick={() => removeFilter(index)}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            
+            <Button variant="outline" size="sm" onClick={addFilter} className="gap-1">
+              <Plus className="h-3 w-3" />
+              Add Filter
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Main content area - Table and Chat side by side */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Table container */}
+        <div className="flex flex-col flex-1 min-w-0 overflow-hidden transition-all duration-300">
+          <div className="flex-1 overflow-auto" tabIndex={0} onKeyDown={(e) => {
+            selectedCell && handleCellKeyDown(e as any, selectedCell.row, selectedCell.col);
+          }}>
         <div className="inline-block min-w-full">
           <table className="border-collapse">
             <thead>
@@ -931,7 +1258,7 @@ export default function TableEditorPage() {
               </tr>
             </thead>
             <tbody>
-              {Array.from({ length: numRows }).map((_, rowIndex) => (
+              {(filteredRows !== null ? filteredRows : Array.from({ length: numRows }, (_, i) => i)).map((rowIndex) => (
                 <tr key={rowIndex} style={{ height: rowHeights[rowIndex] || 36 }} className="group hover:bg-muted/20">
                   {/* Row number */}
                   <td className="relative left-0 z-10 border-b border-r border-border bg-muted/80 p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
@@ -962,6 +1289,8 @@ export default function TableEditorPage() {
 
                     const isSelected = selectedCell?.row === rowIndex && selectedCell?.col === colIndex
                     const isEditing = editingCell?.row === rowIndex && editingCell?.col === colIndex
+                    const isMatch = isSearchMatch(rowIndex, colIndex)
+                    const isCurrentMatch = isCurrentSearchMatch(rowIndex, colIndex)
                     const width = columnWidths[colIndex] || 150
                     const height = rowHeights[rowIndex] || 36
                     const formatting = getCellFormatting(rowIndex, colIndex)
@@ -971,20 +1300,12 @@ export default function TableEditorPage() {
                     const paddingLeft = 2 + charWidth // Base padding + one character width
                     const mergeInfo = getMergeInfo(rowIndex, colIndex)
 
-                    const cellStyle: React.CSSProperties = {
-                      width,
-                      height,
-                      backgroundColor: formatting.backgroundColor,
-                      color: formatting.textColor,
-                      fontSize: `${fontSize}px`,
-                      fontWeight: formatting.bold ? "bold" : "normal",
-                      fontStyle: formatting.italic ? "italic" : "normal",
-                      textDecoration: formatting.underline ? "underline" : "none",
-                      textAlign: formatting.alignment || "left",
-                      paddingLeft: `${paddingLeft}px`,
-                      paddingRight: "8px",
-                      paddingTop: "4px",
-                      paddingBottom: "4px",
+                    // Determine background color based on selection and search
+                    let bgColor = formatting.backgroundColor
+                    if (isCurrentMatch) {
+                      bgColor = "rgb(251, 191, 36)" // amber-400 for current match
+                    } else if (isMatch) {
+                      bgColor = "rgb(253, 230, 138)" // amber-200 for other matches
                     }
 
                     return (
@@ -995,7 +1316,7 @@ export default function TableEditorPage() {
                         style={{
                           width,
                           height,
-                          backgroundColor: formatting.backgroundColor,
+                          backgroundColor: bgColor,
                           borderBottom: "1px solid var(--border)",
                           borderRight: "1px solid var(--border)",
                           padding: 0,
@@ -1004,7 +1325,7 @@ export default function TableEditorPage() {
                         className={`${
                           isSelected ? "ring-2 ring-inset ring-primary" : ""
                         } ${
-                          isInSelectedRange(rowIndex, colIndex) ? "bg-primary/20" : ""
+                          isInSelectedRange(rowIndex, colIndex) && !isMatch ? "bg-primary/20" : ""
                         }`}
                         onClick={(e) => handleCellClick(rowIndex, colIndex, e)}
                         onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
@@ -1106,7 +1427,9 @@ export default function TableEditorPage() {
           />
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
-          <span>Records: {numRows} rows</span>
+          <span>
+            Records: {filteredRows !== null ? `${filteredRows.length} of ${numRows}` : numRows} rows
+          </span>
           <span>Views:</span>
           <Button variant="ghost" size="sm" className="h-7 gap-1 bg-primary/10 text-primary">
             <Columns3 className="h-3 w-3" />
@@ -1117,10 +1440,27 @@ export default function TableEditorPage() {
           </Button>
         </div>
       </div>
+        </div>
+
+        {/* AI Chat Panel - sits beside table */}
+        <AIChatPanel
+          isOpen={showAIChat}
+          onClose={() => setShowAIChat(false)}
+          tableContext={{
+            tableId,
+            projectName,
+            numRows,
+            numCols,
+            selectedCells,
+            getCellValue,
+            getColumnLabel,
+          }}
+        />
+      </div>
 
       {/* Copy Notification */}
       {showCopyNotification && (
-        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg">
+        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg z-50">
           Copied {selectedCells.size} cell(s)
         </div>
       )}

@@ -25,13 +25,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
-  // Load user from localStorage on mount
+  // Load user from localStorage and refresh from server on mount
   useEffect(() => {
-    const storedUser = localStorage.getItem("user");
-    if (storedUser) {
-      setUser(JSON.parse(storedUser));
-    }
-    setLoading(false);
+    const initAuth = async () => {
+      const storedUser = localStorage.getItem("user");
+      if (storedUser) {
+        // Set stored user immediately for fast initial render
+        setUser(JSON.parse(storedUser));
+        
+        // Fetch fresh user data from server
+        try {
+          const response = await fetch("/api/auth/me");
+          if (response.ok) {
+            const data = await response.json();
+            // Update with fresh data from database
+            localStorage.setItem("user", JSON.stringify(data.user));
+            setUser(data.user);
+          }
+        } catch (error) {
+          console.error("Failed to refresh user data:", error);
+        }
+      }
+      setLoading(false);
+    };
+    
+    initAuth();
   }, []);
 
   const login = async (email: string, password: string) => {

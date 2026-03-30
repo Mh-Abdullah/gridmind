@@ -140,7 +140,7 @@ export default function TablesPage() {
         <main className="flex-1 overflow-auto p-6">
           {/* Welcome Section */}
           <div className="mb-8">
-            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! 👑</h2>
+            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! </h2>
           </div>
             {/* Create New Project Section */}
             <section className="mb-8">

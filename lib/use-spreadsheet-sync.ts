@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Id } from "@/convex/_generated/dataModel";
@@ -295,6 +295,12 @@ export function useSpreadsheetSync({
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [flushCellUpdates]);
 
+  // Stabilize objects to prevent new references on every render
+  const stableCells = useMemo(() => cells ?? {}, [JSON.stringify(cells)]);
+  const stableCellFormatting = useMemo(() => cellFormatting ?? {}, [JSON.stringify(cellFormatting)]);
+  const stableColumnWidths = useMemo(() => columnWidths ?? {}, [JSON.stringify(columnWidths)]);
+  const stableRowHeights = useMemo(() => rowHeights ?? {}, [JSON.stringify(rowHeights)]);
+
   return {
     // State
     spreadsheetId,
@@ -302,11 +308,11 @@ export function useSpreadsheetSync({
     isSaving,
     lastSaved,
     
-    // Real-time data from Convex
-    cells: cells ?? {},
-    cellFormatting: cellFormatting ?? {},
-    columnWidths: columnWidths ?? {},
-    rowHeights: rowHeights ?? {},
+    // Real-time data from Convex (stabilized)
+    cells: stableCells,
+    cellFormatting: stableCellFormatting,
+    columnWidths: stableColumnWidths,
+    rowHeights: stableRowHeights,
     spreadsheet: spreadsheet ?? null,
 
     // Actions
