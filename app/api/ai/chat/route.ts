@@ -42,6 +42,15 @@ export async function POST(request: NextRequest) {
     const body: ChatRequest = await request.json()
     const { messages, context, tableInfo } = body
 
+    console.log("[Chat API] Request received:", { messageCount: messages?.length, hasContext: !!context, hasTableInfo: !!tableInfo })
+
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return NextResponse.json(
+        { error: "Messages array is required" },
+        { status: 400 }
+      )
+    }
+
     // Build the full message history with system prompt
     const fullMessages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
@@ -67,20 +76,26 @@ export async function POST(request: NextRequest) {
     const openaiKey = process.env.OPENAI_API_KEY
     const anthropicKey = process.env.ANTHROPIC_API_KEY
     
+    console.log("[Chat API] API keys status:", { hasOpenAI: !!openaiKey, hasAnthropic: !!anthropicKey })
+    
     if (openaiKey) {
       // Use OpenAI API
+      console.log("[Chat API] Using OpenAI")
       return await streamOpenAI(fullMessages, openaiKey)
     } else if (anthropicKey) {
       // Use Anthropic API
+      console.log("[Chat API] Using Anthropic")
       return await streamAnthropic(fullMessages, anthropicKey)
     } else {
       // Use mock response for demo
+      console.log("[Chat API] Using mock response (no API keys)")
       return await mockStreamResponse(messages[messages.length - 1]?.content || "", tableInfo)
     }
   } catch (error) {
     console.error("Chat API error:", error)
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
     return NextResponse.json(
-      { error: "Failed to process chat request" },
+      { error: "Failed to process chat request", details: errorMessage },
       { status: 500 }
     )
   }
@@ -88,6 +103,8 @@ export async function POST(request: NextRequest) {
 
 // OpenAI streaming implementation
 async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
+  console.log("[Chat API] Using OpenAI with model:", process.env.OPENAI_MODEL || "gpt-4o")
+  
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -95,7 +112,7 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4-turbo-preview",
+      model: process.env.OPENAI_MODEL || "gpt-4o",
       messages,
       stream: true,
       temperature: 0.7,
@@ -105,8 +122,27 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
 
   if (!response.ok) {
     const error = await response.text()
-    console.error("OpenAI API error:", error)
-    return NextResponse.json({ error: "AI service error" }, { status: 500 })
+    console.error("OpenAI API error:", response.status, error)
+    
+    // Return user-friendly error messages for common issues
+    if (response.status === 429) {
+      return NextResponse.json({ 
+        error: "OpenAI quota exceeded. Please check your billing or remove OPENAI_API_KEY to use demo mode.",
+        code: "quota_exceeded"
+      }, { status: 429 })
+    }
+    if (response.status === 401) {
+      return NextResponse.json({ 
+        error: "Invalid OpenAI API key. Please check your OPENAI_API_KEY.",
+        code: "invalid_key"
+      }, { status: 401 })
+    }
+    
+    return NextResponse.json({ 
+      error: "AI service error", 
+      details: `OpenAI API returned ${response.status}`,
+      apiError: error 
+    }, { status: 500 })
   }
 
   // Create a readable stream from the response
@@ -168,7 +204,10 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
 // Anthropic streaming implementation
 async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
   // Convert messages format for Anthropic
-  const systemMessage = messages.find(m => m.role === "system")
+  const systemMessage = messages
+    .filter(m => m.role === "system")
+    .map(m => m.content)
+    .join("\n\n")
   const chatMessages = messages
     .filter(m => m.role !== "system")
     .map(m => ({
@@ -186,7 +225,7 @@ async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
     body: JSON.stringify({
       model: process.env.ANTHROPIC_MODEL || "claude-3-sonnet-20240229",
       max_tokens: 2000,
-      system: systemMessage?.content || SYSTEM_PROMPT,
+      system: systemMessage || SYSTEM_PROMPT,
       messages: chatMessages,
       stream: true,
     }),
@@ -194,8 +233,12 @@ async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
 
   if (!response.ok) {
     const error = await response.text()
-    console.error("Anthropic API error:", error)
-    return NextResponse.json({ error: "AI service error" }, { status: 500 })
+    console.error("Anthropic API error:", response.status, error)
+    return NextResponse.json({ 
+      error: "AI service error", 
+      details: `Anthropic API returned ${response.status}`,
+      apiError: error 
+    }, { status: 500 })
   }
 
   const encoder = new TextEncoder()

@@ -106,6 +106,21 @@ export default function TableEditorPage() {
   
   // AI Chat state
   const [showAIChat, setShowAIChat] = useState(false)
+
+  // Delete All confirmation
+  const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false)
+  
+  // AI Pending Changes state (for keep/undo feature)
+  const [pendingAIChanges, setPendingAIChanges] = useState<{
+    type: 'generate' | 'enrich'
+    previousState: {
+      cells: { [key: string]: string }
+      numRows: number
+      numCols: number
+    } | null
+    newChanges: { row: number; col: number; value: string }[]
+    summary: string
+  } | null>(null)
   
   const resizingRef = useRef<{ col?: number; row?: number; startPos: number; startSize: number } | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
@@ -486,10 +501,15 @@ export default function TableEditorPage() {
       setSelectedCell({ row, col })
       setEditingCell(null)
     } else {
-      // Single click: Select the cell only (NO edit mode)
+      // Single click: if already editing another cell, move editing to this cell.
+      // Otherwise just select it.
       setSelectedCell({ row, col })
       setSelectedCells(new Set([cellKey]))
-      setEditingCell(null)
+      if (editingCellRef.current) {
+        setEditingCell({ row, col })
+      } else {
+        setEditingCell(null)
+      }
     }
   }
 
@@ -506,6 +526,10 @@ export default function TableEditorPage() {
       setSelectionStart({ row, col })
       setSelectedCell({ row, col })
       setSelectedCells(new Set([`${row}-${col}`]))
+      // Starting a drag-selection always exits editing mode
+      if (editingCellRef.current && (editingCellRef.current.row !== row || editingCellRef.current.col !== col)) {
+        setEditingCell(null)
+      }
     }
   }
 
@@ -533,6 +557,30 @@ export default function TableEditorPage() {
     }
     document.addEventListener("mouseup", handleMouseUp)
     return () => document.removeEventListener("mouseup", handleMouseUp)
+  }, [])
+
+  useEffect(() => {
+    const handleDocumentMouseDown = (event: MouseEvent) => {
+      const target = event.target
+      if (!(target instanceof Node)) return
+
+      const elementTarget = target instanceof Element ? target : null
+
+      // Deselect only when user clicks the top navigation/header bar.
+      const clickedTopNav = !!elementTarget?.closest("[data-top-nav='true']")
+      if (!clickedTopNav) {
+        return
+      }
+
+      if (selectedCellsRef.current.size > 0 || selectedCellRef.current) {
+        setSelectedCells(new Set())
+        setSelectedCell(null)
+        setEditingCell(null)
+      }
+    }
+
+    document.addEventListener("mousedown", handleDocumentMouseDown)
+    return () => document.removeEventListener("mousedown", handleDocumentMouseDown)
   }, [])
 
   const handleCellKeyDown = (e: React.KeyboardEvent, row: number, col: number) => {
@@ -564,6 +612,29 @@ export default function TableEditorPage() {
         setEditingCell(null)
       }
     }
+  }
+
+  const handleDeleteAll = async () => {
+    // Reset everything to default state
+    const defaultRows = 10
+    const defaultCols = 5
+    await sync.resetAll(defaultRows, defaultCols)  // Delete all data from DB
+    setCellsLocal({})
+    setCellFormattingState({})
+    setColumnWidthsLocal({ 0: 150 })
+    setRowHeightsLocal({})
+    setNumRowsLocal(defaultRows)
+    setNumColsLocal(defaultCols)
+    setSelectedCell(null)
+    setSelectedCells(new Set())
+    setEditingCell(null)
+    setMergedCells({})
+    setFilters([])
+    setFilteredRows(null)
+    setSortColumn(null)
+    setSortOrder("asc")
+    setPendingAIChanges(null)
+    setShowDeleteAllConfirm(false)
   }
 
   const handleAddRow = () => {
@@ -929,9 +1000,11 @@ export default function TableEditorPage() {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-background">
+    <div className="flex h-screen bg-background">
+      {/* Main content area - compresses when chat is open */}
+      <div className={`flex flex-col flex-1 min-w-0 transition-all duration-300 ${showAIChat ? '' : ''}`}>
       {/* Top Header */}
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+      <div data-top-nav="true" className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="icon" onClick={() => router.push("/dashboard/tables")}>
             <ArrowLeft className="h-4 w-4" />
@@ -991,6 +1064,15 @@ export default function TableEditorPage() {
             </svg>
             Need Help?
           </Button>
+          <Button 
+            variant={showAIChat ? "secondary" : "default"} 
+            size="sm" 
+            className="gap-2"
+            onClick={() => setShowAIChat(!showAIChat)}
+          >
+            <Sparkles className="h-4 w-4" />
+            Grid AI
+          </Button>
         </div>
       </div>
 
@@ -1028,6 +1110,15 @@ export default function TableEditorPage() {
           <Trash2 className="h-4 w-4" />
           Dedupe
         </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={() => setShowDeleteAllConfirm(true)}
+        >
+          <Trash2 className="h-4 w-4" />
+          Delete All
+        </Button>
         <Button 
           variant={showSearch ? "secondary" : "ghost"} 
           size="sm" 
@@ -1051,15 +1142,6 @@ export default function TableEditorPage() {
         <Button variant="ghost" size="sm" className="gap-2">
           <Share2 className="h-4 w-4" />
           Share
-        </Button>
-        <Button 
-          variant={showAIChat ? "secondary" : "default"} 
-          size="sm" 
-          className="gap-2"
-          onClick={() => setShowAIChat(!showAIChat)}
-        >
-          <Sparkles className="h-4 w-4" />
-          Grid AI
         </Button>
       </div>
 
@@ -1215,10 +1297,10 @@ export default function TableEditorPage() {
         </div>
       )}
 
-      {/* Main content area - Table and Chat side by side */}
+      {/* Main content area - Table */}
       <div className="flex flex-1 overflow-hidden">
         {/* Table container */}
-        <div className="flex flex-col flex-1 min-w-0 overflow-hidden transition-all duration-300">
+        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <div className="flex-1 overflow-auto" tabIndex={0} onKeyDown={(e) => {
             selectedCell && handleCellKeyDown(e as any, selectedCell.row, selectedCell.col);
           }}>
@@ -1311,6 +1393,7 @@ export default function TableEditorPage() {
                     return (
                       <td
                         key={colIndex}
+                        data-grid-cell="true"
                         rowSpan={mergeInfo.rowSpan}
                         colSpan={mergeInfo.colSpan}
                         style={{
@@ -1441,8 +1524,11 @@ export default function TableEditorPage() {
         </div>
       </div>
         </div>
+      </div>
+      </div>
 
-        {/* AI Chat Panel - sits beside table */}
+      {/* AI Chat Panel - full right side of page */}
+      <div data-ai-chat-panel="true">
         <AIChatPanel
           isOpen={showAIChat}
           onClose={() => setShowAIChat(false)}
@@ -1455,6 +1541,104 @@ export default function TableEditorPage() {
             getCellValue,
             getColumnLabel,
           }}
+          onAddColumns={(columns) => {
+            // Save previous state for undo
+            const previousState = {
+              cells: { ...cells },
+              numRows,
+              numCols,
+            }
+
+            // Calculate new changes
+            const startCol = numCols
+            let maxColIndex = startCol
+            const newChanges: { row: number; col: number; value: string }[] = []
+
+            columns.forEach((column, colOffset) => {
+              const colIndex = startCol + colOffset
+              maxColIndex = Math.max(maxColIndex, colIndex + 1)
+
+              column.values.forEach(({ rowIndex, value }) => {
+                newChanges.push({ row: rowIndex, col: colIndex, value })
+              })
+            })
+
+            // Apply changes immediately (preview)
+            newChanges.forEach(({ row, col, value }) => {
+              setCellValue(row, col, value)
+            })
+            setNumCols(maxColIndex)
+
+            // Store for undo
+            const columnNames = columns.map(c => c.header).join(", ")
+            setPendingAIChanges({
+              type: 'enrich',
+              previousState,
+              newChanges,
+              summary: `Added columns: ${columnNames}`,
+            })
+          }}
+          onGenerateTable={(table) => {
+            // Save previous state for undo
+            const previousState = {
+              cells: { ...cells },
+              numRows,
+              numCols,
+            }
+
+            const { headers, rows } = table
+            const newNumCols = headers.length
+            const newNumRows = rows.length
+            const newChanges: { row: number; col: number; value: string }[] = []
+
+            // Collect all changes
+            rows.forEach((row, rowIndex) => {
+              row.forEach((value, colIndex) => {
+                newChanges.push({ row: rowIndex, col: colIndex, value })
+              })
+            })
+
+            // Apply changes immediately (preview)
+            setNumCols(newNumCols)
+            setNumRows(newNumRows)
+            newChanges.forEach(({ row, col, value }) => {
+              setCellValue(row, col, value)
+            })
+
+            // Store for undo
+            setPendingAIChanges({
+              type: 'generate',
+              previousState,
+              newChanges,
+              summary: `Generated ${newNumRows} rows × ${newNumCols} columns`,
+            })
+          }}
+          pendingChanges={pendingAIChanges}
+          onKeepChanges={() => setPendingAIChanges(null)}
+          onUndoChanges={() => {
+            if (pendingAIChanges?.previousState) {
+              const { cells: prevCells, numRows: prevRows, numCols: prevCols } = pendingAIChanges.previousState
+
+              // Restore dimensions (syncs to Convex)
+              setNumRows(prevRows)
+              setNumCols(prevCols)
+
+              // Clear new cells first
+              pendingAIChanges.newChanges.forEach(({ row, col }) => {
+                const key = `${row}-${col}`
+                if (!prevCells[key]) {
+                  setCellValue(row, col, '')
+                }
+              })
+
+              // Restore previous cell values
+              Object.entries(prevCells).forEach(([key, value]) => {
+                const [row, col] = key.split('-').map(Number)
+                setCellValue(row, col, value)
+              })
+            }
+            setPendingAIChanges(null)
+          }}
         />
       </div>
 
@@ -1462,6 +1646,39 @@ export default function TableEditorPage() {
       {showCopyNotification && (
         <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg z-50">
           Copied {selectedCells.size} cell(s)
+        </div>
+      )}
+
+      {/* Delete All Confirmation Dialog */}
+      {showDeleteAllConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-background p-6 shadow-xl">
+            <div className="mb-1 flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-destructive/10">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <h2 className="text-base font-semibold">Delete all data?</h2>
+            </div>
+            <p className="mb-6 pl-13 text-sm text-muted-foreground">
+              This will permanently clear all cells, formatting, filters, and sort settings. The spreadsheet will be reset to its default state. This action cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteAllConfirm(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDeleteAll}
+              >
+                Delete All
+              </Button>
+            </div>
+          </div>
         </div>
       )}
     </div>

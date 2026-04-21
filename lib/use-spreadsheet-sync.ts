@@ -49,6 +49,7 @@ export function useSpreadsheetSync({
   const updateCellFormattingMutation = useMutation(api.spreadsheets.updateCellFormatting);
   const updateColumnWidthMutation = useMutation(api.spreadsheets.updateColumnWidth);
   const updateRowHeightMutation = useMutation(api.spreadsheets.updateRowHeight);
+  const resetSpreadsheetMutation = useMutation(api.spreadsheets.resetSpreadsheet);
 
   // Convex queries - real-time subscriptions
   const spreadsheet = useQuery(
@@ -269,6 +270,23 @@ export function useSpreadsheetSync({
     [spreadsheetId, updateRowHeightMutation]
   );
 
+  // Reset all spreadsheet data to defaults
+  const resetAll = useCallback(
+    async (defaultNumRows = 10, defaultNumCols = 5) => {
+      if (!spreadsheetId) return;
+      try {
+        await resetSpreadsheetMutation({
+          spreadsheetId,
+          defaultNumRows,
+          defaultNumCols,
+        });
+      } catch (error) {
+        console.error("Failed to reset spreadsheet:", error);
+      }
+    },
+    [spreadsheetId, resetSpreadsheetMutation]
+  );
+
   // Flush on unmount
   useEffect(() => {
     return () => {
@@ -323,6 +341,7 @@ export function useSpreadsheetSync({
     setCellFormatting,
     setColumnWidth,
     setRowHeight,
+    resetAll,
     flushCellUpdates,
   };
 }

@@ -243,6 +243,61 @@ export const clearAllCells = mutation({
   },
 });
 
+// Reset spreadsheet to default: deletes all cells, formatting, column widths, row heights and resets metadata
+export const resetSpreadsheet = mutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    defaultNumRows: v.optional(v.number()),
+    defaultNumCols: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const { spreadsheetId, defaultNumRows = 10, defaultNumCols = 5 } = args
+
+    // Delete all cells
+    const cells = await ctx.db
+      .query("cells")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheetId))
+      .collect()
+    for (const cell of cells) {
+      await ctx.db.delete(cell._id)
+    }
+
+    // Delete all cell formatting
+    const formatting = await ctx.db
+      .query("cellFormatting")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheetId))
+      .collect()
+    for (const fmt of formatting) {
+      await ctx.db.delete(fmt._id)
+    }
+
+    // Delete all column widths
+    const widths = await ctx.db
+      .query("columnWidths")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheetId))
+      .collect()
+    for (const w of widths) {
+      await ctx.db.delete(w._id)
+    }
+
+    // Delete all row heights
+    const heights = await ctx.db
+      .query("rowHeights")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheetId))
+      .collect()
+    for (const h of heights) {
+      await ctx.db.delete(h._id)
+    }
+
+    // Reset spreadsheet metadata to defaults
+    await ctx.db.patch(spreadsheetId, {
+      numRows: defaultNumRows,
+      numCols: defaultNumCols,
+      updatedAt: Date.now(),
+    })
+  },
+});
+
 // Get cell formatting
 export const getCellFormatting = query({
   args: { spreadsheetId: v.id("spreadsheets") },
