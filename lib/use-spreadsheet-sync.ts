@@ -115,14 +115,17 @@ export function useSpreadsheetSync({
     setIsSaving(true);
     try {
       const updates = Array.from(pendingCellUpdates.current.entries()).map(
-        ([cellKey, value]) => ({ cellKey, value })
+        ([cellKey, value]) => ({ cellKey, value: value == null ? "" : String(value) })
       );
       pendingCellUpdates.current.clear();
 
-      await updateCellsBatch({
-        spreadsheetId,
-        cells: updates,
-      });
+      const CHUNK_SIZE = 50;
+      for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
+        await updateCellsBatch({
+          spreadsheetId,
+          cells: updates.slice(i, i + CHUNK_SIZE),
+        });
+      }
       setLastSaved(new Date());
     } catch (error) {
       console.error("Failed to save cells:", error);
@@ -183,12 +186,15 @@ export function useSpreadsheetSync({
       try {
         const updates = Object.entries(cellUpdates).map(([cellKey, value]) => ({
           cellKey,
-          value,
+          value: value == null ? "" : String(value),
         }));
-        await updateCellsBatch({
-          spreadsheetId,
-          cells: updates,
-        });
+        const CHUNK_SIZE = 50;
+        for (let i = 0; i < updates.length; i += CHUNK_SIZE) {
+          await updateCellsBatch({
+            spreadsheetId,
+            cells: updates.slice(i, i + CHUNK_SIZE),
+          });
+        }
         setLastSaved(new Date());
       } catch (error) {
         console.error("Failed to batch save cells:", error);
