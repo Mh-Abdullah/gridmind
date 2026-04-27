@@ -291,31 +291,6 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ── SSE helpers ───────────────────────────────────────────────────────────────
-function createSSE() {
-  let controller!: ReadableStreamDefaultController<Uint8Array>
-  const stream = new ReadableStream<Uint8Array>({
-    start(c) { controller = c },
-  })
-  const enc = new TextEncoder()
-  const send = (data: object) =>
-    controller.enqueue(enc.encode(`data: ${JSON.stringify(data)}\n\n`))
-  const close = () => controller.close()
-  return { stream, send, close }
-}
-
-function sseResponse(stream: ReadableStream) {
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      "Connection": "keep-alive",
-    },
-  })
-}
-
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
-
 // Handle GENERATE mode - create new table data from scratch
 async function handleGenerateMode(
   prompt: string,
@@ -324,18 +299,11 @@ async function handleGenerateMode(
   apiKey: string
 ) {
   console.log("[Scraper] Starting GENERATE mode with prompt:", prompt)
-
-  const { stream, send, close } = createSSE()
-
-  // Run async work and stream results
-  ;(async () => {
-    try {
-      send({ type: "start", mode: "generate" })
-
-      const result = await generateText({
-        model: openai("gpt-4o-mini"),
-        system: SCRAPER_GENERATE_PROMPT,
-        prompt: `User request: ${prompt}
+  
+  const result = await generateText({
+    model: openai("gpt-4o-mini"),
+    system: SCRAPER_GENERATE_PROMPT,
+    prompt: `User request: ${prompt}
 
 Context:
 - Project name: ${tableInfo.projectName}
@@ -351,76 +319,76 @@ Instructions:
 4. Return real, scraped data - do not make up information
 
 Please search, scrape, and return the data in the required JSON format.`,
-        tools: {
-          scrapeWebPage,
-          searchWeb,
-        },
-        stopWhen: stepCountIs(10),
-      })
+    tools: {
+      scrapeWebPage,
+      searchWeb,
+    },
+    stopWhen: stepCountIs(10), // Allow up to 10 steps for multi-tool execution
+  })
 
-      console.log("[Scraper] Generate result - steps:", result.steps.length)
+  console.log("[Scraper] Generate result - steps:", result.steps.length)
+  console.log("[Scraper] Tool calls made:", result.steps.flatMap(s => s.toolCalls?.map(tc => tc.toolName) || []))
+  
+  const responseText = result.text
+  console.log("[Scraper] Response text length:", responseText?.length)
+  console.log("[Scraper] Response text preview:", responseText?.slice(0, 500))
 
-      const responseText = result.text
-      let generatedData: { table: GeneratedTable; summary: string } | null = null
-
-      try {
-        const codeBlockMatch = responseText.match(/```json\s*([\s\S]*?)```/)
-        if (codeBlockMatch) {
-          generatedData = JSON.parse(codeBlockMatch[1].trim())
-        }
-        if (!generatedData) {
-          const jsonMatch = responseText.match(/\{[\s\S]*"table"\s*:\s*\{[\s\S]*"headers"[\s\S]*"rows"[\s\S]*\}\s*\}/)
-          if (jsonMatch) generatedData = JSON.parse(jsonMatch[0])
-        }
-        if (!generatedData) {
-          try {
-            const parsed = JSON.parse(responseText)
-            if (parsed.table?.headers && parsed.table?.rows) generatedData = parsed
-          } catch { /* not JSON */ }
-        }
-      } catch (e) {
-        console.error("[Scraper] Failed to parse JSON from generation response:", e)
-      }
-
-      if (!generatedData?.table) {
-        send({
-          type: "error",
-          error: "Failed to parse structured data from agent response.",
-          rawResponse: responseText?.slice(0, 1000),
-          steps: result.steps.length,
-        })
-        return
-      }
-
-      const { headers, rows } = generatedData.table
-      console.log("[Scraper] Streaming", rows.length, "rows ×", headers.length, "cols")
-
-      // Emit dimension info so the client can prepare the table
-      send({ type: "headers", headers, numRows: rows.length, steps: result.steps.length })
-
-      // Stream each row with a small delay for visual effect
-      for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
-        send({ type: "row", rowIndex, values: rows[rowIndex] })
-        await sleep(25)
-      }
-
-      send({
-        type: "done",
-        summary: generatedData.summary || "Data generated successfully",
-        steps: result.steps.length,
-        numRows: rows.length,
-        numCols: headers.length,
-        headers,
-      })
-    } catch (err) {
-      console.error("[Scraper] Generate stream error:", err)
-      send({ type: "error", error: err instanceof Error ? err.message : "Generation failed" })
-    } finally {
-      close()
+  // Try to extract JSON from the response - multiple strategies
+  let generatedData: { table: GeneratedTable; summary: string } | null = null
+  
+  try {
+    // Strategy 1: Look for JSON code block
+    const codeBlockMatch = responseText.match(/```json\s*([\s\S]*?)```/)
+    if (codeBlockMatch) {
+      generatedData = JSON.parse(codeBlockMatch[1].trim())
+      console.log("[Scraper] Extracted JSON from code block")
     }
-  })()
+    
+    // Strategy 2: Look for JSON with table/headers/rows structure
+    if (!generatedData) {
+      const jsonMatch = responseText.match(/\{[\s\S]*"table"\s*:\s*\{[\s\S]*"headers"[\s\S]*"rows"[\s\S]*\}\s*\}/)
+      if (jsonMatch) {
+        generatedData = JSON.parse(jsonMatch[0])
+        console.log("[Scraper] Extracted JSON from pattern match")
+      }
+    }
+    
+    // Strategy 3: Try parsing the entire response as JSON
+    if (!generatedData) {
+      try {
+        const parsed = JSON.parse(responseText)
+        if (parsed.table && parsed.table.headers && parsed.table.rows) {
+          generatedData = parsed
+          console.log("[Scraper] Parsed entire response as JSON")
+        }
+      } catch {
+        // Not valid JSON, continue
+      }
+    }
+  } catch (e) {
+    console.error("[Scraper] Failed to parse JSON from generation response:", e)
+  }
 
-  return sseResponse(stream)
+  if (!generatedData || !generatedData.table) {
+    console.log("[Scraper] No valid JSON found in response")
+    return NextResponse.json({
+      success: false,
+      mode: "generate",
+      error: "Failed to parse structured data from agent response. The AI may not have returned proper JSON format.",
+      rawResponse: responseText?.slice(0, 1000),
+      steps: result.steps.length,
+    })
+  }
+
+  console.log("[Scraper] Successfully parsed table with", generatedData.table.headers.length, "columns and", generatedData.table.rows.length, "rows")
+  
+  return NextResponse.json({
+    success: true,
+    mode: "generate",
+    table: generatedData.table,
+    summary: generatedData.summary || "Data generated successfully",
+    steps: result.steps.length,
+  })
 }
 
 // Handle ENRICH mode - add columns to existing rows
@@ -433,26 +401,21 @@ async function handleEnrichMode(
   apiKey: string
 ) {
   console.log("[Scraper] Starting ENRICH mode with prompt:", prompt)
+  
+  // Build context about the selected rows
+  let rowContext = "Selected rows data:\n"
+  for (const row of selectedRows!) {
+    rowContext += `\nRow ${row.rowIndex + 1}:\n`
+    for (const [colIndex, value] of Object.entries(row.cells)) {
+      const colLabel = existingColumns[parseInt(colIndex)] || `Column ${parseInt(colIndex) + 1}`
+      rowContext += `  ${colLabel}: "${value}"\n`
+    }
+  }
 
-  const { stream, send, close } = createSSE()
-
-  ;(async () => {
-    try {
-      send({ type: "start", mode: "enrich" })
-
-      let rowContext = "Selected rows data:\n"
-      for (const row of selectedRows!) {
-        rowContext += `\nRow ${row.rowIndex + 1}:\n`
-        for (const [colIndex, value] of Object.entries(row.cells)) {
-          const colLabel = existingColumns[parseInt(colIndex)] || `Column ${parseInt(colIndex) + 1}`
-          rowContext += `  ${colLabel}: "${value}"\n`
-        }
-      }
-
-      const result = await generateText({
-        model: openai("gpt-4o-mini"),
-        system: SCRAPER_ENRICH_PROMPT,
-        prompt: `User request: ${prompt}
+  const result = await generateText({
+    model: openai("gpt-4o-mini"),
+    system: SCRAPER_ENRICH_PROMPT,
+    prompt: `User request: ${prompt}
 
 Spreadsheet context:
 - Project: ${tableInfo.projectName}
@@ -465,81 +428,77 @@ ${formatChatHistory(chatHistory)}
 ${rowContext}
 
 Please scrape the requested data and return it in the required JSON format.`,
-        tools: {
-          scrapeWebPage,
-          searchWeb,
-          extractFromRowData,
-        },
-        stopWhen: stepCountIs(10),
-      })
+    tools: {
+      scrapeWebPage,
+      searchWeb,
+      extractFromRowData,
+    },
+    stopWhen: stepCountIs(10), // Allow up to 10 steps for multi-tool execution
+  })
 
-      console.log("[Scraper] Enrich result - steps:", result.steps.length)
+  console.log("[Scraper] Enrich result - steps:", result.steps.length)
+  console.log("[Scraper] Tool calls made:", result.steps.flatMap(s => s.toolCalls?.map(tc => tc.toolName) || []))
+  
+  const responseText = result.text
+  console.log("[Scraper] Response text length:", responseText?.length)
+  console.log("[Scraper] Response text preview:", responseText?.slice(0, 500))
 
-      const responseText = result.text
-      let scrapedData: { columns: ScrapedColumn[]; summary: string } | null = null
-
-      try {
-        const codeBlockMatch = responseText.match(/```json\s*([\s\S]*?)```/)
-        if (codeBlockMatch) scrapedData = JSON.parse(codeBlockMatch[1].trim())
-        if (!scrapedData) {
-          const jsonMatch = responseText.match(/\{[\s\S]*"columns"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-          if (jsonMatch) scrapedData = JSON.parse(jsonMatch[0])
-        }
-        if (!scrapedData) {
-          try {
-            const parsed = JSON.parse(responseText)
-            if (parsed.columns && Array.isArray(parsed.columns)) scrapedData = parsed
-          } catch { /* not JSON */ }
-        }
-      } catch (e) {
-        console.error("[Scraper] Failed to parse JSON from enrich response:", e)
-      }
-
-      if (!scrapedData?.columns?.length) {
-        send({
-          type: "error",
-          error: "Failed to parse structured data from agent response.",
-          rawResponse: responseText?.slice(0, 1000),
-          steps: result.steps.length,
-        })
-        return
-      }
-
-      const startCol = tableInfo.numCols
-      console.log("[Scraper] Streaming", scrapedData.columns.length, "new columns starting at col", startCol)
-
-      // Announce new column headers first
-      const newHeaders = scrapedData.columns.map((c, i) => ({
-        colIndex: startCol + i,
-        header: c.header,
-      }))
-      send({ type: "col-headers", columns: newHeaders, steps: result.steps.length })
-
-      // Stream each cell value
-      for (let ci = 0; ci < scrapedData.columns.length; ci++) {
-        const col = scrapedData.columns[ci]
-        const colIndex = startCol + ci
-        for (const { rowIndex, value } of col.values) {
-          send({ type: "cell", rowIndex, colIndex, value })
-          await sleep(30)
-        }
-      }
-
-      send({
-        type: "done",
-        summary: scrapedData.summary || "Data enrichment complete",
-        steps: result.steps.length,
-        columns: newHeaders,
-      })
-    } catch (err) {
-      console.error("[Scraper] Enrich stream error:", err)
-      send({ type: "error", error: err instanceof Error ? err.message : "Enrichment failed" })
-    } finally {
-      close()
+  // Try to extract JSON from the response - multiple strategies
+  let scrapedData: { columns: ScrapedColumn[]; summary: string } | null = null
+  
+  try {
+    // Strategy 1: Look for JSON code block
+    const codeBlockMatch = responseText.match(/```json\s*([\s\S]*?)```/)
+    if (codeBlockMatch) {
+      scrapedData = JSON.parse(codeBlockMatch[1].trim())
+      console.log("[Scraper] Extracted JSON from code block")
     }
-  })()
+    
+    // Strategy 2: Look for JSON with columns structure
+    if (!scrapedData) {
+      const jsonMatch = responseText.match(/\{[\s\S]*"columns"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+      if (jsonMatch) {
+        scrapedData = JSON.parse(jsonMatch[0])
+        console.log("[Scraper] Extracted JSON from pattern match")
+      }
+    }
+    
+    // Strategy 3: Try parsing the entire response as JSON
+    if (!scrapedData) {
+      try {
+        const parsed = JSON.parse(responseText)
+        if (parsed.columns && Array.isArray(parsed.columns)) {
+          scrapedData = parsed
+          console.log("[Scraper] Parsed entire response as JSON")
+        }
+      } catch {
+        // Not valid JSON, continue
+      }
+    }
+  } catch (e) {
+    console.error("[Scraper] Failed to parse JSON from enrich response:", e)
+  }
 
-  return sseResponse(stream)
+  if (!scrapedData || !scrapedData.columns || scrapedData.columns.length === 0) {
+    console.log("[Scraper] No valid JSON found in enrich response")
+    return NextResponse.json({
+      success: false,
+      mode: "enrich",
+      error: "Failed to parse structured data from agent response. The AI may not have returned proper JSON format.",
+      rawResponse: responseText?.slice(0, 1000),
+      steps: result.steps.length,
+    })
+  }
+
+  console.log("[Scraper] Successfully parsed", scrapedData.columns.length, "columns for enrichment")
+  
+  return NextResponse.json({
+    success: true,
+    mode: "enrich",
+    columns: scrapedData.columns,
+    summary: scrapedData.summary || "Data enrichment complete",
+    steps: result.steps.length,
+  })
 }
 
 function formatChatHistory(chatHistory?: ScraperRequest["chatHistory"]): string {
