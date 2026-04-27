@@ -190,6 +190,10 @@ export const updateCellsBatch = mutation({
     })),
   },
   handler: async (ctx, args) => {
+    // Guard: spreadsheet may have been deleted while pending updates were queued
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) return;
+
     for (const cell of args.cells) {
       const existing = await ctx.db
         .query("cells")

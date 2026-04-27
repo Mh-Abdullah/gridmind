@@ -106,19 +106,26 @@ export default function TableEditorPage() {
   
   // AI Chat state
   const [showAIChat, setShowAIChat] = useState(false)
+  // Captures undo state at stream start so incremental writes can be undone
+  const streamUndoRef = useRef<{ cells: { [key: string]: string }; numRows: number; numCols: number } | null>(null)
 
   // Delete All confirmation
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false)
   
+  // AI row highlights: green = inserted/changed, red = deleted (shown as the row above where deletion happened)
+  const [aiHighlightRows, setAiHighlightRows] = useState<{ [rowIndex: number]: 'added' | 'changed' | 'deleted' }>({})  
+
   // AI Pending Changes state (for keep/undo feature)
   const [pendingAIChanges, setPendingAIChanges] = useState<{
-    type: 'generate' | 'enrich'
+    type: 'generate' | 'enrich' | 'agent'
     previousState: {
       cells: { [key: string]: string }
       numRows: number
       numCols: number
     } | null
     newChanges: { row: number; col: number; value: string }[]
+    deletedRows?: number[]
+    insertedRows?: { row: number; values: string[] }[]
     summary: string
   } | null>(null)
   
@@ -1340,12 +1347,19 @@ export default function TableEditorPage() {
               </tr>
             </thead>
             <tbody>
-              {(filteredRows !== null ? filteredRows : Array.from({ length: numRows }, (_, i) => i)).map((rowIndex) => (
-                <tr key={rowIndex} style={{ height: rowHeights[rowIndex] || 36 }} className="group hover:bg-muted/20">
+              {(filteredRows !== null ? filteredRows : Array.from({ length: numRows }, (_, i) => i)).map((rowIndex) => {
+                const aiHighlight = aiHighlightRows[rowIndex]
+                const trBg = aiHighlight === 'added' ? 'rgba(34,197,94,0.12)' : aiHighlight === 'changed' ? 'rgba(59,130,246,0.10)' : aiHighlight === 'deleted' ? 'rgba(239,68,68,0.12)' : undefined
+                const rowNumBg = aiHighlight === 'added' ? 'rgba(34,197,94,0.25)' : aiHighlight === 'changed' ? 'rgba(59,130,246,0.20)' : aiHighlight === 'deleted' ? 'rgba(239,68,68,0.25)' : undefined
+                return (
+                <tr key={rowIndex} style={{ height: rowHeights[rowIndex] || 36, backgroundColor: trBg }} className="group hover:bg-muted/20">
                   {/* Row number */}
-                  <td className="relative left-0 z-10 border-b border-r border-border bg-muted/80 p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
+                  <td className="relative left-0 z-10 border-b border-r border-border p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
+                      style={{ backgroundColor: rowNumBg ?? undefined }}
                       onDoubleClick={() => onRowHeaderDoubleClick(rowIndex)}
                   >
+                    {aiHighlight === 'added' && <span className="mr-0.5 text-green-500">+</span>}
+                    {aiHighlight === 'deleted' && <span className="mr-0.5 text-red-500">−</span>}
                     {rowIndex + 1}
                     {/* Resize handle */}
                     <div
@@ -1482,7 +1496,8 @@ export default function TableEditorPage() {
                   })}
                   <td className="border-b border-border bg-muted/5"></td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -1613,8 +1628,130 @@ export default function TableEditorPage() {
               summary: `Generated ${newNumRows} rows × ${newNumCols} columns`,
             })
           }}
+          onStreamStart={({ mode, numRows: newNumRows, numCols: newNumCols }) => {
+            // Capture undo snapshot before any cells start streaming in
+            streamUndoRef.current = { cells: { ...cells }, numRows, numCols }
+            // Expand table dimensions upfront so cells render immediately as they arrive
+            if (mode === "generate") {
+              if (newNumRows !== undefined) setNumRows(newNumRows)
+              if (newNumCols !== undefined) setNumCols(newNumCols)
+            } else {
+              // enrich: expand columns
+              if (newNumCols !== undefined) setNumCols(newNumCols)
+            }
+          }}
+          onApplyChanges={(changes) => {
+            changes.forEach(({ row, col, value }) => setCellValue(row, col, value))
+          }}
+          onAgentStart={() => {
+            // Capture undo snapshot before any agent operations start
+            streamUndoRef.current = { cells: { ...cells }, numRows, numCols }
+          }}
+          onStreamDone={({ mode, summary, changes }) => {
+            if (!streamUndoRef.current) return
+            setPendingAIChanges({
+              type: mode,
+              previousState: streamUndoRef.current,
+              newChanges: changes,
+              summary,
+            })
+            streamUndoRef.current = null
+          }}
+          onDeleteRow={(rowIndex) => {
+            // Mark row for red highlight before removing it
+            setAiHighlightRows(prev => ({ ...prev, [rowIndex]: 'deleted' }))
+            // Shift all rows from rowIndex+1 upward by 1
+            const newCells: { [key: string]: string } = {}
+            // delta: only the cells that actually changed (cleared + shifted)
+            const delta: { [key: string]: string } = {}
+            Object.entries(cells).forEach(([key, value]) => {
+              const [r, c] = key.split('-').map(Number)
+              if (r < rowIndex) {
+                newCells[key] = value
+              } else if (r === rowIndex) {
+                // deleted row → clear in Convex
+                delta[key] = ''
+              } else {
+                // shifted up: set new key, clear old key
+                newCells[`${r - 1}-${c}`] = value
+                delta[`${r - 1}-${c}`] = value
+                delta[key] = ''
+              }
+            })
+            // Shift highlight indices down too
+            setAiHighlightRows(prev => {
+              const next: typeof prev = {}
+              Object.entries(prev).forEach(([k, v]) => {
+                const r = Number(k)
+                if (r < rowIndex) next[r] = v
+                else if (r > rowIndex) next[r - 1] = v
+                // deleted row itself is dropped
+              })
+              return next
+            })
+            setCellsLocal(newCells)
+            sync.setCellsBatch(delta)
+            setNumRows(Math.max(1, numRows - 1))
+          }}
+          onInsertRow={(rowIndex, values) => {
+            // Shift all rows from rowIndex downward by 1, then fill new row
+            const newCells: { [key: string]: string } = {}
+            // delta: only the cells that actually changed (shifted + new row)
+            const delta: { [key: string]: string } = {}
+            Object.entries(cells).forEach(([key, value]) => {
+              const [r, c] = key.split('-').map(Number)
+              if (r < rowIndex) {
+                newCells[key] = value
+              } else {
+                // shifted down: set new key, clear old key
+                newCells[`${r + 1}-${c}`] = value
+                delta[`${r + 1}-${c}`] = value
+                delta[key] = ''
+              }
+            })
+            values.forEach((value, c) => {
+              if (value) {
+                newCells[`${rowIndex}-${c}`] = value
+                delta[`${rowIndex}-${c}`] = value
+              }
+            })
+            // Shift existing highlights down, then mark the new row green
+            setAiHighlightRows(prev => {
+              const next: typeof prev = {}
+              Object.entries(prev).forEach(([k, v]) => {
+                const r = Number(k)
+                next[r >= rowIndex ? r + 1 : r] = v
+              })
+              next[rowIndex] = 'added'
+              return next
+            })
+            setCellsLocal(newCells)
+            sync.setCellsBatch(delta)
+            setNumRows(numRows + 1)
+          }}
+          onAgentDone={({ summary, cellChanges, deletedRows, insertedRows }) => {
+            // Store undo state captured before operations started
+            if (!streamUndoRef.current) return
+            // Mark edited cells' rows as 'changed' (only if not already 'added')
+            setAiHighlightRows(prev => {
+              const next = { ...prev }
+              cellChanges.forEach(({ row }) => {
+                if (!next[row]) next[row] = 'changed'
+              })
+              return next
+            })
+            setPendingAIChanges({
+              type: 'agent',
+              previousState: streamUndoRef.current,
+              newChanges: cellChanges,
+              deletedRows,
+              insertedRows,
+              summary,
+            })
+            streamUndoRef.current = null
+          }}
           pendingChanges={pendingAIChanges}
-          onKeepChanges={() => setPendingAIChanges(null)}
+          onKeepChanges={() => { setPendingAIChanges(null); setAiHighlightRows({}) }}
           onUndoChanges={() => {
             if (pendingAIChanges?.previousState) {
               const { cells: prevCells, numRows: prevRows, numCols: prevCols } = pendingAIChanges.previousState
@@ -1638,6 +1775,7 @@ export default function TableEditorPage() {
               })
             }
             setPendingAIChanges(null)
+            setAiHighlightRows({})
           }}
         />
       </div>

@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
 
 // OpenAI streaming implementation
 async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
-  console.log("[Chat API] Using OpenAI with model:", process.env.OPENAI_MODEL || "gpt-4o")
+  console.log("[Chat API] Using OpenAI with model:", process.env.OPENAI_MODEL || "gpt-4o-mini")
   
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -112,7 +112,7 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
       "Authorization": `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-4o",
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       messages,
       stream: true,
       temperature: 0.7,
@@ -204,10 +204,7 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
 // Anthropic streaming implementation
 async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
   // Convert messages format for Anthropic
-  const systemMessage = messages
-    .filter(m => m.role === "system")
-    .map(m => m.content)
-    .join("\n\n")
+  const systemMessage = messages.find(m => m.role === "system")
   const chatMessages = messages
     .filter(m => m.role !== "system")
     .map(m => ({
@@ -225,7 +222,7 @@ async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
     body: JSON.stringify({
       model: process.env.ANTHROPIC_MODEL || "claude-3-sonnet-20240229",
       max_tokens: 2000,
-      system: systemMessage || SYSTEM_PROMPT,
+      system: systemMessage?.content || SYSTEM_PROMPT,
       messages: chatMessages,
       stream: true,
     }),
