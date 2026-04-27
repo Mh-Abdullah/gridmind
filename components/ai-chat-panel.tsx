@@ -138,6 +138,16 @@ interface PendingAIChanges {
   summary: string
 }
 
+interface CellFormatting {
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  alignment?: "left" | "center" | "right"
+  textColor?: string
+  backgroundColor?: string
+  fontSize?: number
+}
+
 interface AIChatPanelProps {
   isOpen: boolean
   onClose: () => void
@@ -149,8 +159,10 @@ interface AIChatPanelProps {
     selectedCells?: Set<string>
     getCellValue: (row: number, col: number) => string
     getColumnLabel: (index: number) => string
+    getCellFormatting?: (row: number, col: number) => CellFormatting
   }
-  onApplyChanges?: (changes: { row: number; col: number; value: string }[]) => void
+  onApplyChanges?: (changes: { row: number; col: number; value: string }[], newNumRows?: number, newNumCols?: number) => void
+  onApplyFormatting?: (formatting: { row: number; col: number; format: CellFormatting }[]) => void
   onAddColumns?: (columns: ScrapedColumn[]) => void
   onGenerateTable?: (table: GeneratedTable) => void
   pendingChanges?: PendingAIChanges | null
@@ -158,7 +170,7 @@ interface AIChatPanelProps {
   onUndoChanges?: () => void
 }
 
-export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onAddColumns, onGenerateTable, pendingChanges, onKeepChanges, onUndoChanges }: AIChatPanelProps) {
+export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onApplyFormatting, onAddColumns, onGenerateTable, pendingChanges, onKeepChanges, onUndoChanges }: AIChatPanelProps) {
   const welcomeMessage: Message = {
     id: "welcome",
     role: "assistant",
@@ -172,7 +184,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   const [isExpanded, setIsExpanded] = useState(false)
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null)
   const [showScrollButton, setShowScrollButton] = useState(false)
-  const [selectedAgent, setSelectedAgent] = useState("Agent")
+  const [selectedAgent, setSelectedAgent] = useState("Scraper")
   const [showAgentMenu, setShowAgentMenu] = useState(false)
   
   // Chat history state
@@ -557,6 +569,128 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     }
   }
 
+  // Handle general-purpose spreadsheet Agent
+  const handleAgentTask = async (prompt: string, assistantMessageId: string, chatHistory: APIMessage[]) => {
+    if (!tableContext) {
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMessageId
+          ? { ...m, content: "⚠️ **No spreadsheet open**\n\nPlease open a spreadsheet table first.", isStreaming: false }
+          : m
+      ))
+      return
+    }
+
+    const { numRows, numCols, getCellValue, getColumnLabel, selectedCells, getCellFormatting } = tableContext
+
+    // Snapshot all cell data
+    const cells: { [key: string]: string } = {}
+    for (let r = 0; r < numRows; r++) {
+      for (let c = 0; c < numCols; c++) {
+        const val = getCellValue(r, c)
+        if (val) cells[`${r}-${c}`] = val
+      }
+    }
+
+    // Build selected cells list with coordinates + values + current formatting
+    const hasSelection = selectedCells && selectedCells.size > 0
+    const selectedCellsList: { row: number; col: number; colLabel: string; value: string; formatting?: CellFormatting }[] = []
+    if (hasSelection) {
+      selectedCells!.forEach(cellKey => {
+        const [row, col] = cellKey.split('-').map(Number)
+        selectedCellsList.push({
+          row,
+          col,
+          colLabel: getColumnLabel(col),
+          value: getCellValue(row, col),
+          formatting: getCellFormatting ? getCellFormatting(row, col) : undefined,
+        })
+      })
+      selectedCellsList.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col)
+    }
+
+    setMessages(prev => prev.map(m =>
+      m.id === assistantMessageId
+        ? { ...m, content: hasSelection
+            ? `🤖 **Agent working on ${selectedCells!.size} selected cell${selectedCells!.size === 1 ? '' : 's'}...**`
+            : `🤖 **Agent working...**\n\nAnalyzing your spreadsheet and applying changes.`
+          }
+        : m
+    ))
+
+    try {
+      const response = await fetch("/api/ai/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt,
+          cells,
+          numRows,
+          numCols,
+          chatHistory,
+          selectedCells: hasSelection ? selectedCellsList : undefined,
+        }),
+      })
+
+      const result = await response.json()
+
+      if (!result.success) {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMessageId
+            ? { ...m, content: `❌ **Agent failed**\n\n${result.error || "Unknown error occurred"}`, isStreaming: false }
+            : m
+        ))
+        return
+      }
+
+      const { changes, formatting: formattingChanges, summary, newNumRows, newNumCols } = result as {
+        changes: { row: number; col: number; value: string }[]
+        formatting?: { row: number; col: number; format: CellFormatting }[]
+        summary: string
+        newNumRows?: number
+        newNumCols?: number
+      }
+
+      const hasValueChanges = changes && changes.length > 0
+      const hasFormatChanges = formattingChanges && formattingChanges.length > 0
+
+      if (hasValueChanges && onApplyChanges) {
+        onApplyChanges(changes, newNumRows, newNumCols)
+      }
+
+      if (hasFormatChanges && onApplyFormatting) {
+        onApplyFormatting(formattingChanges!)
+      }
+
+      if (hasValueChanges || hasFormatChanges) {
+        const parts: string[] = [`✅ **Done!**\n\n${summary}`]
+        if (hasValueChanges) parts.push(`**Cell edits:** ${changes.length}`)
+        if (hasFormatChanges) parts.push(`**Formatting changes:** ${formattingChanges!.length}`)
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMessageId
+            ? { ...m, content: parts.join('\n'), isStreaming: false }
+            : m
+        ))
+      } else {
+        setMessages(prev => prev.map(m =>
+          m.id === assistantMessageId
+            ? { ...m, content: `ℹ️ **No changes needed**\n\n${summary}`, isStreaming: false }
+            : m
+        ))
+      }
+    } catch (error) {
+      console.error("Agent error:", error)
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMessageId
+          ? {
+              ...m,
+              content: `❌ **Error**\n\nFailed to run the agent. ${error instanceof Error ? error.message : "Please try again."}`,
+              isStreaming: false,
+            }
+          : m
+      ))
+    }
+  }
+
   const handleSendMessage = async () => {
     if (!inputValue.trim() || isLoading) return
 
@@ -590,9 +724,15 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       isStreaming: true,
     }])
 
-    // Handle Web Scraper agent differently
-    if (selectedAgent === "Agent") {
+    // Route to the correct agent
+    if (selectedAgent === "Scraper") {
       await handleScraperAgent(userMessage.content, assistantMessageId, conversationHistory)
+      setIsLoading(false)
+      return
+    }
+
+    if (selectedAgent === "Agent") {
+      await handleAgentTask(userMessage.content, assistantMessageId, conversationHistory)
       setIsLoading(false)
       return
     }
@@ -1129,7 +1269,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                 
                 {showAgentMenu && (
                   <div className="absolute bottom-full left-0 mb-1 w-48 rounded-md border border-border bg-popover p-1 shadow-lg z-50">
-                    {["Chat", "Agent"].map((agent) => (
+                    {["Chat", "Agent", "Scraper"].map((agent) => (
                       <button
                         key={agent}
                         className={`w-full text-left px-3 py-1.5 text-sm rounded hover:bg-muted ${
@@ -1142,7 +1282,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                       >
                         <div className="flex items-center gap-2">
                           <span>{agent}</span>
-                          {agent === "Agent" && (
+                          {agent === "Scraper" && (
                             <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded">New</span>
                           )}
                         </div>

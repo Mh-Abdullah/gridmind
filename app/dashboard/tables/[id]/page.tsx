@@ -615,26 +615,35 @@ export default function TableEditorPage() {
   }
 
   const handleDeleteAll = async () => {
-    // Reset everything to default state
-    const defaultRows = 10
-    const defaultCols = 5
-    await sync.resetAll(defaultRows, defaultCols)  // Delete all data from DB
+    const defaultRows = 1
+    const defaultCols = 1
+
+    // Reset ALL local state immediately for instant UI response
     setCellsLocal({})
     setCellFormattingState({})
-    setColumnWidthsLocal({ 0: 150 })
+    setColumnWidthsLocal({})
     setRowHeightsLocal({})
+    setMergedCells({})
     setNumRowsLocal(defaultRows)
     setNumColsLocal(defaultCols)
     setSelectedCell(null)
     setSelectedCells(new Set())
     setEditingCell(null)
-    setMergedCells({})
     setFilters([])
     setFilteredRows(null)
     setSortColumn(null)
     setSortOrder("asc")
     setPendingAIChanges(null)
     setShowDeleteAllConfirm(false)
+
+    // Persist full reset to DB: deletes all cells, formatting, column widths,
+    // row heights and resets numRows/numCols to defaults
+    await sync.resetAll(defaultRows, defaultCols)
+
+    // Force re-initialisation from the now-clean DB state so every piece of
+    // local state (including columnWidths, rowHeights, formatting) is guaranteed
+    // to match the database after the reset
+    setIsInitialized(false)
   }
 
   const handleAddRow = () => {
@@ -1540,6 +1549,38 @@ export default function TableEditorPage() {
             selectedCells,
             getCellValue,
             getColumnLabel,
+            getCellFormatting,
+          }}
+          onApplyFormatting={(formattingChanges) => {
+            formattingChanges.forEach(({ row, col, format }) => {
+              const existing = getCellFormatting(row, col)
+              setCellFormatting(row, col, { ...existing, ...format })
+            })
+          }}
+          onApplyChanges={(changes, newNumRows, newNumCols) => {
+            // Save previous state for undo
+            const previousState = {
+              cells: { ...cells },
+              numRows,
+              numCols,
+            }
+
+            // Apply dimension changes first
+            if (newNumRows && newNumRows > numRows) setNumRows(newNumRows)
+            if (newNumCols && newNumCols > numCols) setNumCols(newNumCols)
+
+            // Apply cell changes
+            changes.forEach(({ row, col, value }) => {
+              setCellValue(row, col, value)
+            })
+
+            // Store for undo
+            setPendingAIChanges({
+              type: 'generate',
+              previousState,
+              newChanges: changes,
+              summary: `Agent applied ${changes.length} change${changes.length === 1 ? "" : "s"}`,
+            })
           }}
           onAddColumns={(columns) => {
             // Save previous state for undo
