@@ -1599,6 +1599,9 @@ export default function TableEditorPage() {
               const colIndex = startCol + colOffset
               maxColIndex = Math.max(maxColIndex, colIndex + 1)
 
+              // Write header to row 0
+              newChanges.push({ row: 0, col: colIndex, value: column.header })
+
               column.values.forEach(({ rowIndex, value }) => {
                 newChanges.push({ row: rowIndex, col: colIndex, value })
               })
@@ -1629,13 +1632,18 @@ export default function TableEditorPage() {
 
             const { headers, rows } = table
             const newNumCols = headers.length
-            const newNumRows = rows.length
+            const newNumRows = rows.length + 1 // +1 for header row
             const newChanges: { row: number; col: number; value: string }[] = []
 
-            // Collect all changes
+            // Write headers to row 0
+            headers.forEach((header, colIndex) => {
+              newChanges.push({ row: 0, col: colIndex, value: header })
+            })
+
+            // Collect data rows starting at row 1
             rows.forEach((row, rowIndex) => {
               row.forEach((value, colIndex) => {
-                newChanges.push({ row: rowIndex, col: colIndex, value })
+                newChanges.push({ row: rowIndex + 1, col: colIndex, value })
               })
             })
 

@@ -221,11 +221,21 @@ export function useSpreadsheetSync({
     async (row: number, col: number, formatting: CellFormatting) => {
       if (!spreadsheetId) return;
 
+      // Convex v.optional() rejects null — strip null/undefined values and coerce types
+      const sanitized: CellFormatting = {};
+      if (formatting.bold != null) sanitized.bold = Boolean(formatting.bold);
+      if (formatting.italic != null) sanitized.italic = Boolean(formatting.italic);
+      if (formatting.underline != null) sanitized.underline = Boolean(formatting.underline);
+      if (formatting.alignment != null) sanitized.alignment = formatting.alignment;
+      if (formatting.textColor != null) sanitized.textColor = String(formatting.textColor);
+      if (formatting.backgroundColor != null) sanitized.backgroundColor = String(formatting.backgroundColor);
+      if (formatting.fontSize != null) sanitized.fontSize = Number(formatting.fontSize);
+
       try {
         await updateCellFormattingMutation({
           spreadsheetId,
           cellKey: `${row}-${col}`,
-          formatting,
+          formatting: sanitized,
         });
       } catch (error) {
         console.error("Failed to update cell formatting:", error);

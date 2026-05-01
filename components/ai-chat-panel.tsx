@@ -37,6 +37,9 @@ interface Message {
   content: string
   timestamp: Date
   isStreaming?: boolean
+  thinkingSteps?: string[]
+  activeStep?: string
+  isThinkingDone?: boolean
 }
 
 interface APIMessage {
@@ -168,6 +171,71 @@ interface AIChatPanelProps {
   pendingChanges?: PendingAIChanges | null
   onKeepChanges?: () => void
   onUndoChanges?: () => void
+}
+
+// Collapsible step-by-step thinking box — like GitHub Copilot's "Thinking..." panel
+function ThinkingBox({
+  steps,
+  activeStep,
+  isDone,
+}: {
+  steps: string[]
+  activeStep?: string
+  isDone: boolean
+}) {
+  const [expanded, setExpanded] = useState(true)
+  const didAutoCollapse = useRef(false)
+
+  useEffect(() => {
+    if (isDone && !didAutoCollapse.current && steps.length > 0) {
+      didAutoCollapse.current = true
+      const t = setTimeout(() => setExpanded(false), 1800)
+      return () => clearTimeout(t)
+    }
+  }, [isDone, steps.length])
+
+  const headerText = isDone
+    ? `Used ${steps.length} step${steps.length !== 1 ? 's' : ''}`
+    : activeStep || 'Working...'
+
+  return (
+    <div className="mb-2 rounded border border-border/50 bg-muted/30 text-xs overflow-hidden w-full">
+      <button
+        onClick={() => setExpanded(v => !v)}
+        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/50 transition-colors"
+      >
+        {isDone ? (
+          <Check className="h-3 w-3 text-green-500 shrink-0" />
+        ) : (
+          <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
+        )}
+        <span className={`font-medium truncate flex-1 ${isDone ? 'text-muted-foreground' : 'text-foreground'}`}>
+          {headerText}
+        </span>
+        {expanded ? (
+          <ChevronUp className="h-3 w-3 text-muted-foreground shrink-0" />
+        ) : (
+          <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
+        )}
+      </button>
+      {expanded && (steps.length > 0 || activeStep) && (
+        <div className="px-3 pb-2 pt-1 border-t border-border/40 space-y-1.5">
+          {steps.map((step, i) => (
+            <div key={i} className="flex items-start gap-2 text-muted-foreground min-w-0">
+              <Check className="h-3 w-3 mt-0.5 text-green-500 shrink-0" />
+              <span className="truncate min-w-0">{step}</span>
+            </div>
+          ))}
+          {activeStep && (
+            <div className="flex items-start gap-2 text-foreground min-w-0">
+              <Loader2 className="h-3 w-3 mt-0.5 animate-spin text-primary shrink-0" />
+              <span className="truncate min-w-0">{activeStep}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onApplyFormatting, onAddColumns, onGenerateTable, pendingChanges, onKeepChanges, onUndoChanges }: AIChatPanelProps) {
@@ -348,222 +416,140 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   }
 
   // Get context from the spreadsheet
-  const getSpreadsheetContext = () => {
-    if (!tableContext) return ""
-    
-    const { numRows, numCols, selectedCells, getCellValue, getColumnLabel } = tableContext
-    let context = `\n\nSpreadsheet Context:\n- Total rows: ${numRows}\n- Total columns: ${numCols}`
-    
-    if (selectedCells && selectedCells.size > 0) {
-      context += `\n- Selected cells: ${selectedCells.size}`
-      const selectedData: string[] = []
-      selectedCells.forEach(cellKey => {
-        const [row, col] = cellKey.split('-').map(Number)
-        const value = getCellValue(row, col)
-        if (value) {
-          selectedData.push(`${getColumnLabel(col)}${row + 1}: "${value}"`)
-        }
-      })
-      if (selectedData.length > 0) {
-        context += `\n- Selected data: ${selectedData.slice(0, 10).join(", ")}${selectedData.length > 10 ? "..." : ""}`
+  const buildSpreadsheetSnapshot = () => {
+    if (!tableContext) return null
+    const { numRows, numCols, getCellValue, getColumnLabel, selectedCells } = tableContext
+
+    // Build column headers row
+    const colLabels = Array.from({ length: numCols }, (_, i) => getColumnLabel(i))
+
+    // Build rows as objects { col: value }
+    const rows: { [col: string]: string }[] = []
+    for (let r = 0; r < numRows; r++) {
+      const row: { [col: string]: string } = {}
+      let hasData = false
+      for (let c = 0; c < numCols; c++) {
+        const val = getCellValue(r, c)
+        if (val) { row[colLabels[c]] = val; hasData = true }
       }
+      if (hasData) rows.push(row)
     }
-    
-    return context
+
+    const selectedInfo: string[] = []
+    if (selectedCells && selectedCells.size > 0) {
+      selectedCells.forEach(cellKey => {
+        const [r, c] = cellKey.split('-').map(Number)
+        const val = getCellValue(r, c)
+        if (val) selectedInfo.push(`${getColumnLabel(c)}${r + 1}: "${val}"`)
+      })
+    }
+
+    return {
+      columns: colLabels,
+      rows,
+      numRows,
+      numCols,
+      selectedCells: selectedInfo,
+    }
   }
 
   // Handle Web Scraper agent
   const handleScraperAgent = async (prompt: string, assistantMessageId: string, chatHistory: APIMessage[]) => {
     const hasSelection = tableContext?.selectedCells && tableContext.selectedCells.size > 0
-
-    // Determine mode: generate (no selection) or enrich (with selection)
     const mode = hasSelection ? "enrich" : "generate"
 
+    // Build request body
+    let requestBody: Record<string, unknown>
     if (mode === "generate") {
-      // GENERATE MODE: Create new table data from scratch
-      setMessages(prev => prev.map(m => 
-        m.id === assistantMessageId 
-          ? { ...m, content: `🔍 **Generating table data...**\n\nSearching the web and scraping information based on your request. This may take a moment.` }
-          : m
-      ))
-
-      try {
-        const response = await fetch("/api/ai/scraper", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt,
-            mode: "generate",
-            chatHistory,
-            tableInfo: {
-              tableId: tableContext?.tableId || "new",
-              projectName: tableContext?.projectName || "Untitled",
-              numRows: tableContext?.numRows || 0,
-              numCols: tableContext?.numCols || 0,
-            },
-          }),
-        })
-
-        const result = await response.json()
-
-        if (!result.success) {
-          setMessages(prev => prev.map(m => 
-            m.id === assistantMessageId 
-              ? { 
-                  ...m, 
-                  content: `❌ **Generation failed**\n\n${result.error || "Unknown error occurred"}\n\n${result.rawResponse ? `Raw response:\n\`\`\`\n${result.rawResponse.slice(0, 500)}...\n\`\`\`` : ""}`,
-                  isStreaming: false,
-                }
-              : m
-          ))
-          return
-        }
-
-        // Apply the generated table
-        if (result.table && onGenerateTable) {
-          onGenerateTable(result.table)
-          
-          const { headers, rows } = result.table
-          setMessages(prev => prev.map(m => 
-            m.id === assistantMessageId 
-              ? { 
-                  ...m, 
-                  content: `✅ **Table generated!**\n\n${result.summary || ""}\n\n**Created:** ${rows.length} rows × ${headers.length} columns\n\n**Columns:** ${headers.join(", ")}\n\n*${result.steps} AI steps executed*`,
-                  isStreaming: false,
-                }
-              : m
-          ))
-        } else {
-          setMessages(prev => prev.map(m => 
-            m.id === assistantMessageId 
-              ? { 
-                  ...m, 
-                  content: `⚠️ **No data generated**\n\nI couldn't find the requested information. Try being more specific in your request.\n\n${result.summary || ""}`,
-                  isStreaming: false,
-                }
-              : m
-          ))
-        }
-      } catch (error) {
-        console.error("Scraper error:", error)
-        setMessages(prev => prev.map(m => 
-          m.id === assistantMessageId 
-            ? { 
-                ...m, 
-                content: `❌ **Error**\n\nFailed to run the scraper agent. ${error instanceof Error ? error.message : "Please try again."}`,
-                isStreaming: false,
-              }
-            : m
-        ))
+      requestBody = {
+        prompt,
+        mode: "generate",
+        chatHistory,
+        tableInfo: {
+          tableId: tableContext?.tableId || "new",
+          projectName: tableContext?.projectName || "Untitled",
+          numRows: tableContext?.numRows || 0,
+          numCols: tableContext?.numCols || 0,
+        },
       }
-      return
+    } else {
+      const { selectedCells, getCellValue, numCols, getColumnLabel } = tableContext!
+      const rowsMap = new Map<number, { [colIndex: string]: string }>()
+      selectedCells!.forEach(cellKey => {
+        const [row, col] = cellKey.split('-').map(Number)
+        if (!rowsMap.has(row)) rowsMap.set(row, {})
+        const rowData = rowsMap.get(row)!
+        for (let c = 0; c < numCols; c++) {
+          const value = getCellValue(row, c)
+          if (value) rowData[c.toString()] = value
+        }
+      })
+      const selectedRows = Array.from(rowsMap.entries()).map(([rowIndex, cells]) => ({ rowIndex, cells }))
+      const existingColumns: string[] = []
+      for (let c = 0; c < numCols; c++) existingColumns.push(getColumnLabel(c))
+
+      requestBody = {
+        prompt,
+        mode: "enrich",
+        chatHistory,
+        selectedRows,
+        existingColumns,
+        tableInfo: {
+          tableId: tableContext!.tableId,
+          projectName: tableContext!.projectName,
+          numRows: tableContext!.numRows,
+          numCols: tableContext!.numCols,
+        },
+      }
     }
-
-    // ENRICH MODE: Add columns to existing selected rows
-    const { selectedCells, getCellValue, numCols, getColumnLabel } = tableContext!
-
-    // Group selected cells by row
-    const rowsMap = new Map<number, { [colIndex: string]: string }>()
-    selectedCells!.forEach(cellKey => {
-      const [row, col] = cellKey.split('-').map(Number)
-      if (!rowsMap.has(row)) {
-        rowsMap.set(row, {})
-      }
-      const rowData = rowsMap.get(row)!
-      // Get all cells in this row for context
-      for (let c = 0; c < numCols; c++) {
-        const value = getCellValue(row, c)
-        if (value) {
-          rowData[c.toString()] = value
-        }
-      }
-    })
-
-    const selectedRows = Array.from(rowsMap.entries()).map(([rowIndex, cells]) => ({
-      rowIndex,
-      cells,
-    }))
-
-    // Get existing column headers
-    const existingColumns: string[] = []
-    for (let c = 0; c < numCols; c++) {
-      existingColumns.push(getColumnLabel(c))
-    }
-
-    setMessages(prev => prev.map(m => 
-      m.id === assistantMessageId 
-        ? { ...m, content: `🔍 **Enriching ${selectedRows.length} row(s)...**\n\nSearching the web and extracting additional data for your selected rows.` }
-        : m
-    ))
 
     try {
       const response = await fetch("/api/ai/scraper", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          mode: "enrich",
-          chatHistory,
-          selectedRows,
-          existingColumns,
-          tableInfo: {
-            tableId: tableContext!.tableId,
-            projectName: tableContext!.projectName,
-            numRows: tableContext!.numRows,
-            numCols: tableContext!.numCols,
-          },
-        }),
+        body: JSON.stringify(requestBody),
       })
 
-      const result = await response.json()
+      await readThinkingStream(response, assistantMessageId, (resultData) => {
+        const result = resultData as { success: boolean; mode: string; table?: GeneratedTable; columns?: ScrapedColumn[]; summary?: string; steps?: number; error?: string }
+        if (!result.success) {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId
+              ? { ...m, content: `❌ **${mode === "generate" ? "Generation" : "Scraping"} failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
+              : m
+          ))
+          return
+        }
 
-      if (!result.success) {
-        setMessages(prev => prev.map(m => 
-          m.id === assistantMessageId 
-            ? { 
-                ...m, 
-                content: `❌ **Scraping failed**\n\n${result.error || "Unknown error occurred"}\n\n${result.rawResponse ? `Raw response:\n\`\`\`\n${result.rawResponse.slice(0, 500)}...\n\`\`\`` : ""}`,
-                isStreaming: false,
-              }
-            : m
-        ))
-        return
-      }
-
-      // Apply the scraped columns to the spreadsheet
-      if (result.columns && result.columns.length > 0 && onAddColumns) {
-        onAddColumns(result.columns)
-        
-        const columnNames = result.columns.map((c: ScrapedColumn) => c.header).join(", ")
-        setMessages(prev => prev.map(m => 
-          m.id === assistantMessageId 
-            ? { 
-                ...m, 
-                content: `✅ **Scraping complete!**\n\n${result.summary || ""}\n\n**Added columns:** ${columnNames}\n\n*${result.steps} AI steps executed*`,
-                isStreaming: false,
-              }
-            : m
-        ))
-      } else {
-        setMessages(prev => prev.map(m => 
-          m.id === assistantMessageId 
-            ? { 
-                ...m, 
-                content: `⚠️ **No data found**\n\nI couldn't find the requested information. Try being more specific in your request or check that the selected rows have enough context.\n\n${result.summary || ""}`,
-                isStreaming: false,
-              }
-            : m
-        ))
-      }
+        if (result.mode === "generate" && result.table && onGenerateTable) {
+          onGenerateTable(result.table)
+          const { headers, rows } = result.table
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId
+              ? { ...m, content: `✅ **Table generated!**\n\n${result.summary || ""}\n\n**Created:** ${rows.length} rows × ${headers.length} columns\n\n**Columns:** ${headers.join(", ")}\n\n*${result.steps} AI steps*`, isStreaming: false }
+              : m
+          ))
+        } else if (result.mode === "enrich" && result.columns && result.columns.length > 0 && onAddColumns) {
+          onAddColumns(result.columns)
+          const columnNames = result.columns.map((c: ScrapedColumn) => c.header).join(", ")
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId
+              ? { ...m, content: `✅ **Scraping complete!**\n\n${result.summary || ""}\n\n**Added columns:** ${columnNames}\n\n*${result.steps} AI steps*`, isStreaming: false }
+              : m
+          ))
+        } else {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId
+              ? { ...m, content: `⚠️ **No data found**\n\nI couldn't find the requested information. Try being more specific.\n\n${result.summary || ""}`, isStreaming: false }
+              : m
+          ))
+        }
+      })
     } catch (error) {
       console.error("Scraper error:", error)
-      setMessages(prev => prev.map(m => 
-        m.id === assistantMessageId 
-          ? { 
-              ...m, 
-              content: `❌ **Error**\n\nFailed to run the scraper agent. ${error instanceof Error ? error.message : "Please try again."}`,
-              isStreaming: false,
-            }
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMessageId
+          ? { ...m, content: `❌ **Error**\n\nFailed to run the scraper agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
           : m
       ))
     }
@@ -582,7 +568,6 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
 
     const { numRows, numCols, getCellValue, getColumnLabel, selectedCells, getCellFormatting } = tableContext
 
-    // Snapshot all cell data
     const cells: { [key: string]: string } = {}
     for (let r = 0; r < numRows; r++) {
       for (let c = 0; c < numCols; c++) {
@@ -591,15 +576,13 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       }
     }
 
-    // Build selected cells list with coordinates + values + current formatting
     const hasSelection = selectedCells && selectedCells.size > 0
     const selectedCellsList: { row: number; col: number; colLabel: string; value: string; formatting?: CellFormatting }[] = []
     if (hasSelection) {
       selectedCells!.forEach(cellKey => {
         const [row, col] = cellKey.split('-').map(Number)
         selectedCellsList.push({
-          row,
-          col,
+          row, col,
           colLabel: getColumnLabel(col),
           value: getCellValue(row, col),
           formatting: getCellFormatting ? getCellFormatting(row, col) : undefined,
@@ -608,86 +591,127 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       selectedCellsList.sort((a, b) => a.row !== b.row ? a.row - b.row : a.col - b.col)
     }
 
-    setMessages(prev => prev.map(m =>
-      m.id === assistantMessageId
-        ? { ...m, content: hasSelection
-            ? `🤖 **Agent working on ${selectedCells!.size} selected cell${selectedCells!.size === 1 ? '' : 's'}...**`
-            : `🤖 **Agent working...**\n\nAnalyzing your spreadsheet and applying changes.`
-          }
-        : m
-    ))
-
     try {
       const response = await fetch("/api/ai/agent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt,
-          cells,
-          numRows,
-          numCols,
-          chatHistory,
+          prompt, cells, numRows, numCols, chatHistory,
           selectedCells: hasSelection ? selectedCellsList : undefined,
         }),
       })
 
-      const result = await response.json()
+      await readThinkingStream(response, assistantMessageId, (resultData) => {
+        const result = resultData as {
+          success: boolean; error?: string
+          changes: { row: number; col: number; value: string }[]
+          formatting?: { row: number; col: number; format: CellFormatting }[]
+          summary: string
+          newNumRows?: number
+          newNumCols?: number
+        }
 
-      if (!result.success) {
-        setMessages(prev => prev.map(m =>
-          m.id === assistantMessageId
-            ? { ...m, content: `❌ **Agent failed**\n\n${result.error || "Unknown error occurred"}`, isStreaming: false }
-            : m
-        ))
-        return
-      }
+        if (!result.success) {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId
+              ? { ...m, content: `❌ **Agent failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
+              : m
+          ))
+          return
+        }
 
-      const { changes, formatting: formattingChanges, summary, newNumRows, newNumCols } = result as {
-        changes: { row: number; col: number; value: string }[]
-        formatting?: { row: number; col: number; format: CellFormatting }[]
-        summary: string
-        newNumRows?: number
-        newNumCols?: number
-      }
+        const hasValueChanges = result.changes && result.changes.length > 0
+        const hasFormatChanges = result.formatting && result.formatting.length > 0
 
-      const hasValueChanges = changes && changes.length > 0
-      const hasFormatChanges = formattingChanges && formattingChanges.length > 0
+        if (hasValueChanges && onApplyChanges) onApplyChanges(result.changes, result.newNumRows, result.newNumCols)
+        if (hasFormatChanges && onApplyFormatting) onApplyFormatting(result.formatting!)
 
-      if (hasValueChanges && onApplyChanges) {
-        onApplyChanges(changes, newNumRows, newNumCols)
-      }
-
-      if (hasFormatChanges && onApplyFormatting) {
-        onApplyFormatting(formattingChanges!)
-      }
-
-      if (hasValueChanges || hasFormatChanges) {
-        const parts: string[] = [`✅ **Done!**\n\n${summary}`]
-        if (hasValueChanges) parts.push(`**Cell edits:** ${changes.length}`)
-        if (hasFormatChanges) parts.push(`**Formatting changes:** ${formattingChanges!.length}`)
-        setMessages(prev => prev.map(m =>
-          m.id === assistantMessageId
-            ? { ...m, content: parts.join('\n'), isStreaming: false }
-            : m
-        ))
-      } else {
-        setMessages(prev => prev.map(m =>
-          m.id === assistantMessageId
-            ? { ...m, content: `ℹ️ **No changes needed**\n\n${summary}`, isStreaming: false }
-            : m
-        ))
-      }
+        if (hasValueChanges || hasFormatChanges) {
+          const parts: string[] = [`✅ **Done!**\n\n${result.summary}`]
+          if (hasValueChanges) parts.push(`**Cell edits:** ${result.changes.length}`)
+          if (hasFormatChanges) parts.push(`**Formatting changes:** ${result.formatting!.length}`)
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId ? { ...m, content: parts.join('\n'), isStreaming: false } : m
+          ))
+        } else {
+          setMessages(prev => prev.map(m =>
+            m.id === assistantMessageId
+              ? { ...m, content: `ℹ️ **No changes needed**\n\n${result.summary}`, isStreaming: false }
+              : m
+          ))
+        }
+      })
     } catch (error) {
       console.error("Agent error:", error)
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
-          ? {
-              ...m,
-              content: `❌ **Error**\n\nFailed to run the agent. ${error instanceof Error ? error.message : "Please try again."}`,
-              isStreaming: false,
-            }
+          ? { ...m, content: `❌ **Error**\n\nFailed to run the agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
           : m
       ))
+    }
+  }
+
+  // Shared SSE stream reader for agent/scraper — drives ThinkingBox state,
+  // then calls onResult with the final data payload.
+  const readThinkingStream = async (
+    response: Response,
+    assistantMessageId: string,
+    onResult: (data: unknown) => void
+  ) => {
+    const reader = response.body?.getReader()
+    if (!reader) return
+
+    const decoder = new TextDecoder()
+    const completedSteps: string[] = []
+    let currentActive: string | undefined
+
+    const pushStep = (content: string) => {
+      if (currentActive) completedSteps.push(currentActive)
+      currentActive = content
+      setMessages(prev => prev.map(m =>
+        m.id === assistantMessageId
+          ? { ...m, thinkingSteps: [...completedSteps], activeStep: currentActive, isThinkingDone: false, isStreaming: true }
+          : m
+      ))
+    }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value)
+        for (const line of chunk.split('\n')) {
+          if (!line.startsWith('data: ')) continue
+          const data = line.slice(6).trim()
+          if (data === '[DONE]') break
+          try {
+            const event = JSON.parse(data)
+            if (event.type === 'thinking') {
+              pushStep(event.content)
+            } else if (event.type === 'result') {
+              if (currentActive) completedSteps.push(currentActive)
+              currentActive = undefined
+              setMessages(prev => prev.map(m =>
+                m.id === assistantMessageId
+                  ? { ...m, thinkingSteps: [...completedSteps], activeStep: undefined, isThinkingDone: true }
+                  : m
+              ))
+              onResult(event.data)
+            } else if (event.type === 'error') {
+              if (currentActive) completedSteps.push(currentActive)
+              setMessages(prev => prev.map(m =>
+                m.id === assistantMessageId
+                  ? { ...m, content: `❌ **Error**\n\n${event.content}`, isStreaming: false, thinkingSteps: [...completedSteps], activeStep: undefined, isThinkingDone: true }
+                  : m
+              ))
+            }
+          } catch {
+            // skip malformed lines
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock()
     }
   }
 
@@ -738,18 +762,19 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     }
 
     try {
+      const snapshot = buildSpreadsheetSnapshot()
       const response = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: conversationHistory,
-          context: getSpreadsheetContext(),
           tableInfo: tableContext ? {
             tableId: tableContext.tableId,
             projectName: tableContext.projectName,
             numRows: tableContext.numRows,
             numCols: tableContext.numCols,
           } : null,
+          spreadsheetData: snapshot,
         }),
       })
 
@@ -1078,15 +1103,32 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
             {/* Message content */}
             <div className={`flex-1 max-w-[85%] ${message.role === "user" ? "text-right" : ""}`}>
               <div
-                className={`inline-block rounded-lg px-4 py-2 text-sm ${
+                className={`rounded-lg px-4 py-2 text-sm ${
                   message.role === "user"
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted"
+                    ? "inline-block bg-primary text-primary-foreground"
+                    : "block w-full bg-muted overflow-hidden"
                 }`}
               >
                 <div className={`prose prose-sm max-w-none ${message.role === "user" ? "text-primary-foreground" : ""}`}>
-                  {renderMessageContent(message.content)}
-                  {message.isStreaming && (
+                  {/* Copilot-style thinking box for agent/scraper */}
+                  {(message.thinkingSteps !== undefined || message.activeStep) && (
+                    <ThinkingBox
+                      steps={message.thinkingSteps || []}
+                      activeStep={message.activeStep}
+                      isDone={message.isThinkingDone || false}
+                    />
+                  )}
+                  {/* Initial spinner before any steps or content arrive */}
+                  {!message.content && !message.thinkingSteps && !message.activeStep && message.isStreaming ? (
+                    <span className="flex items-center gap-2 text-muted-foreground italic text-sm">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Thinking...
+                    </span>
+                  ) : message.content ? (
+                    renderMessageContent(message.content)
+                  ) : null}
+                  {/* Cursor blink for live chat text streaming */}
+                  {message.isStreaming && message.content && !message.thinkingSteps && (
                     <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-1" />
                   )}
                 </div>

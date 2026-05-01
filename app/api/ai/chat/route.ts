@@ -15,6 +15,13 @@ interface ChatRequest {
     numRows: number
     numCols: number
   } | null
+  spreadsheetData?: {
+    columns: string[]
+    rows: { [col: string]: string }[]
+    numRows: number
+    numCols: number
+    selectedCells: string[]
+  } | null
 }
 
 // System prompt for the AI assistant
@@ -40,7 +47,7 @@ You have access to the user's spreadsheet context including:
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json()
-    const { messages, context, tableInfo } = body
+    const { messages, context, tableInfo, spreadsheetData } = body
 
     console.log("[Chat API] Request received:", { messageCount: messages?.length, hasContext: !!context, hasTableInfo: !!tableInfo })
 
@@ -56,8 +63,8 @@ export async function POST(request: NextRequest) {
       { role: "system", content: SYSTEM_PROMPT },
     ]
 
-    // Add context if available
-    if (context || tableInfo) {
+    // Add spreadsheet context
+    if (tableInfo || spreadsheetData) {
       let contextMessage = "Current spreadsheet context:"
       if (tableInfo) {
         contextMessage += `\n- Project: ${tableInfo.projectName}`
@@ -65,6 +72,21 @@ export async function POST(request: NextRequest) {
       }
       if (context) {
         contextMessage += context
+      }
+      if (spreadsheetData && spreadsheetData.rows.length > 0) {
+        const { columns, rows, selectedCells } = spreadsheetData
+        // Build a compact text table the LLM can read
+        const header = `| ${columns.join(' | ')} |`
+        const separator = `| ${columns.map(() => '---').join(' | ')} |`
+        const dataRows = rows.map(row =>
+          `| ${columns.map(c => row[c] ?? '').join(' | ')} |`
+        )
+        contextMessage += `\n\nFull spreadsheet contents:\n${header}\n${separator}\n${dataRows.join('\n')}`
+        if (selectedCells.length > 0) {
+          contextMessage += `\n\nCurrently selected cells: ${selectedCells.join(', ')}`
+        }
+      } else if (spreadsheetData) {
+        contextMessage += `\n- The spreadsheet is currently empty.`
       }
       fullMessages.push({ role: "system", content: contextMessage })
     }
