@@ -140,147 +140,143 @@ export function TextFormattingToolbar({
     })
   }
 
-  return (
-    <div className="flex items-center gap-1 border-b border-border bg-muted/30 px-4 py-2">
-      <div className="flex items-center gap-1">
-        {/* Font Size */}
-        <select
-          onChange={(e) => setFontSize(parseInt(e.target.value))}
-          value={selectedCell ? getCellFormatting(selectedCell.row, selectedCell.col).fontSize || 14 : 14}
-          className="h-7 rounded border border-border bg-background px-2 text-xs text-foreground"
-        >
-          <option value="10">10</option>
-          <option value="11">11</option>
-          <option value="12">12</option>
-          <option value="13">13</option>
-          <option value="14">14</option>
-          <option value="16">16</option>
-          <option value="18">18</option>
-          <option value="20">20</option>
-          <option value="24">24</option>
-        </select>
-      </div>
+  const currentFormatting = selectedCell ? getCellFormatting(selectedCell.row, selectedCell.col) : {}
 
-      <div className="h-4 w-px bg-border" />
+  return (
+    <div
+      className="flex items-center gap-1 border-b border-border bg-muted/30 px-4 py-1.5"
+      // Prevent mousedown from stealing DOM focus away from the table,
+      // which would break formatting when clicking toolbar buttons.
+      onMouseDown={(e) => e.preventDefault()}
+    >
+      {/* Font Size */}
+      <select
+        value={currentFormatting.fontSize || 14}
+        onChange={(e) => setFontSize(parseInt(e.target.value))}
+        onMouseDown={(e) => e.stopPropagation()}
+        className="h-7 rounded border border-border bg-background px-2 text-xs text-foreground cursor-pointer"
+      >
+        {[10, 11, 12, 13, 14, 16, 18, 20, 24].map((s) => (
+          <option key={s} value={s}>{s}</option>
+        ))}
+      </select>
+
+      <div className="h-4 w-px bg-border mx-0.5" />
 
       {/* Bold */}
       <Button
-        variant={selectedCell && getCellFormatting(selectedCell.row, selectedCell.col).bold ? "default" : "ghost"}
+        variant={currentFormatting.bold ? "default" : "ghost"}
         size="sm"
         className="h-7 w-7 p-0"
-        onClick={toggleBold}
-        title="Bold (Apply to all selected cells)"
+        onMouseDown={(e) => { e.preventDefault(); toggleBold() }}
+        title="Bold"
       >
-        <Bold className="h-4 w-4" />
+        <Bold className="h-3.5 w-3.5" />
       </Button>
 
       {/* Italic */}
       <Button
-        variant={selectedCell && getCellFormatting(selectedCell.row, selectedCell.col).italic ? "default" : "ghost"}
+        variant={currentFormatting.italic ? "default" : "ghost"}
         size="sm"
         className="h-7 w-7 p-0"
-        onClick={toggleItalic}
-        title="Italic (Apply to all selected cells)"
+        onMouseDown={(e) => { e.preventDefault(); toggleItalic() }}
+        title="Italic"
       >
-        <Italic className="h-4 w-4" />
+        <Italic className="h-3.5 w-3.5" />
       </Button>
 
       {/* Underline */}
       <Button
-        variant={selectedCell && getCellFormatting(selectedCell.row, selectedCell.col).underline ? "default" : "ghost"}
+        variant={currentFormatting.underline ? "default" : "ghost"}
         size="sm"
         className="h-7 w-7 p-0"
-        onClick={toggleUnderline}
-        title="Underline (Apply to all selected cells)"
+        onMouseDown={(e) => { e.preventDefault(); toggleUnderline() }}
+        title="Underline"
       >
-        <Underline className="h-4 w-4" />
+        <Underline className="h-3.5 w-3.5" />
       </Button>
 
-      <div className="h-4 w-px bg-border" />
+      <div className="h-4 w-px bg-border mx-0.5" />
 
       {/* Text Alignment */}
       <Button
-        variant={
-          selectedCell && getCellFormatting(selectedCell.row, selectedCell.col).alignment === "left"
-            ? "default"
-            : "ghost"
-        }
+        variant={currentFormatting.alignment === "left" ? "default" : "ghost"}
         size="sm"
         className="h-7 w-7 p-0"
-        onClick={() => setTextAlignment("left")}
+        onMouseDown={(e) => { e.preventDefault(); setTextAlignment("left") }}
         title="Align Left"
       >
-        <AlignLeft className="h-4 w-4" />
+        <AlignLeft className="h-3.5 w-3.5" />
       </Button>
-
       <Button
-        variant={
-          selectedCell && getCellFormatting(selectedCell.row, selectedCell.col).alignment === "center"
-            ? "default"
-            : "ghost"
-        }
+        variant={currentFormatting.alignment === "center" ? "default" : "ghost"}
         size="sm"
         className="h-7 w-7 p-0"
-        onClick={() => setTextAlignment("center")}
+        onMouseDown={(e) => { e.preventDefault(); setTextAlignment("center") }}
         title="Align Center"
       >
-        <AlignCenter className="h-4 w-4" />
+        <AlignCenter className="h-3.5 w-3.5" />
       </Button>
-
       <Button
-        variant={
-          selectedCell && getCellFormatting(selectedCell.row, selectedCell.col).alignment === "right"
-            ? "default"
-            : "ghost"
-        }
+        variant={currentFormatting.alignment === "right" ? "default" : "ghost"}
         size="sm"
         className="h-7 w-7 p-0"
-        onClick={() => setTextAlignment("right")}
+        onMouseDown={(e) => { e.preventDefault(); setTextAlignment("right") }}
         title="Align Right"
       >
-        <AlignRight className="h-4 w-4" />
+        <AlignRight className="h-3.5 w-3.5" />
       </Button>
 
-      <div className="h-4 w-px bg-border" />
+      <div className="h-4 w-px bg-border mx-0.5" />
 
       {/* Text Color */}
-      <div className="flex items-center gap-1">
-        <label className="text-xs text-muted-foreground">Text:</label>
-        <input
-          type="color"
-          value={selectedCell ? getCellFormatting(selectedCell.row, selectedCell.col).textColor || "#000000" : "#000000"}
-          onChange={(e) => setTextColor(e.target.value)}
-          className="h-6 w-6 cursor-pointer rounded border border-border"
-          title="Text Color (Apply to all selected cells)"
-        />
+      <div className="flex items-center gap-1" title="Text Color">
+        <span className="text-xs text-muted-foreground select-none">A</span>
+        <label className="relative h-5 w-5 cursor-pointer">
+          <span
+            className="block h-5 w-5 rounded border border-border"
+            style={{ backgroundColor: currentFormatting.textColor || "#888888" }}
+          />
+          <input
+            type="color"
+            value={currentFormatting.textColor || "#000000"}
+            onChange={(e) => setTextColor(e.target.value)}
+            onInput={(e) => setTextColor((e.target as HTMLInputElement).value)}
+            className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+          />
+        </label>
       </div>
 
       {/* Background Color */}
-      <div className="flex items-center gap-1">
-        <label className="text-xs text-muted-foreground">BG:</label>
-        <input
-          type="color"
-          value={
-            selectedCell ? getCellFormatting(selectedCell.row, selectedCell.col).backgroundColor || "#ffffff" : "#ffffff"
-          }
-          onChange={(e) => setBackgroundColor(e.target.value)}
-          className="h-6 w-6 cursor-pointer rounded border border-border"
-          title="Background Color (Apply to all selected cells)"
-        />
+      <div className="flex items-center gap-1" title="Background Color">
+        <span className="text-xs text-muted-foreground select-none">BG</span>
+        <label className="relative h-5 w-5 cursor-pointer">
+          <span
+            className="block h-5 w-5 rounded border border-border"
+            style={{ backgroundColor: currentFormatting.backgroundColor || "transparent" }}
+          />
+          <input
+            type="color"
+            value={currentFormatting.backgroundColor || "#ffffff"}
+            onChange={(e) => setBackgroundColor(e.target.value)}
+            onInput={(e) => setBackgroundColor((e.target as HTMLInputElement).value)}
+            className="absolute inset-0 h-full w-full opacity-0 cursor-pointer"
+          />
+        </label>
       </div>
 
-      <div className="h-4 w-px bg-border" />
+      <div className="h-4 w-px bg-border mx-0.5" />
 
       {/* Merge Cells */}
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1"
-        onClick={onMergeCells}
+        className="h-7 gap-1 px-2 text-xs"
+        onMouseDown={(e) => { e.preventDefault(); onMergeCells?.() }}
         disabled={!isRangeSelected || !isRangeSelected()}
-        title="Merge Selected Cells (Select multiple with Shift+Click)"
+        title="Merge Selected Cells (Shift+click to select range first)"
       >
-        <Columns3 className="h-4 w-4" />
+        <Columns3 className="h-3.5 w-3.5" />
         Merge
       </Button>
 
@@ -288,31 +284,31 @@ export function TextFormattingToolbar({
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1"
-        onClick={onUnmergeCells}
+        className="h-7 gap-1 px-2 text-xs"
+        onMouseDown={(e) => { e.preventDefault(); onUnmergeCells?.() }}
         disabled={!selectedCell || !isCellMerged || !isCellMerged(selectedCell.row, selectedCell.col)}
         title="Unmerge Cells"
       >
-        <Rows3 className="h-4 w-4" />
+        <Rows3 className="h-3.5 w-3.5" />
         Unmerge
       </Button>
 
-      <div className="h-4 w-px bg-border" />
+      <div className="h-4 w-px bg-border mx-0.5" />
 
       {/* Clear Formatting */}
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 gap-1"
-        onClick={clearFormatting}
+        className="h-7 gap-1 px-2 text-xs"
+        onMouseDown={(e) => { e.preventDefault(); clearFormatting() }}
         title="Clear Formatting"
       >
-        <Eraser className="h-4 w-4" />
+        <Eraser className="h-3.5 w-3.5" />
         Clear
       </Button>
 
       <div className="flex-1" />
-      <div className="text-xs text-muted-foreground">
+      <div className="text-xs text-muted-foreground pr-2">
         {selectedCell && `Cell: ${getColumnLabel(selectedCell.col)}${selectedCell.row + 1}`}
       </div>
     </div>

@@ -52,8 +52,8 @@ export function CSVExport({
   }
 
   return (
-    <Button variant="ghost" size="sm" className="gap-2" onClick={handleExportCSV}>
-      <Download className="h-4 w-4" />
+    <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs shrink-0 px-2.5" onClick={handleExportCSV}>
+      <Download className="h-3.5 w-3.5" />
       Export CSV
     </Button>
   )

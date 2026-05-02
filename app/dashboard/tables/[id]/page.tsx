@@ -14,7 +14,6 @@ import { AIChatPanel } from "@/components/ai-chat-panel"
 import { useAuth } from "@/lib/auth-context"
 import { useSpreadsheetSync } from "@/lib/use-spreadsheet-sync"
 import {
-  ArrowLeft,
   Download,
   Share2,
   Filter,
@@ -32,6 +31,21 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  Menu,
+  RotateCcw,
+  RotateCw,
+  Settings,
+  Zap,
+  Link2,
+  AlignJustify,
+  Type,
+  RefreshCw,
+  GitMerge,
+  Globe,
+  FileText,
+  Regex,
+  Building2,
+  Wand2,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -105,7 +119,38 @@ export default function TableEditorPage() {
   const [filteredRows, setFilteredRows] = useState<number[] | null>(null)
   
   // AI Chat state
-  const [showAIChat, setShowAIChat] = useState(false)
+  const [showAIChat, setShowAIChat] = useState(true)
+
+  // Loopster-style column names, editing state, autorun
+  const [colNames, setColNames] = useState<{ [key: number]: string }>({ 0: "Input" })
+  const [editingColName, setEditingColName] = useState<number | null>(null)
+  const [autorun, setAutorun] = useState(false)
+
+  // Column header menu
+  const [colMenuOpen, setColMenuOpen] = useState<number | null>(null)
+  const [colMenuName, setColMenuName] = useState("") // editable name inside menu
+  const [colTypeExpanded, setColTypeExpanded] = useState(true)
+  const [colColumnType, setColColumnType] = useState<{ [key: number]: string }>({ 0: "User Input" })
+  const [colFieldType, setColFieldType] = useState<{ [key: number]: string }>({ 0: "Text" })
+  const [hiddenCols, setHiddenCols] = useState<Set<number>>(new Set())
+  const colMenuRef = useRef<HTMLDivElement>(null)
+
+  // Add-column panel
+  const [showAddColPanel, setShowAddColPanel] = useState(false)
+  const [newColName, setNewColName] = useState("")
+  const [newColColumnType, setNewColColumnType] = useState("User Input")
+  const [newColFieldType, setNewColFieldType] = useState("Text")
+  const [newColTypeExpanded, setNewColTypeExpanded] = useState(true)
+  const [newColSearch, setNewColSearch] = useState("")
+  const [newColAIPrompt, setNewColAIPrompt] = useState("")
+  const [newColTab, setNewColTab] = useState("All")
+  const addColPanelRef = useRef<HTMLDivElement>(null)
+  // Add-column: configure step
+  const [newColStep, setNewColStep] = useState<"browse" | "configure">("browse")
+  const [newColConfigPrompt, setNewColConfigPrompt] = useState("")
+  const [newColSourceCol, setNewColSourceCol] = useState(0)
+  const [newColRegex, setNewColRegex] = useState("")
+  const [isGeneratingCol, setIsGeneratingCol] = useState(false)
 
   // Delete All confirmation
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false)
@@ -583,6 +628,29 @@ export default function TableEditorPage() {
     return () => document.removeEventListener("mousedown", handleDocumentMouseDown)
   }, [])
 
+  // Close column menu when clicking outside
+  useEffect(() => {
+    if (colMenuOpen === null) return
+    const handler = (e: MouseEvent) => {
+      if (colMenuRef.current && !colMenuRef.current.contains(e.target as Node)) {
+        setColMenuOpen(null)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [colMenuOpen])
+
+  useEffect(() => {
+    if (!showAddColPanel) return
+    const handler = (e: MouseEvent) => {
+      if (addColPanelRef.current && !addColPanelRef.current.contains(e.target as Node)) {
+        setShowAddColPanel(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showAddColPanel])
+
   const handleCellKeyDown = (e: React.KeyboardEvent, row: number, col: number) => {
     // When a cell is selected and user starts typing, enter edit mode
     if (!editingCell && selectedCell?.row === row && selectedCell?.col === col) {
@@ -657,7 +725,365 @@ export default function TableEditorPage() {
   }
 
   const handleAddColumn = () => {
+    setNewColName("")
+    setNewColColumnType("User Input")
+    setNewColFieldType("Text")
+    setNewColTypeExpanded(true)
+    setNewColSearch("")
+    setNewColAIPrompt("")
+    setNewColTab("All")
+    setNewColStep("browse")
+    setNewColConfigPrompt("")
+    setNewColSourceCol(0)
+    setNewColRegex("")
+    setShowAddColPanel(true)
+  }
+
+  // Types that need a configure step before adding
+  const COL_TYPES_NEED_CONFIG = ["AI Agent", "AI Web", "Scrape Website", "Regex", "Normalize Company", "Read File"]
+
+  const confirmAddColumn = (colType: string = newColColumnType) => {
+    if (COL_TYPES_NEED_CONFIG.includes(colType)) {
+      setNewColColumnType(colType)
+      setNewColConfigPrompt("")
+      setNewColStep("configure")
+      return
+    }
+    doAddColumn(colType, newColName.trim() || colType, "", 0, "")
+  }
+
+  const doAddColumn = (colType: string, colName: string, configPrompt: string, sourceCol: number, regex: string) => {
+    const newColIdx = numCols
+    setColNames(prev => ({ ...prev, [newColIdx]: colName || colType }))
+    setColColumnType(prev => ({ ...prev, [newColIdx]: colType }))
+    setColFieldType(prev => ({ ...prev, [newColIdx]: newColFieldType }))
     setNumCols(numCols + 1)
+    setShowAddColPanel(false)
+    setNewColStep("browse")
+    // For AI-powered column types, run generation immediately after adding
+    if (["AI Agent", "AI Web"].includes(colType) && configPrompt) {
+      runAIColumn(newColIdx, colType, configPrompt, sourceCol)
+    } else if (colType === "Scrape Website") {
+      runScrapeColumn(newColIdx, sourceCol)
+    } else if (colType === "Regex") {
+      runRegexColumn(newColIdx, sourceCol, regex)
+    } else if (colType === "Normalize Company" || colType === "Normalize Domain") {
+      runNormalizeColumn(newColIdx, colType, sourceCol)
+    }
+  }
+
+  // Read an SSE stream from /api/ai/agent and resolve with the result payload
+  const readAgentSSE = (response: Response): Promise<{ changes?: {row:number;col:number;value:string}[]; formatting?: unknown[]; summary?: string; newNumRows?: number; newNumCols?: number } | null> =>
+    new Promise((resolve) => {
+      const reader = response.body?.getReader()
+      if (!reader) { resolve(null); return }
+      const decoder = new TextDecoder()
+      let result: ReturnType<typeof readAgentSSE> extends Promise<infer T> ? T : never = null
+      const pump = async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            for (const line of decoder.decode(value).split('\n')) {
+              if (!line.startsWith('data: ')) continue
+              const raw = line.slice(6).trim()
+              if (raw === '[DONE]') break
+              try {
+                const evt = JSON.parse(raw)
+                if (evt.type === 'result') result = evt.data
+              } catch { /* skip */ }
+            }
+          }
+        } finally {
+          reader.releaseLock()
+          resolve(result)
+        }
+      }
+      pump()
+    })
+
+  const generateAIColumnFromPrompt = async () => {
+    if (!newColAIPrompt.trim()) return
+    setIsGeneratingCol(true)
+    try {
+      // Build spreadsheet context
+      const cells: { [key: string]: string } = {}
+      for (let r = 0; r < numRows; r++) {
+        for (let c = 0; c < numCols; c++) {
+          const v = getCellValue(r, c)
+          if (v) cells[`${r}-${c}`] = v
+        }
+      }
+      const agentPrompt = `Add a new column at column index ${numCols} (column ${getColumnLabel(numCols)}). For each row 0 to ${numRows - 1}, generate a value based on this instruction: "${newColAIPrompt}". Use existing column values as context. Return cell changes for every row in the new column.`
+      const res = await fetch("/api/ai/agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: agentPrompt, cells, numRows, numCols }),
+      })
+      if (!res.ok) throw new Error("AI request failed")
+      const result = await readAgentSSE(res)
+      if (result?.changes?.length) {
+        // Derive column name from prompt (first 4 words)
+        const autoName = newColAIPrompt.trim().split(/\s+/).slice(0, 4).join(" ")
+        const colName = newColName.trim() || autoName
+        setColNames(prev => ({ ...prev, [numCols]: colName }))
+        setColColumnType(prev => ({ ...prev, [numCols]: "AI Agent" }))
+        setColFieldType(prev => ({ ...prev, [numCols]: "Text" }))
+        setNumCols(numCols + 1)
+        // Apply the AI-generated cell changes
+        const updates: { [key: string]: string } = {}
+        result.changes.forEach((ch: { row: number; col: number; value: string }) => {
+          updates[`${ch.row}-${ch.col}`] = ch.value
+        })
+        setCells(prev => ({ ...prev, ...updates }))
+        await sync.setCellsBatch(updates)
+      }
+    } catch (e) {
+      console.error("AI column generation failed", e)
+    } finally {
+      setIsGeneratingCol(false)
+      setShowAddColPanel(false)
+      setNewColStep("browse")
+    }
+  }
+
+  const runAIColumn = async (colIdx: number, colType: string, prompt: string, _sourceCol: number) => {
+    const cells: { [key: string]: string } = {}
+    for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) { const v = getCellValue(r, c); if (v) cells[`${r}-${c}`] = v }
+    const agentPrompt = `For each row 0 to ${numRows - 1}, fill column ${colIdx} using this instruction: "${prompt}". Use existing row data as context.${colType === "AI Web" ? " You may reference web knowledge." : ""}`
+    try {
+      const res = await fetch("/api/ai/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: agentPrompt, cells, numRows, numCols: colIdx + 1 }) })
+      const result = await readAgentSSE(res)
+      if (result?.changes?.length) {
+        const updates: { [key: string]: string } = {}
+        result.changes.forEach((ch: { row: number; col: number; value: string }) => { updates[`${ch.row}-${ch.col}`] = ch.value })
+        setCells(prev => ({ ...prev, ...updates }))
+        await sync.setCellsBatch(updates)
+      }
+    } catch (e) { console.error("runAIColumn failed", e) }
+  }
+
+  const runScrapeColumn = async (colIdx: number, sourceCol: number) => {
+    const updates: { [key: string]: string } = {}
+    for (let r = 0; r < numRows; r++) {
+      const url = getCellValue(r, sourceCol)
+      if (!url) continue
+      try {
+        const res = await fetch("/api/ai/scraper", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            prompt: "Scrape this URL and return the main page content as plain text",
+            mode: "enrich",
+            selectedRows: [{ rowIndex: r, cells: { [String(sourceCol)]: url } }],
+            existingColumns: Array.from({ length: numCols }, (_, i) => colNames[i] || getColumnLabel(i)),
+            tableInfo: { tableId, projectName, numRows, numCols },
+          }),
+        })
+        if (!res.ok) continue
+        const reader = res.body?.getReader()
+        if (!reader) continue
+        const dec = new TextDecoder()
+        let content = ""
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            for (const line of dec.decode(value).split('\n')) {
+              if (!line.startsWith('data: ')) continue
+              const raw = line.slice(6).trim()
+              if (raw === '[DONE]') break
+              try {
+                const evt = JSON.parse(raw)
+                if (evt.type === 'result' && evt.data?.columns?.length) {
+                  const vals = evt.data.columns[0].values as { rowIndex: number; value: string }[]
+                  if (vals?.length) content = String(vals[0].value || "")
+                }
+              } catch { /* skip malformed */ }
+            }
+          }
+        } finally { reader.releaseLock() }
+        if (content) updates[`${r}-${colIdx}`] = content
+      } catch {}
+    }
+    if (Object.keys(updates).length) { setCells(prev => ({ ...prev, ...updates })); await sync.setCellsBatch(updates) }
+  }
+
+  const runRegexColumn = (colIdx: number, sourceCol: number, pattern: string) => {
+    const updates: { [key: string]: string } = {}
+    try {
+      const re = new RegExp(pattern)
+      for (let r = 0; r < numRows; r++) {
+        const val = getCellValue(r, sourceCol)
+        const m = val.match(re)
+        updates[`${r}-${colIdx}`] = m ? (m[1] ?? m[0]) : ""
+      }
+    } catch {}
+    if (Object.keys(updates).length) { setCells(prev => ({ ...prev, ...updates })); sync.setCellsBatch(updates) }
+  }
+
+  const runNormalizeColumn = (colIdx: number, colType: string, sourceCol: number) => {
+    const updates: { [key: string]: string } = {}
+    for (let r = 0; r < numRows; r++) {
+      const val = getCellValue(r, sourceCol).trim()
+      if (!val) continue
+      if (colType === "Normalize Domain") {
+        try { updates[`${r}-${colIdx}`] = new URL(val.startsWith("http") ? val : `https://${val}`).hostname.replace(/^www\./, "") } catch { updates[`${r}-${colIdx}`] = val }
+      } else {
+        // Normalize company: trim, title-case
+        updates[`${r}-${colIdx}`] = val.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()).replace(/\bInc\b|\bLlc\b|\bLtd\b|\bCorp\b/g, s => s.toUpperCase())
+      }
+    }
+    if (Object.keys(updates).length) { setCells(prev => ({ ...prev, ...updates })); sync.setCellsBatch(updates) }
+  }
+
+  // Open column header menu
+  const openColMenu = (colIndex: number) => {
+    setColMenuOpen(colIndex)
+    setColMenuName(colNames[colIndex] ?? "Input")
+    setColTypeExpanded(true)
+  }
+
+  // Save column name from menu
+  const saveColMenu = (colIndex: number) => {
+    if (colMenuName.trim()) {
+      setColNames(prev => ({ ...prev, [colIndex]: colMenuName.trim() }))
+    }
+    setColMenuOpen(null)
+  }
+
+  // Sort column ASC / DESC from header menu
+  const sortColFromMenu = (colIndex: number, order: "asc" | "desc") => {
+    const rowIndices = Array.from({ length: numRows }, (_, i) => i)
+    rowIndices.sort((a, b) => {
+      const vA = getCellValue(a, colIndex).toLowerCase()
+      const vB = getCellValue(b, colIndex).toLowerCase()
+      const nA = parseFloat(vA), nB = parseFloat(vB)
+      const cmp = (!isNaN(nA) && !isNaN(nB)) ? nA - nB : vA.localeCompare(vB)
+      return order === "asc" ? cmp : -cmp
+    })
+    const newCells: { [key: string]: string } = {}
+    const newFormatting: { [key: string]: CellFormatting } = {}
+    rowIndices.forEach((oldRow, newRow) => {
+      for (let col = 0; col < numCols; col++) {
+        const v = getCellValue(oldRow, col)
+        if (v) newCells[`${newRow}-${col}`] = v
+        const fmt = cellFormatting[`${oldRow}-${col}`]
+        if (fmt && Object.keys(fmt).length) newFormatting[`${newRow}-${col}`] = fmt
+      }
+    })
+    setCells(newCells)
+    setCellFormattingState(newFormatting)
+    setSortColumn(colIndex)
+    setSortOrder(order)
+    setColMenuOpen(null)
+  }
+
+  // Duplicate column
+  const duplicateColumn = (colIndex: number) => {
+    const insertAt = colIndex + 1
+    // Shift existing columns right
+    const newCells: { [key: string]: string } = {}
+    const newFormatting: { [key: string]: CellFormatting } = {}
+    const newColNames: { [key: number]: string } = {}
+    const newColColumnType: { [key: number]: string } = {}
+    const newColFieldType: { [key: number]: string } = {}
+
+    for (let row = 0; row < numRows; row++) {
+      for (let col = 0; col < numCols; col++) {
+        const targetCol = col < insertAt ? col : col + 1
+        const v = getCellValue(row, col)
+        if (v) newCells[`${row}-${targetCol}`] = v
+        const fmt = cellFormatting[`${row}-${col}`]
+        if (fmt && Object.keys(fmt).length) newFormatting[`${row}-${targetCol}`] = fmt
+      }
+      // copy duplicated col
+      const v = getCellValue(row, colIndex)
+      if (v) newCells[`${row}-${insertAt}`] = v
+      const fmt = cellFormatting[`${row}-${colIndex}`]
+      if (fmt && Object.keys(fmt).length) newFormatting[`${row}-${insertAt}`] = fmt
+    }
+    for (let col = 0; col < numCols; col++) {
+      const targetCol = col < insertAt ? col : col + 1
+      newColNames[targetCol] = colNames[col] ?? `Column ${col + 1}`
+      newColColumnType[targetCol] = colColumnType[col] ?? "User Input"
+      newColFieldType[targetCol] = colFieldType[col] ?? "Text"
+    }
+    newColNames[insertAt] = (colNames[colIndex] ?? "Input") + " (copy)"
+    newColColumnType[insertAt] = colColumnType[colIndex] ?? "User Input"
+    newColFieldType[insertAt] = colFieldType[colIndex] ?? "Text"
+
+    setCellsLocal(newCells)
+    setCellFormattingState(newFormatting)
+    setColNames(newColNames)
+    setColColumnType(newColColumnType)
+    setColFieldType(newColFieldType)
+    setNumCols(numCols + 1)
+    setColMenuOpen(null)
+  }
+
+  // Clear all values in a column
+  const clearColumn = (colIndex: number) => {
+    const newCells = { ...cells }
+    for (let row = 0; row < numRows; row++) {
+      delete newCells[`${row}-${colIndex}`]
+    }
+    setCells(newCells)
+    setColMenuOpen(null)
+  }
+
+  // Delete a column (shift remaining columns left)
+  const deleteColumn = (colIndex: number) => {
+    if (numCols <= 1) return
+    const newCells: { [key: string]: string } = {}
+    const newFormatting: { [key: string]: CellFormatting } = {}
+    const newColNames: { [key: number]: string } = {}
+    const newColColumnType: { [key: number]: string } = {}
+    const newColFieldType: { [key: number]: string } = {}
+
+    for (let row = 0; row < numRows; row++) {
+      for (let col = 0; col < numCols; col++) {
+        if (col === colIndex) continue
+        const newCol = col < colIndex ? col : col - 1
+        const v = getCellValue(row, col)
+        if (v) newCells[`${row}-${newCol}`] = v
+        const fmt = cellFormatting[`${row}-${col}`]
+        if (fmt && Object.keys(fmt).length) newFormatting[`${row}-${newCol}`] = fmt
+      }
+    }
+    for (let col = 0; col < numCols; col++) {
+      if (col === colIndex) continue
+      const newCol = col < colIndex ? col : col - 1
+      newColNames[newCol] = colNames[col] ?? `Column ${col + 1}`
+      newColColumnType[newCol] = colColumnType[col] ?? "User Input"
+      newColFieldType[newCol] = colFieldType[col] ?? "Text"
+    }
+
+    setCellsLocal(newCells)
+    setCellFormattingState(newFormatting)
+    setColNames(newColNames)
+    setColColumnType(newColColumnType)
+    setColFieldType(newColFieldType)
+    setNumCols(numCols - 1)
+    setColMenuOpen(null)
+  }
+
+  // Toggle hide column
+  const toggleHideColumn = (colIndex: number) => {
+    setHiddenCols(prev => {
+      const next = new Set(prev)
+      if (next.has(colIndex)) next.delete(colIndex)
+      else next.add(colIndex)
+      return next
+    })
+    setColMenuOpen(null)
+  }
+
+  // Add filter for column from menu
+  const filterColumn = (colIndex: number) => {
+    setFilters(prev => [...prev, { column: colIndex, value: "", operator: "contains" }])
+    setShowFilter(true)
+    setColMenuOpen(null)
   }
 
   const handleDeduplicate = () => {
@@ -941,6 +1367,22 @@ export default function TableEditorPage() {
     // Preserve existing cell formatting on import
   }
 
+  const handleClearAll = async () => {
+    if (!confirm("Clear all data from the spreadsheet? This cannot be undone.")) return
+    // Reset local state immediately
+    setCells({})
+    setNumRows(1)
+    setNumCols(1)
+    setCellFormattingState({})
+    setMergedCells({})
+    setFilters([])
+    setFilteredRows(null)
+    setSelectedCell(null)
+    setSelectedCells(new Set())
+    // Persist the reset to the backend so it survives refresh
+    await sync.resetAll(1, 1)
+  }
+
   const getCellFormatting = (row: number, col: number): CellFormatting => {
     return cellFormatting[`${row}-${col}`] || {}
   }
@@ -1010,78 +1452,32 @@ export default function TableEditorPage() {
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Main content area - compresses when chat is open */}
-      <div className={`flex flex-col flex-1 min-w-0 transition-all duration-300 ${showAIChat ? '' : ''}`}>
+      {/* Main content area */}
+      <div className="flex flex-col flex-1 min-w-0 transition-all duration-300">
       {/* Top Header */}
-      <div data-top-nav="true" className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={() => router.push("/dashboard/tables")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-muted-foreground">Projects</span>
-            <span className="text-muted-foreground">›</span>
-            <Input
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              className="h-7 w-48 border-none bg-transparent px-1 text-sm font-medium focus-visible:ring-1"
-            />
+      <div data-top-nav="true" className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <Button variant="ghost" size="icon" className="shrink-0" onClick={() => router.push("/dashboard/tables")}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </Button>
+        <Input
+          value={projectName}
+          onChange={(e) => setProjectName(e.target.value)}
+          className="h-8 max-w-xs border-none bg-transparent px-1 text-sm font-medium focus-visible:ring-1"
+          placeholder="Untitled Project"
+        />
+        <div className="ml-auto flex items-center gap-2">
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            {sync.isSaving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Cloud className="h-3.5 w-3.5" />
+            )}
+            <span>{sync.isSaving ? "Saving..." : "Saved"}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <div className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Autorun Off</div>
-            {/* Real-time sync status indicator */}
-            <div className="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs">
-              {sync.isSaving ? (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin text-blue-500" />
-                  <span className="text-blue-500">Saving...</span>
-                </>
-              ) : sync.lastSaved ? (
-                <>
-                  <Cloud className="h-3 w-3 text-green-500" />
-                  <span className="text-green-500">Saved</span>
-                </>
-              ) : sync.isLoading ? (
-                <>
-                  <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-                  <span className="text-muted-foreground">Loading...</span>
-                </>
-              ) : (
-                <>
-                  <CloudOff className="h-3 w-3 text-yellow-500" />
-                  <span className="text-yellow-500">Offline</span>
-                </>
-              )}
-            </div>
-            <Button variant="ghost" size="icon" className="h-7 w-7">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10" />
-                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                <path d="M12 17h.01" />
-              </svg>
-            </Button>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
           <ThemeToggle />
-          <Button variant="default" size="sm" className="gap-2">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-              <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-              <path d="M12 17h.01" />
-            </svg>
-            Need Help?
-          </Button>
-          <Button 
-            variant={showAIChat ? "secondary" : "default"} 
-            size="sm" 
-            className="gap-2"
-            onClick={() => setShowAIChat(!showAIChat)}
-          >
-            <Sparkles className="h-4 w-4" />
-            Grid AI
-          </Button>
+          <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-primary-foreground cursor-pointer">
+            {user?.email?.[0]?.toUpperCase() || 'U'}
+          </div>
         </div>
       </div>
 
@@ -1092,10 +1488,17 @@ export default function TableEditorPage() {
           Connect API
         </Button> */}
         <CSVImport onImport={handleImportCSVData} />
+        <CSVExport
+          projectName={projectName}
+          numRows={numRows}
+          numCols={numCols}
+          getCellValue={getCellValue}
+          getColumnLabel={getColumnLabel}
+        />
         <div className="h-4 w-px bg-border" />
-        <Button 
-          variant={showFilter ? "secondary" : "ghost"} 
-          size="sm" 
+        <Button
+          variant={showFilter ? "secondary" : "ghost"}
+          size="sm"
           className="gap-2"
           onClick={() => setShowFilter(!showFilter)}
         >
@@ -1119,53 +1522,39 @@ export default function TableEditorPage() {
           <Trash2 className="h-4 w-4" />
           Dedupe
         </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/10"
-          onClick={() => setShowDeleteAllConfirm(true)}
-        >
-          <Trash2 className="h-4 w-4" />
-          Delete All
+        <Button variant="ghost" size="sm" className="gap-2 text-destructive hover:text-destructive" onClick={handleClearAll}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+            <line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/>
+          </svg>
+          Clear All
         </Button>
-        <Button 
-          variant={showSearch ? "secondary" : "ghost"} 
-          size="sm" 
+        <Button
+          variant={showSearch ? "secondary" : "ghost"}
+          size="sm"
           className="gap-2"
           onClick={toggleSearch}
         >
           <Search className="h-4 w-4" />
           Search
           <kbd className="pointer-events-none ml-1 hidden h-5 select-none items-center gap-1 rounded border border-border bg-muted px-1.5 font-mono text-xs font-medium opacity-100 sm:flex">
-            <span className="text-xs">Ctrl</span>+<span className="text-xs">F</span>
+            Ctrl+F
           </kbd>
         </Button>
-        <div className="flex-1" />
-        <CSVExport
-          projectName={projectName}
-          numRows={numRows}
-          numCols={numCols}
-          getCellValue={getCellValue}
-          getColumnLabel={getColumnLabel}
-        />
-        <Button variant="ghost" size="sm" className="gap-2">
+        <Button variant="ghost" size="sm" className="gap-2 ml-auto">
           <Share2 className="h-4 w-4" />
           Share
         </Button>
+        <Button
+          variant={showAIChat ? "secondary" : "default"}
+          size="sm"
+          className="gap-2"
+          onClick={() => setShowAIChat(!showAIChat)}
+        >
+          <Sparkles className="h-4 w-4" />
+          AI Agent
+        </Button>
       </div>
-
-      {/* Text Formatting Toolbar */}
-      <TextFormattingToolbar
-        selectedCell={selectedCell}
-        selectedCells={selectedCells}
-        getCellFormatting={getCellFormatting}
-        setCellFormatting={setCellFormatting}
-        getColumnLabel={getColumnLabel}
-        isRangeSelected={isRangeSelected}
-        isCellMerged={isCellMerged}
-        onMergeCells={mergeCells}
-        onUnmergeCells={unmergeCells}
-      />
 
       {/* Search Bar */}
       {showSearch && (
@@ -1224,6 +1613,21 @@ export default function TableEditorPage() {
             <X className="h-4 w-4" />
           </Button>
         </div>
+      )}
+
+      {/* Text Formatting Toolbar - shows when a cell is selected */}
+      {selectedCell && (
+        <TextFormattingToolbar
+          selectedCell={selectedCell}
+          selectedCells={selectedCells}
+          getCellFormatting={getCellFormatting}
+          setCellFormatting={setCellFormatting}
+          getColumnLabel={getColumnLabel}
+          isRangeSelected={isRangeSelected}
+          isCellMerged={isCellMerged}
+          onMergeCells={mergeCells}
+          onUnmergeCells={unmergeCells}
+        />
       )}
 
       {/* Filter Panel */}
@@ -1317,33 +1721,448 @@ export default function TableEditorPage() {
           <table className="border-collapse">
             <thead>
               <tr className="sticky top-0 z-20">
-                {/* Corner cell */}
-                <th className="sticky left-0 z-30 w-12 border-b border-r border-border bg-muted p-2 text-center text-xs font-medium text-muted-foreground">
-                  <input type="checkbox" className="rounded border-border" />
+                {/* Corner cell with checkbox */}
+                <th className="sticky left-0 z-30 w-10 border-b border-r border-border bg-background p-0 text-center text-xs font-medium text-muted-foreground">
+                  <div className="flex items-center justify-center py-2.5">
+                    <input type="checkbox" className="h-3.5 w-3.5 rounded border-border" />
+                  </div>
                 </th>
-                {/* Column headers A, B, C, etc. */}
-                {Array.from({ length: numCols }).map((_, colIndex) => (
+                {/* Named column headers with type icons - Loopster style */}
+                {Array.from({ length: numCols }).map((_, colIndex) => {
+                  if (hiddenCols.has(colIndex)) return null
+                  const isMenuOpen = colMenuOpen === colIndex
+                  return (
                   <th
                     key={colIndex}
-                    style={{ width: columnWidths[colIndex] || 150 }}
-                    className="relative border-b border-r border-border bg-muted p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
-                    onDoubleClick={() => onColumnHeaderDoubleClick(colIndex)}
+                    style={{ width: columnWidths[colIndex] || 200 }}
+                    className={`relative border-b border-r border-border p-0 text-left text-xs font-medium select-none ${isMenuOpen ? 'bg-primary/10 z-30' : 'bg-background z-0'}`}
                   >
-                    {getColumnLabel(colIndex)}
+                    {/* Header content */}
+                    <div
+                      className={`flex items-center gap-1.5 px-3 py-2 w-full cursor-pointer hover:bg-muted/40 transition-colors ${isMenuOpen ? 'bg-primary/10' : ''}`}
+                      onClick={() => isMenuOpen ? setColMenuOpen(null) : openColMenu(colIndex)}
+                    >
+                      <Type className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
+                      <span className={`flex-1 min-w-0 truncate text-xs font-medium ${isMenuOpen ? 'text-primary' : ''}`}>
+                        {colNames[colIndex] ?? "Input"}
+                      </span>
+                    </div>
+
+                    {/* Column menu panel */}
+                    {isMenuOpen && (
+                      <div
+                        ref={colMenuRef}
+                        className="absolute left-0 top-full z-50 w-72 rounded-b-lg border border-border bg-background shadow-xl"
+                        onMouseDown={(e) => e.stopPropagation()}
+                      >
+                        {/* Column name input */}
+                        <div className="px-3 pt-3 pb-2">
+                          <input
+                            autoFocus
+                            value={colMenuName}
+                            onChange={(e) => setColMenuName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveColMenu(colIndex); if (e.key === 'Escape') setColMenuOpen(null) }}
+                            className="w-full rounded border border-border bg-muted/30 px-2 py-1.5 text-sm font-medium outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                          />
+                        </div>
+
+                        {/* COLUMN TYPE section */}
+                        <div className="border-t border-border">
+                          <button
+                            className="flex w-full items-center justify-between px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground hover:bg-muted/30"
+                            onClick={() => setColTypeExpanded(v => !v)}
+                          >
+                            Column Type
+                            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${colTypeExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+                          {colTypeExpanded && (
+                            <div className="px-3 pb-3 space-y-2">
+                              {/* Column type row */}
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted-foreground w-14 shrink-0">Column</span>
+                                <div className="relative flex-1">
+                                  <select
+                                    value={colColumnType[colIndex] ?? "User Input"}
+                                    onChange={(e) => setColColumnType(prev => ({ ...prev, [colIndex]: e.target.value }))}
+                                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs appearance-none pr-6 cursor-pointer"
+                                  >
+                                    <option value="User Input">User Input</option>
+                                    <option value="AI Agent">AI Agent</option>
+                                    <option value="Formula">Formula</option>
+                                  </select>
+                                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                                </div>
+                              </div>
+                              {/* Field type row */}
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-xs text-muted-foreground w-14 shrink-0">Field</span>
+                                <div className="relative flex-1">
+                                  <select
+                                    value={colFieldType[colIndex] ?? "Text"}
+                                    onChange={(e) => setColFieldType(prev => ({ ...prev, [colIndex]: e.target.value }))}
+                                    className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs appearance-none pr-6 cursor-pointer"
+                                  >
+                                    <option value="Text">Text</option>
+                                    <option value="Number">Number</option>
+                                    <option value="URL">URL</option>
+                                    <option value="Date">Date</option>
+                                    <option value="Boolean">Boolean</option>
+                                  </select>
+                                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Save button */}
+                        <div className="border-t border-border px-3 py-2">
+                          <button
+                            onClick={() => saveColMenu(colIndex)}
+                            className="w-full rounded bg-foreground py-1.5 text-xs font-semibold text-background hover:opacity-90 transition-opacity"
+                          >
+                            Save
+                          </button>
+                        </div>
+
+                        {/* Action buttons */}
+                        <div className="border-t border-border">
+                          {/* ASC / DESC */}
+                          <div className="flex items-stretch border-b border-border">
+                            <button
+                              onClick={() => sortColFromMenu(colIndex, "asc")}
+                              className="flex flex-1 items-center gap-2 px-3 py-2 text-xs hover:bg-muted/40 transition-colors"
+                            >
+                              <ChevronUp className="h-3.5 w-3.5" />
+                              ASC
+                            </button>
+                            <div className="w-px bg-border" />
+                            <button
+                              onClick={() => sortColFromMenu(colIndex, "desc")}
+                              className="flex flex-1 items-center gap-2 px-3 py-2 text-xs hover:bg-muted/40 transition-colors"
+                            >
+                              <ChevronDown className="h-3.5 w-3.5" />
+                              DESC
+                            </button>
+                          </div>
+
+                          {/* Dedupe (disabled for now) */}
+                          <button
+                            disabled
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-muted-foreground/50 cursor-not-allowed border-b border-border"
+                          >
+                            <GitMerge className="h-3.5 w-3.5" />
+                            Dedupe
+                          </button>
+
+                          {/* Filter */}
+                          <button
+                            onClick={() => filterColumn(colIndex)}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-muted/40 transition-colors border-b border-border"
+                          >
+                            <Filter className="h-3.5 w-3.5" />
+                            Filter
+                          </button>
+
+                          {/* Hide column */}
+                          <button
+                            onClick={() => toggleHideColumn(colIndex)}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-muted/40 transition-colors border-b border-border"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                              <line x1="1" y1="1" x2="23" y2="23"/>
+                            </svg>
+                            Hide column
+                          </button>
+
+                          {/* Duplicate column */}
+                          <button
+                            onClick={() => duplicateColumn(colIndex)}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-muted/40 transition-colors border-b border-border"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                            </svg>
+                            Duplicate column
+                          </button>
+
+                          {/* Clear column */}
+                          <button
+                            onClick={() => clearColumn(colIndex)}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs hover:bg-muted/40 transition-colors border-b border-border"
+                          >
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>
+                            </svg>
+                            Clear column
+                          </button>
+
+                          {/* Delete column */}
+                          <button
+                            onClick={() => deleteColumn(colIndex)}
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            Delete column
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Resize handle */}
                     <div
                       onMouseDown={(e) => onMouseDown(e, colIndex)}
                       className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-primary/50 active:bg-primary"
                     />
                   </th>
-                ))}
+                  )
+                })}
+                {/* Add column button with full functional panel */}
                 <th
-                  className="min-w-20 border-b border-border bg-muted p-2 text-left cursor-pointer hover:bg-muted/80"
-                  onClick={handleAddColumn}
+                  className={`relative min-w-24 border-b border-r border-dashed border-primary/40 bg-background p-0 text-left cursor-pointer transition-colors ${showAddColPanel ? 'bg-primary/10 z-30' : 'hover:bg-primary/5 z-0'}`}
+                  onClick={() => !showAddColPanel && handleAddColumn()}
                 >
-                  <div className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                    <Plus className="h-3 w-3" />
+                  <div className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-primary">
+                    <Plus className="h-3.5 w-3.5" />
                     Add
+                  </div>
+
+                  {showAddColPanel && (
+                    <div
+                      ref={addColPanelRef}
+                      className="absolute left-0 top-full z-50 w-80 rounded-b-lg border border-border bg-background shadow-2xl"
+                      onMouseDown={(e) => e.stopPropagation()}
+                    >
+                      {/* Header */}
+                      <div className="flex items-center justify-between border-b border-border px-3 py-2">
+                        <span className="text-xs font-semibold">
+                          {newColStep === "configure" ? `Configure: ${newColColumnType}` : "Add Column"}
+                        </span>
+                        <button onClick={() => { setShowAddColPanel(false); setNewColStep("browse") }} className="text-muted-foreground hover:text-foreground">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+
+                      {/* Column name input (always visible) */}
+                      <div className="px-3 pt-3 pb-2">
+                        <label className="text-[11px] text-muted-foreground">Column name</label>
+                        <input
+                          autoFocus={newColStep === "browse"}
+                          placeholder={newColStep === "configure" ? newColColumnType : "e.g. Email, Company..."}
+                          value={newColName}
+                          onChange={(e) => setNewColName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Escape') { setShowAddColPanel(false); setNewColStep("browse") } }}
+                          className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                        />
+                      </div>
+
+                      {newColStep === "browse" ? (
+                        <>
+                          {/* Generate with AI */}
+                          <div className="px-3 pb-2">
+                            <label className="text-[11px] text-muted-foreground">Generate with AI</label>
+                            <textarea
+                              rows={2}
+                              placeholder="Describe what values to generate for each row..."
+                              value={newColAIPrompt}
+                              onChange={(e) => setNewColAIPrompt(e.target.value)}
+                              className="mt-1 w-full resize-none rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50"
+                            />
+                            <button
+                              onClick={generateAIColumnFromPrompt}
+                              disabled={!newColAIPrompt.trim() || isGeneratingCol}
+                              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              {isGeneratingCol ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+                              {isGeneratingCol ? "Generating..." : "Generate with AI"}
+                            </button>
+                          </div>
+
+                          {/* Divider */}
+                          <div className="flex items-center gap-2 px-3 pb-2">
+                            <div className="flex-1 h-px bg-border" />
+                            <span className="text-[10px] text-muted-foreground">or choose type</span>
+                            <div className="flex-1 h-px bg-border" />
+                          </div>
+
+                          {/* Search */}
+                          <div className="px-3 pb-2">
+                            <div className="relative">
+                              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+                              <input
+                                placeholder="Search column types..."
+                                value={newColSearch}
+                                onChange={(e) => setNewColSearch(e.target.value)}
+                                className="w-full rounded border border-border bg-muted/30 pl-8 pr-3 py-1.5 text-xs outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                              />
+                            </div>
+                          </div>
+
+                          {/* Tabs */}
+                          <div className="flex border-b border-border px-3">
+                            {["All", "Data Tools", "Enrichments", "Exports"].map(tab => (
+                              <button key={tab} onClick={() => setNewColTab(tab)}
+                                className={`mr-4 pb-2 pt-1 text-xs font-medium transition-colors border-b-2 -mb-px ${newColTab === tab ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+                                {tab}
+                              </button>
+                            ))}
+                          </div>
+
+                          {/* Type list */}
+                          <div className="max-h-52 overflow-y-auto">
+                            {(newColTab === "All" || newColTab === "Data Tools") && (
+                              <>
+                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">User Input</div>
+                                {[
+                                  { label: "Text / User Input", icon: <Type className="h-4 w-4" />, type: "User Input" },
+                                  { label: "User Input – File", icon: <FileText className="h-4 w-4" />, type: "User Input - File" },
+                                ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
+                                  <button key={item.label} onClick={() => confirmAddColumn(item.type)}
+                                    className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
+                                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                                    <span className="flex-1 text-left">{item.label}</span>
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                            {(newColTab === "All" || newColTab === "Enrichments") && (
+                              <>
+                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">AI</div>
+                                {[
+                                  { label: "AI Generation", icon: <Sparkles className="h-4 w-4" />, type: "AI Agent", desc: "Fill rows using AI" },
+                                  { label: "AI with Web Access", icon: <Globe className="h-4 w-4" />, type: "AI Web", desc: "AI with live web search" },
+                                ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
+                                  <button key={item.label} onClick={() => confirmAddColumn(item.type)}
+                                    className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
+                                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                                    <div className="flex-1 text-left">
+                                      <div>{item.label}</div>
+                                      <div className="text-[11px] text-muted-foreground">{item.desc}</div>
+                                    </div>
+                                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground -rotate-90 shrink-0" />
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                            {(newColTab === "All" || newColTab === "Data Tools") && (
+                              <>
+                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 bg-muted/20">API (PRO)</div>
+                                <button disabled className="flex w-full items-center gap-3 px-3 py-2 text-sm border-b border-border/50 opacity-40 cursor-not-allowed">
+                                  <Link2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                                  <span className="flex-1 text-left">HTTP (POST/GET)</span>
+                                  <span className="flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"><Zap className="h-2.5 w-2.5" />PRO</span>
+                                </button>
+                              </>
+                            )}
+                            {(newColTab === "All" || newColTab === "Enrichments") && (
+                              <>
+                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">Tools</div>
+                                {[
+                                  { label: "Normalize Company Name", icon: <Building2 className="h-4 w-4" />, type: "Normalize Company", credit: "Free" },
+                                  { label: "Normalize Domain", icon: <Link2 className="h-4 w-4" />, type: "Normalize Domain", credit: "Free" },
+                                  { label: "Scrape Website", icon: <Globe className="h-4 w-4" />, type: "Scrape Website", credit: "~0.02" },
+                                  { label: "Run Regex", icon: <span className="text-xs font-mono font-bold">(.*)</span>, type: "Regex", credit: "Free" },
+                                  { label: "Read File (PDF, Image)", icon: <FileText className="h-4 w-4" />, type: "Read File", credit: "~1" },
+                                ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
+                                  <button key={item.label} onClick={() => confirmAddColumn(item.type)}
+                                    className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
+                                    <span className="text-muted-foreground shrink-0">{item.icon}</span>
+                                    <span className="flex-1 text-left">{item.label}</span>
+                                    <span className={`text-[11px] shrink-0 ${item.credit === "Free" ? "text-green-600 dark:text-green-400 font-medium" : "text-muted-foreground"}`}>{item.credit}</span>
+                                  </button>
+                                ))}
+                              </>
+                            )}
+                            {newColTab === "Exports" && (
+                              <div className="px-3 py-8 text-center text-xs text-muted-foreground">No export columns available yet</div>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        /* CONFIGURE STEP */
+                        <div className="px-3 pb-3">
+                          {/* Source column selector (for tools that need input) */}
+                          {["AI Agent", "AI Web", "Scrape Website", "Regex", "Normalize Company", "Normalize Domain", "Read File"].includes(newColColumnType) && (
+                            <div className="mb-3">
+                              <label className="text-[11px] text-muted-foreground">Source column</label>
+                              <select
+                                value={newColSourceCol}
+                                onChange={(e) => setNewColSourceCol(Number(e.target.value))}
+                                className="mt-1 w-full rounded border border-border bg-background px-2 py-1.5 text-sm outline-none focus:border-primary"
+                              >
+                                {Array.from({ length: numCols }).map((_, ci) => (
+                                  <option key={ci} value={ci}>{getColumnLabel(ci)} — {colNames[ci] ?? `Col ${ci + 1}`}</option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+
+                          {/* AI prompt (for AI types) */}
+                          {["AI Agent", "AI Web"].includes(newColColumnType) && (
+                            <div className="mb-3">
+                              <label className="text-[11px] text-muted-foreground">
+                                AI prompt <span className="text-muted-foreground/60">(use {"{{A}}"}, {"{{B}}"} to reference columns)</span>
+                              </label>
+                              <textarea
+                                autoFocus
+                                rows={3}
+                                placeholder={`e.g. "Summarize the company in column A in one sentence"`}
+                                value={newColConfigPrompt}
+                                onChange={(e) => setNewColConfigPrompt(e.target.value)}
+                                className="mt-1 w-full resize-none rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50"
+                              />
+                            </div>
+                          )}
+
+                          {/* Regex pattern */}
+                          {newColColumnType === "Regex" && (
+                            <div className="mb-3">
+                              <label className="text-[11px] text-muted-foreground">Regex pattern</label>
+                              <input
+                                autoFocus
+                                placeholder="e.g. \d+ or ([a-z]+@[a-z]+\.[a-z]+)"
+                                value={newColRegex}
+                                onChange={(e) => setNewColRegex(e.target.value)}
+                                className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-sm font-mono outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                              />
+                              <p className="mt-1 text-[11px] text-muted-foreground">First capture group (or full match) is used as the cell value.</p>
+                            </div>
+                          )}
+
+                          {["Scrape Website"].includes(newColColumnType) && (
+                            <p className="mb-3 text-[11px] text-muted-foreground">Will scrape the URL in the selected source column for each row.</p>
+                          )}
+                          {["Normalize Company", "Normalize Domain"].includes(newColColumnType) && (
+                            <p className="mb-3 text-[11px] text-muted-foreground">Will normalize each value in the selected source column.</p>
+                          )}
+                          {newColColumnType === "Read File" && (
+                            <p className="mb-3 text-[11px] text-muted-foreground">Reads the file path/URL in the source column and extracts text content.</p>
+                          )}
+
+                          {/* Action buttons */}
+                          <div className="flex gap-2">
+                            <button onClick={() => setNewColStep("browse")}
+                              className="flex-1 rounded border border-border px-3 py-1.5 text-xs hover:bg-muted/40 transition-colors">
+                              Back
+                            </button>
+                            <button
+                              onClick={() => doAddColumn(newColColumnType, newColName.trim() || newColColumnType, newColConfigPrompt, newColSourceCol, newColRegex)}
+                              disabled={["AI Agent", "AI Web"].includes(newColColumnType) && !newColConfigPrompt.trim()}
+                              className="flex-1 rounded bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              Add Column &amp; Run
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </th>
+                <th className="w-10 border-b border-border bg-background p-0">
+                  <div className="flex items-center justify-center py-2.5">
+                    <Plus className="h-3.5 w-3.5 text-muted-foreground" />
                   </div>
                 </th>
               </tr>
@@ -1364,6 +2183,9 @@ export default function TableEditorPage() {
                   </td>
                   {/* Cells */}
                   {Array.from({ length: numCols }).map((_, colIndex) => {
+                    // Skip hidden columns
+                    if (hiddenCols.has(colIndex)) return null
+
                     // Skip cells that are part of a merge (covered by another cell)
                     const isCoveredByMerge = Object.entries(mergedCells).some(([key, merge]) => {
                       const [mergeRow, mergeCol] = key.split('-').map(Number)
@@ -1492,42 +2314,51 @@ export default function TableEditorPage() {
                   <td className="border-b border-border bg-muted/5"></td>
                 </tr>
               ))}
+              {/* + New entry row - Loopster style */}
+              <tr
+                className="h-9 hover:bg-muted/20 cursor-pointer group/newentry"
+                onClick={handleAddRow}
+              >
+                <td className="border-b border-r border-border px-2 w-10">
+                  <div className="flex items-center gap-1 text-xs text-muted-foreground opacity-0 group-hover/newentry:opacity-100 transition-opacity">
+                    <Plus className="h-3 w-3" />
+                    New entry
+                  </div>
+                </td>
+                {Array.from({ length: numCols }).map((_, colIndex) => {
+                  if (hiddenCols.has(colIndex)) return null
+                  return <td key={colIndex} className="border-b border-r border-border" />
+                })}
+                <td className="border-b border-r border-dashed border-primary/40" />
+                <td className="border-b border-border w-10" />
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* Bottom Bar */}
-      <div className="flex items-center justify-between border-t border-border px-4 py-2">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="sm" className="gap-2" onClick={handleAddRow}>
-            <Plus className="h-4 w-4" />
+      {/* Bottom Bar - Loopster style */}
+      <div className="flex items-center justify-between border-t border-border px-3 py-1.5">
+        <div className="flex items-center gap-1.5">
+          <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs" onClick={handleAddRow}>
+            <Plus className="h-3.5 w-3.5" />
             New entry
+            <kbd className="ml-1 inline-flex h-4 items-center rounded border border-border bg-muted px-1 font-mono text-[10px]">N</kbd>
           </Button>
-          <Input
-            type="number"
-            min="1"
-            placeholder="Add rows"
-            className="h-8 w-32"
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                const count = parseInt((e.target as HTMLInputElement).value, 10)
-                handleAddMultipleRows(count)
-                ;(e.target as HTMLInputElement).value = ""
-              }
-            }}
-          />
+          <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs">
+            <RefreshCw className="h-3.5 w-3.5" />
+            Auto scroll off
+          </Button>
         </div>
-        <div className="flex items-center gap-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span>
-            Records: {filteredRows !== null ? `${filteredRows.length} of ${numRows}` : numRows} rows
+            Records: <strong className="text-foreground">{filteredRows !== null ? filteredRows.length : numRows}</strong> rows
           </span>
           <span>Views:</span>
-          <Button variant="ghost" size="sm" className="h-7 gap-1 bg-primary/10 text-primary">
-            <Columns3 className="h-3 w-3" />
-            Main
+          <Button variant="ghost" size="sm" className="h-6 gap-1 bg-primary/10 text-primary text-xs px-2">
+            🪡 Main
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7">
+          <Button variant="ghost" size="icon" className="h-6 w-6">
             <Plus className="h-3 w-3" />
           </Button>
         </div>
