@@ -54,7 +54,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
   return (
     <aside className={cn("flex h-screen w-64 flex-col border-r border-border bg-sidebar", className)}>
       {/* Brand */}
-      <div className="flex items-center gap-2 border-b border-border px-4 py-4">
+      <div className="flex items-center gap-2 border-b border-border px-4 h-16 shrink-0">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
           <span className="text-lg font-bold text-primary-foreground">G</span>
         </div>
@@ -135,8 +135,8 @@ export function AppSidebar({ className }: AppSidebarProps) {
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-start text-left">
-                  <span className="text-xs font-medium text-sidebar-foreground truncate max-w-[100px]">{user?.name || "User"}</span>
-                  <span className="text-xs text-muted-foreground truncate max-w-[100px]">{user?.email}</span>
+                  <span className="text-xs font-medium text-sidebar-foreground truncate max-w-25">{user?.name || "User"}</span>
+                  <span className="text-xs text-muted-foreground truncate max-w-25">{user?.email}</span>
                 </div>
               </div>
               <ChevronDown className="h-4 w-4 text-muted-foreground" />

@@ -1,15 +1,15 @@
 "use client"
 
 import { AppSidebar } from "@/components/app-sidebar"
-import { AppFooter } from "@/components/app-footer"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Table2, Search, Wand2, Upload, Instagram, MessageSquare, MapPin, PlaySquare, FolderPlus, Trash2, X } from "lucide-react"
+import { Table2, Search, Wand2, Upload, MapPin, PlaySquare, FolderPlus, Trash2, X, CheckCircle2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState, useCallback } from "react"
 import { useQuery, useMutation } from "convex/react"
+import * as XLSX from "xlsx"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
 
@@ -20,6 +20,14 @@ export default function TablesPage() {
   const [newTableName, setNewTableName] = useState("")
   const [isCreating, setIsCreating] = useState(false)
 
+  // CSV import modal state
+  const [showImportModal, setShowImportModal] = useState(false)
+  const [importFile, setImportFile] = useState<{ name: string; headers: string[]; rows: string[][] } | null>(null)
+  const [importName, setImportName] = useState("")
+  const [isDragging, setIsDragging] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
+  const importFileRef = useRef<HTMLInputElement>(null)
+
   // Fetch user's spreadsheets from Convex
   const spreadsheets = useQuery(
     api.spreadsheets.getSpreadsheetsByUser,
@@ -29,6 +37,45 @@ export default function TablesPage() {
   // Mutations
   const createSpreadsheet = useMutation(api.spreadsheets.getOrCreateSpreadsheet)
   const deleteSpreadsheet = useMutation(api.spreadsheets.deleteSpreadsheet)
+  const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
+  const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
+
+  // Process any pending import saved from the landing page
+  useEffect(() => {
+    if (loading || !user?.id) return
+    const raw = localStorage.getItem("pendingImport")
+    if (!raw) return
+    localStorage.removeItem("pendingImport")
+
+    let parsed: { csvData: { headers: string[]; rows: string[][] }; sheetName: string } | null = null
+    try { parsed = JSON.parse(raw) } catch { return }
+    if (!parsed) return
+
+    const { csvData, sheetName } = parsed
+    const name = sheetName || "Untitled Sheet"
+
+    const run = async () => {
+      try {
+        const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+        const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name })
+
+        const cells: { cellKey: string; value: string }[] = []
+        csvData.headers.forEach((h: string, ci: number) => { if (h.trim()) cells.push({ cellKey: `0-${ci}`, value: h }) })
+        csvData.rows.forEach((row: string[], ri: number) => {
+          row.forEach((val: string, ci: number) => { if (val.trim()) cells.push({ cellKey: `${ri + 1}-${ci}`, value: val }) })
+        })
+
+        if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
+        await updateMetadata({ spreadsheetId, numRows: csvData.rows.length + 1, numCols: csvData.headers.length })
+
+        router.push(`/dashboard/tables/${tableId}`)
+      } catch (err) {
+        console.error("Failed to process pending import:", err)
+      }
+    }
+    run()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, user?.id])
 
   // Protect the page - only logged in regular users can access
   useEffect(() => {
@@ -67,6 +114,76 @@ export default function TablesPage() {
     }
   }
 
+  // ── CSV parsing ──
+  const parseAndSetFile = useCallback(async (file: File) => {
+    const baseName = file.name.replace(/\.(csv|xlsx|xls|txt)$/i, "")
+    try {
+      let headers: string[] = []
+      let rows: string[][] = []
+
+      if (file.name.endsWith(".csv") || file.name.endsWith(".txt")) {
+        const text = await file.text()
+        const lines = text.trim().split("\n")
+        headers = lines[0]?.split(",").map((h) => h.replace(/^"|"$/g, "").trim()) ?? []
+        rows = lines.slice(1).map((line) => line.split(",").map((c) => c.replace(/^"|"$/g, "").trim()))
+      } else {
+        const buf = await file.arrayBuffer()
+        const wb = XLSX.read(new Uint8Array(buf), { type: "array" })
+        const ws = wb.Sheets[wb.SheetNames[0]]
+        const range = XLSX.utils.decode_range(ws["!ref"] || "A1")
+        const allRows: string[][] = []
+        for (let r = range.s.r; r <= range.e.r; r++) {
+          const row: string[] = []
+          for (let c = range.s.c; c <= range.e.c; c++) {
+            const addr = XLSX.utils.encode_cell({ r, c })
+            row.push(ws[addr] ? String(ws[addr].v ?? "") : "")
+          }
+          allRows.push(row)
+        }
+        headers = allRows[0] ?? []
+        rows = allRows.slice(1)
+      }
+
+      setImportFile({ name: file.name, headers, rows })
+      setImportName(baseName)
+    } catch {
+      alert("Could not parse file. Please use CSV or Excel format.")
+    }
+  }, [])
+
+  const handleImportDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragging(false)
+    const file = e.dataTransfer.files[0]
+    if (file) parseAndSetFile(file)
+  }, [parseAndSetFile])
+
+  const handleStartImport = async () => {
+    if (!importFile || !importName.trim() || !user?.id) return
+    setIsImporting(true)
+    try {
+      const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name: importName.trim() })
+
+      const cells: { cellKey: string; value: string }[] = []
+      importFile.headers.forEach((h, ci) => { if (h.trim()) cells.push({ cellKey: `0-${ci}`, value: h }) })
+      importFile.rows.forEach((row, ri) => {
+        row.forEach((val, ci) => { if (val.trim()) cells.push({ cellKey: `${ri + 1}-${ci}`, value: val }) })
+      })
+
+      if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
+      await updateMetadata({ spreadsheetId, numRows: importFile.rows.length + 1, numCols: importFile.headers.length })
+
+      setShowImportModal(false)
+      setImportFile(null)
+      setImportName("")
+      router.push(`/dashboard/tables/${tableId}`)
+    } catch (err) {
+      console.error("Import failed:", err)
+      setIsImporting(false)
+    }
+  }
+
   const handleDeleteTable = async (spreadsheetId: Id<"spreadsheets">) => {
     if (!confirm("Are you sure you want to delete this table? This action cannot be undone.")) {
       return
@@ -80,31 +197,34 @@ export default function TablesPage() {
   }
 
   const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-    })
+    const now = Date.now()
+    const diff = now - timestamp
+    const mins = Math.floor(diff / 60000)
+    const hours = Math.floor(diff / 3600000)
+    const days = Math.floor(diff / 86400000)
+    if (mins < 1) return "just now"
+    if (mins < 60) return `${mins}m ago`
+    if (hours < 24) return `${hours}h ago`
+    if (days < 7) return `${days}d ago`
+    return new Date(timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
   }
 
   const projectOptions = [
-    { icon: Table2, label: "Blank table", description: "Start with an empty table" },
-    { icon: Search, label: "Search templates", description: "Browse pre-built templates" },
-    { icon: Wand2, label: "Creator", description: "AI-powered table generation" },
-    { icon: Upload, label: "Import & enrich CSV", description: "Upload and enhance your data" },
-    { icon: PlaySquare, label: "Run Google Search", description: "Search and extract data" },
-    { icon: MapPin, label: "Local businesses", description: "Find nearby businesses" },
-  ]
-
-  const scrapeOptions = [
-    { icon: Instagram, label: "Scrape Instagram", color: "text-pink-500" },
-    { icon: MessageSquare, label: "Scrape Reactions", color: "text-blue-500" },
+    { icon: Table2, label: "Blank table", description: "Start with an empty table", action: () => setShowNameModal(true) },
+    { icon: Search, label: "Search templates", description: "Browse pre-built templates", action: () => {} },
+    { icon: Wand2, label: "Creator", description: "AI-powered table generation", action: () => {} },
+    { icon: Upload, label: "Import & enrich CSV", description: "Upload and enhance your data", action: () => setShowImportModal(true) },
+    { icon: PlaySquare, label: "Run Google Search", description: "Search and extract data", action: () => {} },
+    { icon: MapPin, label: "Local businesses", description: "Find nearby businesses", action: () => {} },
   ]
 
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center">
-        <p>Loading...</p>
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-5 w-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        </div>
       </div>
     )
   }
@@ -113,197 +233,414 @@ export default function TablesPage() {
     <div className="flex h-screen bg-background">
       <AppSidebar />
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="border-b border-border bg-background px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <Table2 className="h-5 w-5 text-muted-foreground" />
-              <h1 className="text-2xl font-bold text-foreground">Tables</h1>
-            </div>
-            <div className="flex items-center gap-4">
-              <ThemeToggle />
-              <Button variant="default" size="sm" className="gap-2">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-                  <path d="M12 17h.01" />
-                </svg>
-                Need Help?
-              </Button>
-            </div>
+        <header className="border-b border-border bg-background px-8 h-16 flex items-center justify-between shrink-0">
+          <div>
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Workspace</p>
+            <h1 className="text-lg font-semibold text-foreground">Tables</h1>
+          </div>
+          <div className="flex items-center gap-3">
+            <ThemeToggle />
+            <Button
+              onClick={() => setShowNameModal(true)}
+              size="sm"
+              className="gap-1.5 text-sm"
+            >
+              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
+              New table
+            </Button>
           </div>
         </header>
 
-        {/* Main Content Area */}
-        <main className="flex-1 overflow-auto p-6">
-          {/* Welcome Section */}
-          <div className="mb-8">
-            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! </h2>
-          </div>
-            {/* Create New Project Section */}
-            <section className="mb-8">
-              <h2 className="mb-4 text-xl font-bold text-foreground">Create a new project</h2>
+        <main className="flex-1 overflow-auto px-8 py-10">
 
-              <div className="grid gap-4 grid-cols-3 sm:grid-cols-6">
-                {projectOptions.map((option) => (
-                  <Button
-                    key={option.label}
-                    variant="outline"
-                    className="h-auto flex items-center gap-2 p-4 hover:bg-hover bg-transparent"
-                    onClick={() => {
-                      if (option.label === "Blank table") {
-                        setShowNameModal(true)
-                      }
-                    }}
-                  >
-                    <option.icon className="h-5 w-5 text-muted-foreground" />
-                    <span className="font-medium text-foreground">{option.label}</span>
-                  </Button>
-                ))}
-              </div>
+          {/* ── Hero ── */}
+          <div className="relative mb-14 overflow-hidden rounded-2xl border border-border bg-card">
+            {/* Ambient layers */}
+            <div className="absolute inset-0 pointer-events-none">
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_70%_-10%,hsl(var(--primary)/0.07),transparent)]" />
+              <div className="absolute inset-0 opacity-[0.025]" style={{ backgroundImage: "radial-gradient(circle,var(--foreground) 1px,transparent 1px)", backgroundSize: "22px 22px" }} />
+              <div className="absolute -top-12 right-10 h-52 w-52 rounded-full bg-primary/9 blur-3xl animate-[gm-float_7s_ease-in-out_infinite]" />
+              <div className="absolute top-8 right-56 h-28 w-28 rounded-full bg-accent/[0.07] blur-2xl animate-[gm-float_9s_ease-in-out_infinite_2s]" />
+            </div>
 
-              {/* <div className="mt-4 grid gap-4 grid-cols-6">
-                {scrapeOptions.map((option) => (
-                  <Button
-                    key={option.label}
-                    variant="outline"
-                    className="h-auto flex items-center gap-2 p-4 hover:bg-hover bg-transparent col-span-3"
-                  >
-                    <option.icon className={`h-5 w-5 ${option.color}`} />
-                    <span className="font-medium text-foreground">{option.label}</span>
-                  </Button>
-                ))}
-              </div> */}
-            </section>
+            <div className="relative px-8 py-10">
+              <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8">
 
-            {/* Projects & Folders Section */}
-            <section>
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-xl font-bold text-foreground">Projects & Folders</h2>
-                <Button variant="ghost" size="sm" className="gap-2">
-                  <FolderPlus className="h-4 w-4" />
-                  Add Folder
-                </Button>
-              </div>
+                {/* Left */}
+                <div>
+                  {/* Live date pill */}
+                  <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/60 backdrop-blur-sm px-3 py-1 mb-6">
+                    <span className="relative flex h-1.5 w-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+                    </span>
+                    <span className="text-[11px] font-medium text-muted-foreground tracking-wide">
+                      {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
+                    </span>
+                  </div>
 
-              {/* Table Header */}
-              <div className="rounded-lg border border-border bg-card">
-                <div className="grid grid-cols-4 gap-4 border-b border-border px-6 py-3 text-sm font-medium text-muted-foreground">
-                  <div>Title</div>
-                  <div>Columns</div>
-                  <div>Created</div>
-                  <div>Actions</div>
+                  <h2 className="text-[2.6rem] font-bold tracking-tight leading-[1.08] text-foreground">
+                    Good{" "}
+                    {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},
+                    <br />
+                    <span className="bg-linear-to-r from-primary via-violet-500 to-primary bg-clip-text text-transparent animate-[gm-gradshift_6s_ease_infinite]">
+                      {user?.name}.
+                    </span>
+                  </h2>
+
+                  <p className="mt-4 text-sm text-muted-foreground max-w-sm leading-relaxed">
+                    {spreadsheets === undefined
+                      ? "Loading your workspace…"
+                      : spreadsheets.length === 0
+                      ? "Your workspace is empty. Create your first table to get started."
+                      : `You have ${spreadsheets.length} table${spreadsheets.length !== 1 ? "s" : ""} in your workspace. Ready to enrich?`}
+                  </p>
                 </div>
 
-                {/* Table List or Empty State */}
-                {spreadsheets === undefined ? (
-                  <div className="flex min-h-50 items-center justify-center py-12">
-                    <p className="text-sm text-muted-foreground">Loading...</p>
+                {/* Right: stat strip */}
+                <div className="flex items-stretch gap-px rounded-xl border border-border overflow-hidden bg-border shrink-0 self-end">
+                  {[
+                    { value: spreadsheets?.length ?? "—", label: "Tables" },
+                    { value: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }), label: "Today" },
+                  ].map((s) => (
+                    <div key={s.label} className="flex flex-col items-center justify-center px-7 py-4 bg-card hover:bg-muted/50 transition-colors">
+                      <span className="text-2xl font-bold text-foreground tabular-nums">{s.value}</span>
+                      <span className="text-[11px] text-muted-foreground mt-0.5 tracking-wide">{s.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Animated shimmer rule */}
+              <div className="mt-8 h-px w-full bg-border overflow-hidden rounded-full">
+                <div className="h-full w-2/5 bg-linear-to-r from-transparent via-primary/50 to-transparent animate-[gm-shimmer_3.5s_ease-in-out_infinite]" />
+              </div>
+            </div>
+          </div>
+
+          {/* ── Start something new ── */}
+          <section className="mb-14">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground mb-5">
+              Start something new
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+              {projectOptions.map((option, i) => (
+                <button
+                  key={option.label}
+                  style={{ animationDelay: `${i * 55}ms` }}
+                  onClick={() => option.action()}
+                  className="group relative overflow-hidden flex flex-col gap-3 rounded-xl border border-border bg-background p-4 text-left
+                    transition-all duration-200 ease-out
+                    hover:border-primary/30 hover:-translate-y-1
+                    hover:shadow-[0_12px_40px_-8px_hsl(var(--primary)/0.12)]
+                    focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40
+                    animate-[gm-tilein_0.4s_ease_both]"
+                >
+                  {/* Hover radial glow */}
+                  <div className="absolute inset-0 rounded-xl bg-[radial-gradient(ellipse_at_top_left,hsl(var(--primary)/0.06),transparent_70%)] opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+
+                  {/* Icon */}
+                  <div className="relative h-8 w-8 rounded-lg bg-muted flex items-center justify-center text-muted-foreground
+                    group-hover:bg-primary/10 group-hover:text-primary group-hover:scale-110
+                    transition-all duration-200">
+                    <option.icon className="h-4 w-4" />
                   </div>
-                ) : spreadsheets.length === 0 ? (
-                  <div className="flex min-h-50 items-center justify-center py-12">
-                    <div className="text-center">
-                      <Table2 className="mx-auto mb-3 h-12 w-12 text-muted-foreground/50" />
-                      <p className="text-sm text-muted-foreground">No projects yet. Create your first project above.</p>
+
+                  {/* Text */}
+                  <div className="relative">
+                    <p className="text-[12px] font-semibold text-foreground leading-snug tracking-tight">{option.label}</p>
+                    <p className="text-[11px] text-muted-foreground leading-tight mt-0.5">{option.description}</p>
+                  </div>
+
+                  {/* Sweep accent line */}
+                  <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-linear-to-r from-primary/80 to-primary/20 scale-x-0 group-hover:scale-x-100 transition-transform duration-300 ease-out origin-left rounded-b-xl" />
+
+                  {/* Top-right arrow */}
+                  <svg
+                    className="absolute top-3 right-3 h-3 w-3 text-primary/0 group-hover:text-primary/60 transition-all duration-200 translate-x-1 group-hover:translate-x-0 translate-y-1 group-hover:translate-y-0"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 19.5l15-15m0 0H8.25m11.25 0v11.25" />
+                  </svg>
+                </button>
+              ))}
+            </div>
+          </section>
+
+          {/* ── Projects list ── */}
+          <section>
+            <div className="flex items-center justify-between mb-5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Projects &amp; Folders</p>
+              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
+                <FolderPlus className="h-3.5 w-3.5" />
+                New folder
+              </button>
+            </div>
+
+            {/* Column headers */}
+            <div className="grid grid-cols-[1fr_60px_100px_36px] gap-4 px-4 pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 border-b border-border">
+              <span>Name</span>
+              <span className="text-right">Cols</span>
+              <span className="text-right">Updated</span>
+              <span />
+            </div>
+
+            {spreadsheets === undefined ? (
+              <div className="flex items-center justify-center py-16">
+                <div className="h-4 w-4 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+              </div>
+            ) : spreadsheets.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-20 text-center">
+                <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center mb-4 border border-border">
+                  <Table2 className="h-5 w-5 text-muted-foreground" />
+                </div>
+                <p className="text-sm font-semibold text-foreground mb-1">No tables yet</p>
+                <p className="text-xs text-muted-foreground max-w-xs">Create your first table or import a CSV file to get started.</p>
+                <button onClick={() => setShowNameModal(true)} className="mt-5 text-xs text-primary hover:underline underline-offset-4 font-medium">
+                  Create blank table →
+                </button>
+              </div>
+            ) : (
+              <div>
+                {spreadsheets.map((sheet, i) => (
+                  <div
+                    key={sheet._id}
+                    onClick={() => router.push(`/dashboard/tables/${sheet.tableId}`)}
+                    style={{ animationDelay: `${i * 40}ms` }}
+                    className="group relative grid grid-cols-[1fr_60px_100px_36px] gap-4 items-center px-4 py-3.5
+                      border-b border-border/50 last:border-b-0 cursor-pointer
+                      hover:bg-muted/25 transition-colors duration-150
+                      animate-[gm-tilein_0.35s_ease_both]"
+                  >
+                    {/* Left accent bar */}
+                    <span className="absolute left-0 top-2 bottom-2 w-0.5 rounded-r-full bg-primary scale-y-0 group-hover:scale-y-100 transition-transform duration-200 origin-center" />
+
+                    <div className="flex items-center gap-3 min-w-0 pl-1">
+                      <div className="shrink-0 h-7 w-7 rounded-md bg-muted border border-border flex items-center justify-center group-hover:border-primary/30 group-hover:bg-primary/5 transition-all duration-150">
+                        <svg className="h-3.5 w-3.5 text-muted-foreground group-hover:text-primary transition-colors" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                          <rect x="3" y="3" width="18" height="18" rx="2" />
+                          <path d="M3 9h18M3 15h18M9 3v18" />
+                        </svg>
+                      </div>
+                      <span className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors duration-150">{sheet.name}</span>
+                    </div>
+                    <span className="text-xs text-muted-foreground text-right tabular-nums">{sheet.numCols}</span>
+                    <span className="text-xs text-muted-foreground text-right">{formatDate(sheet.updatedAt)}</span>
+                    <div className="flex justify-end">
+                      <button
+                        className="h-7 w-7 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-150"
+                        onClick={(e) => { e.stopPropagation(); handleDeleteTable(sheet._id) }}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
                     </div>
                   </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </main>
+      </div>
+
+      {/* ── Import CSV Modal ── */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-background shadow-2xl animate-[gm-tilein_0.2s_ease_both] flex flex-col max-h-[90vh]">
+
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">Import &amp; Enrich CSV</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Upload a file, name your table, and start enriching.</p>
+              </div>
+              <button
+                className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-muted transition-colors"
+                onClick={() => { setShowImportModal(false); setImportFile(null); setImportName("") }}
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 px-6 py-5 space-y-5">
+              {/* Drop zone */}
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={handleImportDrop}
+                onClick={() => importFileRef.current?.click()}
+                className={`relative cursor-pointer rounded-xl border-2 border-dashed transition-all duration-200 flex flex-col items-center justify-center gap-3 py-10 px-6 ${
+                  isDragging
+                    ? "border-primary bg-primary/10 scale-[1.01]"
+                    : importFile
+                    ? "border-emerald-500/50 bg-emerald-500/5"
+                    : "border-border hover:border-primary/50 hover:bg-primary/5"
+                }`}
+              >
+                <input
+                  ref={importFileRef}
+                  type="file"
+                  accept=".csv,.xlsx,.xls,.txt"
+                  className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) parseAndSetFile(f); e.target.value = "" }}
+                />
+                {importFile ? (
+                  <>
+                    <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                    <p className="font-medium text-foreground text-sm">{importFile.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {importFile.headers.length} columns · {importFile.rows.length} rows — click to replace
+                    </p>
+                  </>
                 ) : (
-                  <div>
-                    {spreadsheets.map((sheet) => (
-                      <div
-                        key={sheet._id}
-                        className="grid grid-cols-4 gap-4 border-b border-border px-6 py-4 hover:bg-muted/50 cursor-pointer transition-colors"
-                        onClick={() => router.push(`/dashboard/tables/${sheet.tableId}`)}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Table2 className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-medium text-foreground">{sheet.name}</span>
-                        </div>
-                        <div className="text-muted-foreground">{sheet.numCols}</div>
-                        <div className="text-muted-foreground">{formatDate(sheet.updatedAt)}</div>
-                        <div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                            onClick={(e) => {
-                              e.stopPropagation()
-                              handleDeleteTable(sheet._id)
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <>
+                    <div className="h-10 w-10 rounded-xl bg-muted flex items-center justify-center border border-border">
+                      <Upload className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                    <p className="font-medium text-foreground text-sm">Drop your CSV or Excel file here</p>
+                    <p className="text-xs text-muted-foreground">or click to browse — .csv, .xlsx, .xls supported</p>
+                  </>
                 )}
               </div>
-            </section>
-        </main>
 
-        {/* Footer */}
-        {/* <AppFooter /> */}
-      </div>
+              {/* Preview table */}
+              {importFile && (
+                <div className="rounded-xl border border-border bg-card overflow-hidden">
+                  <div className="px-4 py-2 border-b border-border flex items-center gap-2 bg-muted/30">
+                    <div className="h-2 w-2 rounded-full bg-rose-400" />
+                    <div className="h-2 w-2 rounded-full bg-amber-400" />
+                    <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <span className="ml-2 text-xs text-muted-foreground font-mono">{importFile.name} — preview</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-muted/40">
+                        <tr>
+                          {importFile.headers.map((h, i) => (
+                            <th key={i} className="px-3 py-2 text-left text-xs font-semibold text-muted-foreground border-r border-border last:border-r-0 whitespace-nowrap">
+                              {h || `Col ${i + 1}`}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importFile.rows.slice(0, 4).map((row, ri) => (
+                          <tr key={ri} className="border-t border-border/50 hover:bg-muted/20 transition-colors">
+                            {importFile.headers.map((_, ci) => (
+                              <td key={ci} className="px-3 py-1.5 text-xs text-foreground border-r border-border/30 last:border-r-0 whitespace-nowrap max-w-40 truncate">
+                                {row[ci] ?? ""}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {importFile.rows.length > 4 && (
+                    <div className="px-4 py-1.5 border-t border-border text-xs text-muted-foreground bg-muted/20">
+                      Showing 4 of {importFile.rows.length} rows
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Name input */}
+              {importFile && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Table name</label>
+                  <Input
+                    placeholder="e.g. Lead outreach Q3"
+                    value={importName}
+                    onChange={(e) => setImportName(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && importName.trim()) handleStartImport() }}
+                    autoFocus
+                  />
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-border shrink-0">
+              <p className="text-xs text-muted-foreground">
+                {importFile ? `${importFile.headers.length} cols · ${importFile.rows.length} rows detected` : "No file selected"}
+              </p>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => { setShowImportModal(false); setImportFile(null); setImportName("") }}>
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={!importFile || !importName.trim() || isImporting}
+                  onClick={handleStartImport}
+                  className="gap-1.5"
+                >
+                  {isImporting ? (
+                    <><div className="h-3.5 w-3.5 rounded-full border-2 border-primary-foreground/40 border-t-primary-foreground animate-spin" />Creating…</>
+                  ) : (
+                    <>Start Enrich →</>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Table Modal */}
       {showNameModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="w-full max-w-md rounded-lg border border-border bg-background p-6 shadow-lg">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-foreground">Create New Table</h3>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0"
-                onClick={() => {
-                  setShowNameModal(false)
-                  setNewTableName("")
-                }}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="w-full max-w-sm rounded-xl border border-border bg-background p-6 shadow-2xl animate-[gm-tilein_0.2s_ease_both]">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-sm font-semibold text-foreground">New table</h3>
+              <button
+                className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-muted transition-colors"
+                onClick={() => { setShowNameModal(false); setNewTableName("") }}
               >
                 <X className="h-4 w-4" />
-              </Button>
+              </button>
             </div>
-            <div className="mb-4">
-              <label htmlFor="tableName" className="block text-sm font-medium text-foreground mb-2">
-                Table Name
-              </label>
-              <Input
-                id="tableName"
-                type="text"
-                placeholder="Enter table name..."
-                value={newTableName}
-                onChange={(e) => setNewTableName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && newTableName.trim()) {
-                    handleCreateTable()
-                  }
-                }}
-                autoFocus
-              />
-            </div>
+            <Input
+              type="text"
+              placeholder="e.g. Lead outreach Q3"
+              value={newTableName}
+              onChange={(e) => setNewTableName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && newTableName.trim()) handleCreateTable() }}
+              autoFocus
+              className="mb-4"
+            />
             <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowNameModal(false)
-                  setNewTableName("")
-                }}
-              >
+              <Button variant="outline" size="sm" onClick={() => { setShowNameModal(false); setNewTableName("") }}>
                 Cancel
               </Button>
-              <Button
-                onClick={handleCreateTable}
-                disabled={!newTableName.trim() || isCreating}
-              >
-                {isCreating ? "Creating..." : "Create Table"}
+              <Button size="sm" onClick={handleCreateTable} disabled={!newTableName.trim() || isCreating}>
+                {isCreating ? "Creating…" : "Create"}
               </Button>
             </div>
           </div>
         </div>
       )}
+
+      {/* ── Keyframes ── */}
+      <style dangerouslySetInnerHTML={{ __html: `
+        @keyframes gm-float {
+          0%, 100% { transform: translate(0, 0) scale(1); }
+          40%       { transform: translate(10px, -14px) scale(1.05); }
+          70%       { transform: translate(-7px, 7px) scale(0.97); }
+        }
+        @keyframes gm-shimmer {
+          0%   { transform: translateX(-140%); }
+          100% { transform: translateX(360%); }
+        }
+        @keyframes gm-gradshift {
+          0%, 100% { background-position: 0% 50%; }
+          50%       { background-position: 100% 50%; }
+        }
+        @keyframes gm-tilein {
+          from { opacity: 0; transform: translateY(10px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      ` }} />
     </div>
   )
 }

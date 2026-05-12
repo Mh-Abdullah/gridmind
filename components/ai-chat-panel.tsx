@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
@@ -1227,7 +1227,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         </div>
       </div>
 
-      {/* Pending Changes Bar - Above input like GitHub Copilot */}
+      {/* Pending Changes Bar */}
       {pendingChanges && (
         <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-4 py-2">
           <div className="flex items-center gap-2">
@@ -1253,7 +1253,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         </div>
       )}
 
-      {/* Input area - VS Code Copilot style */}
+      {/* Input area */}
       <div className="border-t border-border p-3">
         <div className="rounded-lg border border-border bg-muted/30 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
           {/* Text input */}

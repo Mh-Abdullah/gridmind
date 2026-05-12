@@ -1,0 +1,12 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "npm",
+			"script": "convex:dev",
+			"problemMatcher": [],
+			"label": "npm: convex:dev",
+			"detail": "convex dev"
+		}
+	]
+}
