@@ -136,6 +136,8 @@ interface PendingAIChanges {
     cells: { [key: string]: string }
     numRows: number
     numCols: number
+    colNames?: { [key: number]: string }
+    colFieldType?: { [key: number]: string }
   } | null
   newChanges: { row: number; col: number; value: string }[]
   summary: string

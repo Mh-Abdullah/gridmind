@@ -58,6 +58,22 @@ const getColumnLabel = (index: number): string => {
   return label
 }
 
+const detectFieldType = (values: string[]): string => {
+  const nonEmpty = values.filter(v => v && v.trim() !== "" && v.trim() !== "N/A")
+  if (nonEmpty.length === 0) return "Text"
+  if (nonEmpty.every(v => /^https?:\/\//i.test(v.trim()))) return "URL"
+  if (nonEmpty.every(v => /^(true|false|yes|no)$/i.test(v.trim()))) return "Boolean"
+  if (nonEmpty.every(v => {
+    const cleaned = v.replace(/[$,%]/g, "").trim()
+    return cleaned !== "" && !isNaN(Number(cleaned))
+  })) return "Number"
+  if (nonEmpty.every(v => {
+    const d = Date.parse(v)
+    return !isNaN(d) && /\d{4}|\d{1,2}[\/\-]\d{1,2}/.test(v)
+  })) return "Date"
+  return "Text"
+}
+
 interface Cell {
   value: string
 }
@@ -162,6 +178,8 @@ export default function TableEditorPage() {
       cells: { [key: string]: string }
       numRows: number
       numCols: number
+      colNames?: { [key: number]: string }
+      colFieldType?: { [key: number]: string }
     } | null
     newChanges: { row: number; col: number; value: string }[]
     summary: string
@@ -2160,11 +2178,6 @@ export default function TableEditorPage() {
                     </div>
                   )}
                 </th>
-                <th className="w-10 border-b border-border bg-background p-0">
-                  <div className="flex items-center justify-center py-2.5">
-                    <Plus className="h-3.5 w-3.5 text-muted-foreground" />
-                  </div>
-                </th>
               </tr>
             </thead>
             <tbody>
@@ -2248,13 +2261,54 @@ export default function TableEditorPage() {
                         title={cellValue}
                       >
                         {isEditing ? (
+                          colFieldType[colIndex] === "Boolean" ? (
+                            <select
+                              ref={editInputRef as unknown as React.RefObject<HTMLSelectElement>}
+                              value={cellValue}
+                              onChange={(e) => setCellValue(rowIndex, colIndex, e.target.value)}
+                              onKeyDown={(e) => handleCellKeyDown(e, rowIndex, colIndex)}
+                              onBlur={() => setEditingCell(null)}
+                              autoFocus
+                              style={{
+                                width: "100%",
+                                height: "100%",
+                                color: formatting.textColor || "inherit",
+                                backgroundColor: "transparent",
+                                fontSize: `${fontSize}px`,
+                                paddingLeft: `${paddingLeft}px`,
+                                paddingRight: "8px",
+                                boxSizing: "border-box",
+                                border: "none",
+                                outline: "none",
+                                fontFamily: "inherit",
+                              }}
+                            >
+                              <option value="">—</option>
+                              <option value="true">true</option>
+                              <option value="false">false</option>
+                            </select>
+                          ) : (
                           <input
                             ref={editInputRef}
                             value={cellValue}
-                            onChange={(e) => setCellValue(rowIndex, colIndex, e.target.value)}
+                            onChange={(e) => {
+                              const v = e.target.value
+                              if (colFieldType[colIndex] === "Number") {
+                                // Allow digits, decimal point, minus sign, and empty
+                                if (v === "" || v === "-" || /^-?\d*\.?\d*$/.test(v)) {
+                                  setCellValue(rowIndex, colIndex, v)
+                                }
+                              } else {
+                                setCellValue(rowIndex, colIndex, v)
+                              }
+                            }}
                             onKeyDown={(e) => handleCellKeyDown(e, rowIndex, colIndex)}
                             onBlur={() => setEditingCell(null)}
-                            type="text"
+                            type={
+                              colFieldType[colIndex] === "Number" ? "text" :
+                              colFieldType[colIndex] === "Date" ? "date" :
+                              "text"
+                            }
                             autoComplete="off"
                             style={{ 
                               width: "100%",
@@ -2265,7 +2319,7 @@ export default function TableEditorPage() {
                               fontWeight: formatting.bold ? "bold" : "normal",
                               fontStyle: formatting.italic ? "italic" : "normal",
                               textDecoration: formatting.underline ? "underline" : "none",
-                              textAlign: formatting.alignment || "left",
+                              textAlign: colFieldType[colIndex] === "Number" ? "right" : (formatting.alignment || "left"),
                               paddingLeft: `${paddingLeft}px`,
                               paddingRight: "8px",
                               paddingTop: "0px",
@@ -2280,6 +2334,7 @@ export default function TableEditorPage() {
                               verticalAlign: "top",
                             }}
                           />
+                          )
                         ) : (
                           <div 
                             style={{
@@ -2287,7 +2342,9 @@ export default function TableEditorPage() {
                               height: "100%",
                               display: "flex",
                               alignItems: "center",
-                              justifyContent: formatting.alignment === "center" ? "center" : formatting.alignment === "right" ? "flex-end" : "flex-start",
+                              justifyContent: colFieldType[colIndex] === "Number"
+                                ? "flex-end"
+                                : formatting.alignment === "center" ? "center" : formatting.alignment === "right" ? "flex-end" : "flex-start",
                               color: formatting.textColor,
                               fontSize: `${fontSize}px`,
                               fontWeight: formatting.bold ? "bold" : "normal",
@@ -2297,7 +2354,7 @@ export default function TableEditorPage() {
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               paddingLeft: formatting.alignment === "left" ? `${paddingLeft}px` : "8px",
-                              paddingRight: formatting.alignment === "right" ? `${paddingLeft}px` : "8px",
+                              paddingRight: (formatting.alignment === "right" || colFieldType[colIndex] === "Number") ? `${paddingLeft}px` : "8px",
                               paddingTop: "0px",
                               paddingBottom: "0px",
                               boxSizing: "border-box",
@@ -2305,13 +2362,28 @@ export default function TableEditorPage() {
                               WebkitUserSelect: "none",
                             }}
                           >
-                            {cellValue}
+                            {colFieldType[colIndex] === "URL" && cellValue && /^https?:\/\//i.test(cellValue) ? (
+                              <a
+                                href={cellValue}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ color: "var(--primary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                              >
+                                {cellValue}
+                              </a>
+                            ) : colFieldType[colIndex] === "Boolean" ? (
+                              <span style={{ color: cellValue === "true" ? "var(--primary)" : cellValue === "false" ? "var(--destructive)" : "inherit" }}>
+                                {cellValue === "true" ? "✓" : cellValue === "false" ? "✗" : cellValue}
+                              </span>
+                            ) : (
+                              cellValue
+                            )}
                           </div>
                         )}
                       </td>
                     )
                   })}
-                  <td className="border-b border-border bg-muted/5"></td>
                 </tr>
               ))}
               {/* + New entry row - Loopster style */}
@@ -2325,12 +2397,6 @@ export default function TableEditorPage() {
                     New entry
                   </div>
                 </td>
-                {Array.from({ length: numCols }).map((_, colIndex) => {
-                  if (hiddenCols.has(colIndex)) return null
-                  return <td key={colIndex} className="border-b border-r border-border" />
-                })}
-                <td className="border-b border-r border-dashed border-primary/40" />
-                <td className="border-b border-border w-10" />
               </tr>
             </tbody>
           </table>
@@ -2459,28 +2525,40 @@ export default function TableEditorPage() {
               cells: { ...cells },
               numRows,
               numCols,
+              colNames: { ...colNames },
+              colFieldType: { ...colFieldType },
             }
 
             const { headers, rows } = table
             const newNumCols = headers.length
-            const newNumRows = rows.length + 1 // +1 for header row
+            const newNumRows = rows.length
             const newChanges: { row: number; col: number; value: string }[] = []
 
-            // Write headers to row 0
+            // Set headers as column names
+            const newColNames: { [key: number]: string } = {}
             headers.forEach((header, colIndex) => {
-              newChanges.push({ row: 0, col: colIndex, value: header })
+              newColNames[colIndex] = header
             })
 
-            // Collect data rows starting at row 1
+            // Auto-detect field type for each column from the data values
+            const newColFieldTypes: { [key: number]: string } = {}
+            headers.forEach((_, colIndex) => {
+              const colValues = rows.map(row => row[colIndex] ?? "")
+              newColFieldTypes[colIndex] = detectFieldType(colValues)
+            })
+
+            // Collect data rows starting at row 0
             rows.forEach((row, rowIndex) => {
               row.forEach((value, colIndex) => {
-                newChanges.push({ row: rowIndex + 1, col: colIndex, value })
+                newChanges.push({ row: rowIndex, col: colIndex, value })
               })
             })
 
             // Apply changes immediately (preview)
             setNumCols(newNumCols)
             setNumRows(newNumRows)
+            setColNames(newColNames)
+            setColFieldType(newColFieldTypes)
             newChanges.forEach(({ row, col, value }) => {
               setCellValue(row, col, value)
             })
@@ -2497,11 +2575,13 @@ export default function TableEditorPage() {
           onKeepChanges={() => setPendingAIChanges(null)}
           onUndoChanges={() => {
             if (pendingAIChanges?.previousState) {
-              const { cells: prevCells, numRows: prevRows, numCols: prevCols } = pendingAIChanges.previousState
+              const { cells: prevCells, numRows: prevRows, numCols: prevCols, colNames: prevColNames, colFieldType: prevColFieldType } = pendingAIChanges.previousState
 
               // Restore dimensions (syncs to Convex)
               setNumRows(prevRows)
               setNumCols(prevCols)
+              if (prevColNames) setColNames(prevColNames)
+              if (prevColFieldType) setColFieldType(prevColFieldType)
 
               // Clear new cells first
               pendingAIChanges.newChanges.forEach(({ row, col }) => {

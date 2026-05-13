@@ -93,57 +93,91 @@ const searchWeb = tool({
   }),
   execute: async ({ query, context }) => {
     try {
-      // Use DuckDuckGo HTML search (no API key required)
+      const results: { title: string; snippet: string; url: string }[] = []
+
+      // --- Primary: DuckDuckGo HTML search ---
       const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
-      
       const response = await fetch(searchUrl, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "en-US,en;q=0.5",
+          "Referer": "https://duckduckgo.com/",
         },
         signal: AbortSignal.timeout(10000),
       })
 
-      if (!response.ok) {
-        return { results: [], error: "Search failed" }
+      if (response.ok) {
+        const html = await response.text()
+        let match
+
+        // DuckDuckGo wraps hrefs as //duckduckgo.com/l/?uddg=<encoded-url>
+        // Extract title link and decode the real destination URL
+        const titleRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi
+        const titleMatches: { url: string; title: string }[] = []
+
+        while ((match = titleRegex.exec(html)) !== null && titleMatches.length < 5) {
+          const href = match[1]
+          const title = match[2].replace(/<[^>]+>/g, "").trim()
+          let actualUrl = href
+
+          if (href.includes("uddg=")) {
+            try {
+              const qs = href.includes("?") ? href.split("?")[1] : href
+              const uddg = new URLSearchParams(qs).get("uddg")
+              if (uddg) actualUrl = decodeURIComponent(uddg)
+            } catch { /* keep original */ }
+          }
+
+          if (actualUrl && !actualUrl.includes("duckduckgo.com") && actualUrl.startsWith("http")) {
+            titleMatches.push({ url: actualUrl, title })
+          }
+        }
+
+        // Collect snippets in order
+        const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi
+        const snippets: string[] = []
+        while ((match = snippetRegex.exec(html)) !== null) {
+          snippets.push(match[1].replace(/<[^>]+>/g, "").trim())
+        }
+
+        for (let i = 0; i < titleMatches.length; i++) {
+          results.push({
+            url: titleMatches[i].url,
+            title: titleMatches[i].title,
+            snippet: snippets[i] || "",
+          })
+        }
       }
 
-      const html = await response.text()
-      
-      // Extract search results using regex (simple parsing)
-      const results: { title: string; snippet: string; url: string }[] = []
-      
-      // Match result links and snippets
-      const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([^<]*)/gi
-      let match
-      
-      while ((match = resultRegex.exec(html)) !== null && results.length < 5) {
-        results.push({
-          url: match[1],
-          title: match[2].trim(),
-          snippet: match[3].trim(),
-        })
-      }
-
-      // Fallback: try simpler extraction
+      // --- Fallback: DuckDuckGo Instant Answer JSON API ---
       if (results.length === 0) {
-        const linkRegex = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([^<]+)<\/a>/gi
-        while ((match = linkRegex.exec(html)) !== null && results.length < 5) {
-          if (!match[1].includes("duckduckgo.com")) {
-            results.push({
-              url: match[1],
-              title: match[2].trim(),
-              snippet: "",
-            })
+        const jsonUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`
+        const jsonRes = await fetch(jsonUrl, {
+          headers: { "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(8000),
+        })
+        if (jsonRes.ok) {
+          const data = await jsonRes.json() as {
+            AbstractText?: string; AbstractURL?: string; Heading?: string
+            RelatedTopics?: { Text?: string; FirstURL?: string }[]
+          }
+          if (data.AbstractText) {
+            results.push({ url: data.AbstractURL || "", title: data.Heading || query, snippet: data.AbstractText })
+          }
+          for (const topic of (data.RelatedTopics || []).slice(0, 4)) {
+            if (topic.Text && topic.FirstURL) {
+              results.push({
+                url: topic.FirstURL,
+                title: topic.Text.split(" - ")[0] || topic.Text.slice(0, 60),
+                snippet: topic.Text,
+              })
+            }
           }
         }
       }
 
-      return { 
-        query, 
-        context,
-        results,
-        success: true,
-      }
+      return { query, context, results, success: true }
     } catch (error) {
       return {
         results: [],
