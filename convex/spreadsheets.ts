@@ -98,6 +98,15 @@ export const deleteSpreadsheet = mutation({
       await ctx.db.delete(h._id);
     }
     
+    // Delete all column names
+    const colNames = await ctx.db
+      .query("columnNames")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const n of colNames) {
+      await ctx.db.delete(n._id);
+    }
+
     // Delete the spreadsheet itself
     await ctx.db.delete(args.spreadsheetId);
   },
@@ -289,6 +298,15 @@ export const resetSpreadsheet = mutation({
       await ctx.db.delete(h._id)
     }
 
+    // Delete all column names
+    const colNames = await ctx.db
+      .query("columnNames")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheetId))
+      .collect()
+    for (const n of colNames) {
+      await ctx.db.delete(n._id)
+    }
+
     // Reset spreadsheet metadata to defaults
     await ctx.db.patch(spreadsheetId, {
       numRows: defaultNumRows,
@@ -452,6 +470,55 @@ export const updateRowHeight = mutation({
         rowIndex: args.rowIndex,
         height: args.height,
       });
+    }
+  },
+});
+
+// Get column names
+export const getColumnNames = query({
+  args: { spreadsheetId: v.id("spreadsheets") },
+  handler: async (ctx, args) => {
+    const names = await ctx.db
+      .query("columnNames")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+
+    const namesObj: { [key: number]: string } = {};
+    for (const n of names) {
+      namesObj[n.colIndex] = n.name;
+    }
+    return namesObj;
+  },
+});
+
+// Batch update column names (upsert)
+export const updateColumnNamesBatch = mutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    names: v.array(v.object({ colIndex: v.number(), name: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    for (const { colIndex, name } of args.names) {
+      const existing = await ctx.db
+        .query("columnNames")
+        .withIndex("by_spreadsheet_col", (q) =>
+          q.eq("spreadsheetId", args.spreadsheetId).eq("colIndex", colIndex)
+        )
+        .first();
+
+      if (existing) {
+        if (name === "") {
+          await ctx.db.delete(existing._id);
+        } else {
+          await ctx.db.patch(existing._id, { name });
+        }
+      } else if (name !== "") {
+        await ctx.db.insert("columnNames", {
+          spreadsheetId: args.spreadsheetId,
+          colIndex,
+          name,
+        });
+      }
     }
   },
 });

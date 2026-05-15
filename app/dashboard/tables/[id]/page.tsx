@@ -196,8 +196,9 @@ export default function TableEditorPage() {
   const pastePendingRef = useRef(false)
 
   // Initialize local state from Convex data
+  // Wait for both spreadsheet metadata AND columnNames query to be ready
   useEffect(() => {
-    if (!isInitialized && sync.spreadsheet) {
+    if (!isInitialized && sync.spreadsheet && sync.isColumnNamesReady) {
       setCellsLocal(sync.cells)
       setCellFormattingState(sync.cellFormatting as { [key: string]: CellFormatting })
       setColumnWidthsLocal(sync.columnWidths)
@@ -205,9 +206,13 @@ export default function TableEditorPage() {
       setNumRowsLocal(sync.spreadsheet.numRows || 1)
       setNumColsLocal(sync.spreadsheet.numCols || 1)
       setProjectNameLocal(sync.spreadsheet.name || "Untitled Project")
+      // Load persisted column names (may be empty for new spreadsheets)
+      if (Object.keys(sync.columnNames).length > 0) {
+        setColNames(sync.columnNames)
+      }
       setIsInitialized(true)
     }
-  }, [sync.spreadsheet, sync.cells, isInitialized])
+  }, [sync.spreadsheet, sync.cells, sync.columnNames, sync.isColumnNamesReady, isInitialized])
 
   // Keep cells in sync with Convex (real-time updates from other clients)
   useEffect(() => {
@@ -865,95 +870,63 @@ export default function TableEditorPage() {
     }
   }
 
-  const runAIColumn = async (colIdx: number, colType: string, prompt: string, _sourceCol: number) => {
-    const cells: { [key: string]: string } = {}
-    for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) { const v = getCellValue(r, c); if (v) cells[`${r}-${c}`] = v }
-    const agentPrompt = `For each row 0 to ${numRows - 1}, fill column ${colIdx} using this instruction: "${prompt}". Use existing row data as context.${colType === "AI Web" ? " You may reference web knowledge." : ""}`
-    try {
-      const res = await fetch("/api/ai/agent", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt: agentPrompt, cells, numRows, numCols: colIdx + 1 }) })
-      const result = await readAgentSSE(res)
-      if (result?.changes?.length) {
-        const updates: { [key: string]: string } = {}
-        result.changes.forEach((ch: { row: number; col: number; value: string }) => { updates[`${ch.row}-${ch.col}`] = ch.value })
-        setCells(prev => ({ ...prev, ...updates }))
-        await sync.setCellsBatch(updates)
-      }
-    } catch (e) { console.error("runAIColumn failed", e) }
-  }
+  const runColumn = async (colIdx: number, colType: string, prompt: string, sourceCol: number, regex: string = "") => {
+    const cellsSnapshot: { [key: string]: string } = {}
+    for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) { const v = getCellValue(r, c); if (v) cellsSnapshot[`${r}-${c}`] = v }
 
-  const runScrapeColumn = async (colIdx: number, sourceCol: number) => {
-    const updates: { [key: string]: string } = {}
-    for (let r = 0; r < numRows; r++) {
-      const url = getCellValue(r, sourceCol)
-      if (!url) continue
+    // If cells are selected, scope to those rows only (exclude header row 0)
+    const selectedRowSet = new Set<number>()
+    for (const key of selectedCells) {
+      const row = parseInt(key.split("-")[0], 10)
+      if (row > 0) selectedRowSet.add(row)
+    }
+    const selectedRows = selectedRowSet.size > 0 ? Array.from(selectedRowSet).sort((a, b) => a - b) : undefined
+
+    try {
+      const res = await fetch("/api/ai/run-column", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ colIdx, colType, prompt, sourceCol, regex, cells: cellsSnapshot, numRows, numCols, selectedRows }),
+      })
+      if (!res.ok) return
+      const reader = res.body?.getReader()
+      if (!reader) return
+      const dec = new TextDecoder()
       try {
-        const res = await fetch("/api/ai/scraper", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            prompt: "Scrape this URL and return the main page content as plain text",
-            mode: "enrich",
-            selectedRows: [{ rowIndex: r, cells: { [String(sourceCol)]: url } }],
-            existingColumns: Array.from({ length: numCols }, (_, i) => colNames[i] || getColumnLabel(i)),
-            tableInfo: { tableId, projectName, numRows, numCols },
-          }),
-        })
-        if (!res.ok) continue
-        const reader = res.body?.getReader()
-        if (!reader) continue
-        const dec = new TextDecoder()
-        let content = ""
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            for (const line of dec.decode(value).split('\n')) {
-              if (!line.startsWith('data: ')) continue
-              const raw = line.slice(6).trim()
-              if (raw === '[DONE]') break
-              try {
-                const evt = JSON.parse(raw)
-                if (evt.type === 'result' && evt.data?.columns?.length) {
-                  const vals = evt.data.columns[0].values as { rowIndex: number; value: string }[]
-                  if (vals?.length) content = String(vals[0].value || "")
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          for (const line of dec.decode(value).split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            const raw = line.slice(6).trim()
+            if (raw === '[DONE]') break
+            try {
+              const evt = JSON.parse(raw)
+              if (evt.type === 'result' && evt.data?.updates) {
+                const updates = evt.data.updates as { [key: string]: string }
+                if (Object.keys(updates).length) {
+                  setCells(prev => ({ ...prev, ...updates }))
+                  await sync.setCellsBatch(updates)
                 }
-              } catch { /* skip malformed */ }
-            }
+              }
+            } catch { /* skip malformed */ }
           }
-        } finally { reader.releaseLock() }
-        if (content) updates[`${r}-${colIdx}`] = content
-      } catch {}
-    }
-    if (Object.keys(updates).length) { setCells(prev => ({ ...prev, ...updates })); await sync.setCellsBatch(updates) }
+        }
+      } finally { reader.releaseLock() }
+    } catch (e) { console.error("runColumn failed", e) }
   }
 
-  const runRegexColumn = (colIdx: number, sourceCol: number, pattern: string) => {
-    const updates: { [key: string]: string } = {}
-    try {
-      const re = new RegExp(pattern)
-      for (let r = 0; r < numRows; r++) {
-        const val = getCellValue(r, sourceCol)
-        const m = val.match(re)
-        updates[`${r}-${colIdx}`] = m ? (m[1] ?? m[0]) : ""
-      }
-    } catch {}
-    if (Object.keys(updates).length) { setCells(prev => ({ ...prev, ...updates })); sync.setCellsBatch(updates) }
-  }
+  const runAIColumn = (colIdx: number, colType: string, prompt: string, sourceCol: number) =>
+    runColumn(colIdx, colType, prompt, sourceCol)
 
-  const runNormalizeColumn = (colIdx: number, colType: string, sourceCol: number) => {
-    const updates: { [key: string]: string } = {}
-    for (let r = 0; r < numRows; r++) {
-      const val = getCellValue(r, sourceCol).trim()
-      if (!val) continue
-      if (colType === "Normalize Domain") {
-        try { updates[`${r}-${colIdx}`] = new URL(val.startsWith("http") ? val : `https://${val}`).hostname.replace(/^www\./, "") } catch { updates[`${r}-${colIdx}`] = val }
-      } else {
-        // Normalize company: trim, title-case
-        updates[`${r}-${colIdx}`] = val.toLowerCase().replace(/\b\w/g, c => c.toUpperCase()).replace(/\bInc\b|\bLlc\b|\bLtd\b|\bCorp\b/g, s => s.toUpperCase())
-      }
-    }
-    if (Object.keys(updates).length) { setCells(prev => ({ ...prev, ...updates })); sync.setCellsBatch(updates) }
-  }
+  const runScrapeColumn = (colIdx: number, sourceCol: number) =>
+    runColumn(colIdx, "Scrape Website", "", sourceCol)
+
+  const runRegexColumn = (colIdx: number, sourceCol: number, pattern: string) =>
+    runColumn(colIdx, "Regex", "", sourceCol, pattern)
+
+  const runNormalizeColumn = (colIdx: number, colType: string, sourceCol: number) =>
+    runColumn(colIdx, colType, "", sourceCol)
 
   // Open column header menu
   const openColMenu = (colIndex: number) => {
@@ -966,6 +939,7 @@ export default function TableEditorPage() {
   const saveColMenu = (colIndex: number) => {
     if (colMenuName.trim()) {
       setColNames(prev => ({ ...prev, [colIndex]: colMenuName.trim() }))
+      sync.setColumnNamesBatch({ [colIndex]: colMenuName.trim() })
     }
     setColMenuOpen(null)
   }
@@ -2563,6 +2537,9 @@ export default function TableEditorPage() {
               setCellValue(row, col, value)
             })
 
+            // Persist column names to Convex
+            sync.setColumnNamesBatch(newColNames)
+
             // Store for undo
             setPendingAIChanges({
               type: 'generate',
@@ -2580,7 +2557,10 @@ export default function TableEditorPage() {
               // Restore dimensions (syncs to Convex)
               setNumRows(prevRows)
               setNumCols(prevCols)
-              if (prevColNames) setColNames(prevColNames)
+              if (prevColNames) {
+                setColNames(prevColNames)
+                sync.setColumnNamesBatch(prevColNames)
+              }
               if (prevColFieldType) setColFieldType(prevColFieldType)
 
               // Clear new cells first

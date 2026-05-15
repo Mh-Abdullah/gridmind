@@ -69,4 +69,13 @@ export default defineSchema({
   })
     .index("by_spreadsheet", ["spreadsheetId"])
     .index("by_spreadsheet_row", ["spreadsheetId", "rowIndex"]),
+
+  // Column names (user-defined header labels)
+  columnNames: defineTable({
+    spreadsheetId: v.id("spreadsheets"),
+    colIndex: v.number(),
+    name: v.string(),
+  })
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_spreadsheet_col", ["spreadsheetId", "colIndex"]),
 });

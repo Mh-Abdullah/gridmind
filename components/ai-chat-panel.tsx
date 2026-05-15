@@ -4,12 +4,15 @@ import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { useAuth } from "@/lib/auth-context"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   X,
   Send,
   Sparkles,
   User,
   Bot,
+  BrainCircuit,
   Copy,
   Check,
   RotateCcw,
@@ -221,17 +224,17 @@ function ThinkingBox({
         )}
       </button>
       {expanded && (steps.length > 0 || activeStep) && (
-        <div className="px-3 pb-2 pt-1 border-t border-border/40 space-y-1.5">
+        <div className="px-3 pb-2 pt-1 border-t border-border/40 space-y-1.5 max-h-72 overflow-y-auto">
           {steps.map((step, i) => (
             <div key={i} className="flex items-start gap-2 text-muted-foreground min-w-0">
               <Check className="h-3 w-3 mt-0.5 text-green-500 shrink-0" />
-              <span className="truncate min-w-0">{step}</span>
+              <span className="whitespace-pre-line wrap-break-word min-w-0 flex-1">{step}</span>
             </div>
           ))}
           {activeStep && (
             <div className="flex items-start gap-2 text-foreground min-w-0">
               <Loader2 className="h-3 w-3 mt-0.5 animate-spin text-primary shrink-0" />
-              <span className="truncate min-w-0">{activeStep}</span>
+              <span className="whitespace-pre-line wrap-break-word min-w-0 flex-1">{activeStep}</span>
             </div>
           )}
         </div>
@@ -241,6 +244,7 @@ function ThinkingBox({
 }
 
 export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onApplyFormatting, onAddColumns, onGenerateTable, pendingChanges, onKeepChanges, onUndoChanges }: AIChatPanelProps) {
+  const { user } = useAuth()
   const welcomeMessage: Message = {
     id: "welcome",
     role: "assistant",
@@ -1090,17 +1094,17 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
             className={`flex gap-3 animate-message-appear ${message.role === "user" ? "flex-row-reverse" : ""}`}
           >
             {/* Avatar */}
-            <div className={`shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${
-              message.role === "user" 
-                ? "bg-primary text-primary-foreground" 
-                : "bg-linear-to-br from-primary/20 to-accent/20"
-            }`}>
-              {message.role === "user" ? (
-                <User className="h-4 w-4" />
-              ) : (
-                <Bot className="h-4 w-4 text-primary" />
-              )}
-            </div>
+            {message.role === "user" ? (
+              <Avatar className="shrink-0 h-8 w-8">
+                <AvatarFallback className="bg-primary text-primary-foreground text-xs font-bold">
+                  {user?.name?.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2) || "U"}
+                </AvatarFallback>
+              </Avatar>
+            ) : (
+              <div className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-linear-to-br from-violet-500 via-purple-500 to-blue-500 shadow-md">
+                <BrainCircuit className="h-4 w-4 text-white" />
+              </div>
+            )}
 
             {/* Message content */}
             <div className={`flex-1 max-w-[85%] ${message.role === "user" ? "text-right" : ""}`}>

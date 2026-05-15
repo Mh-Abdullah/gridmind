@@ -50,6 +50,7 @@ export function useSpreadsheetSync({
   const updateColumnWidthMutation = useMutation(api.spreadsheets.updateColumnWidth);
   const updateRowHeightMutation = useMutation(api.spreadsheets.updateRowHeight);
   const resetSpreadsheetMutation = useMutation(api.spreadsheets.resetSpreadsheet);
+  const updateColumnNamesBatchMutation = useMutation(api.spreadsheets.updateColumnNamesBatch);
 
   // Convex queries - real-time subscriptions
   const spreadsheet = useQuery(
@@ -70,6 +71,10 @@ export function useSpreadsheetSync({
   );
   const rowHeights = useQuery(
     api.spreadsheets.getRowHeights,
+    spreadsheetId ? { spreadsheetId } : "skip"
+  );
+  const columnNames = useQuery(
+    api.spreadsheets.getColumnNames,
     spreadsheetId ? { spreadsheetId } : "skip"
   );
 
@@ -328,6 +333,24 @@ export function useSpreadsheetSync({
   const stableCellFormatting = useMemo(() => cellFormatting ?? {}, [JSON.stringify(cellFormatting)]);
   const stableColumnWidths = useMemo(() => columnWidths ?? {}, [JSON.stringify(columnWidths)]);
   const stableRowHeights = useMemo(() => rowHeights ?? {}, [JSON.stringify(rowHeights)]);
+  const stableColumnNames = useMemo(() => columnNames ?? {}, [JSON.stringify(columnNames)]);
+
+  // Batch update column names (upsert)
+  const setColumnNamesBatch = useCallback(
+    async (names: { [key: number]: string }) => {
+      if (!spreadsheetId) return;
+      try {
+        const entries = Object.entries(names).map(([colIndex, name]) => ({
+          colIndex: Number(colIndex),
+          name,
+        }));
+        await updateColumnNamesBatchMutation({ spreadsheetId, names: entries });
+      } catch (error) {
+        console.error("Failed to save column names:", error);
+      }
+    },
+    [spreadsheetId, updateColumnNamesBatchMutation]
+  );
 
   return {
     // State
@@ -341,6 +364,8 @@ export function useSpreadsheetSync({
     cellFormatting: stableCellFormatting,
     columnWidths: stableColumnWidths,
     rowHeights: stableRowHeights,
+    columnNames: stableColumnNames,
+    isColumnNamesReady: columnNames !== undefined,
     spreadsheet: spreadsheet ?? null,
 
     // Actions
@@ -351,6 +376,7 @@ export function useSpreadsheetSync({
     setCellFormatting,
     setColumnWidth,
     setRowHeight,
+    setColumnNamesBatch,
     resetAll,
     flushCellUpdates,
   };
