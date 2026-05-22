@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server"
+﻿import { NextRequest } from "next/server"
 import { generateText, tool, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
@@ -222,6 +222,34 @@ const searchWeb = tool({
             }
           }
         }
+      }
+
+      // --- Fallback 2: Bing HTML search ---
+      if (results.length === 0) {
+        try {
+          const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&count=10&setlang=en`
+          const bingRes = await fetch(bingUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+              "Accept-Language": "en-US,en;q=0.9",
+            },
+            signal: AbortSignal.timeout(10000),
+          })
+          if (bingRes.ok) {
+            const html = await bingRes.text()
+            // Bing result titles are in <h2><a href="...">Title</a></h2>
+            const bingTitleRe = /<h2[^>]*>\s*<a[^>]*\bhref="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi
+            let bm: RegExpExecArray | null
+            while ((bm = bingTitleRe.exec(html)) !== null && results.length < 5) {
+              const url = bm[1]
+              const title = bm[2].replace(/<[^>]+>/g, "").trim()
+              if (url && !url.includes("bing.com") && !url.includes("microsoft.com") && title) {
+                results.push({ url, title, snippet: "" })
+              }
+            }
+          }
+        } catch { /* Bing fallback unavailable */ }
       }
 
       return { query, context, results, success: true }
@@ -573,27 +601,204 @@ const extractFromRowData = tool({
   },
 })
 
+// Wikipedia search tool — free, no key, highly reliable for factual/encyclopedic data
+const searchWikipedia = tool({
+  description: "Search Wikipedia for encyclopedic information about ANY topic: companies, places, landmarks, people, products, events, history, science, technology. Always free, no API key needed. Use this for factual background data on named entities.",
+  inputSchema: z.object({
+    query: z.string().describe("What to look up on Wikipedia, e.g. 'Tesla Inc', 'Eiffel Tower', 'Python programming language'"),
+  }),
+  execute: async ({ query }) => {
+    try {
+      // Attempt 1: Direct page summary REST API
+      const cleanQuery = query.trim().replace(/ /g, "_")
+      const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(cleanQuery)}`
+      const res = await fetch(summaryUrl, {
+        headers: { "User-Agent": "GridMind/1.0 (data-research-bot; contact@gridmind.app)" },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (res.ok) {
+        const data = await res.json() as {
+          title: string; extract: string; description?: string
+          content_urls?: { desktop?: { page: string } }
+        }
+        if (data.extract && data.extract.length > 80) {
+          return {
+            title: data.title,
+            description: data.description || "",
+            summary: data.extract.slice(0, 4000),
+            url: data.content_urls?.desktop?.page || `https://en.wikipedia.org/wiki/${cleanQuery}`,
+            success: true,
+          }
+        }
+      }
+
+      // Attempt 2: Wikipedia search API then fetch top result summary
+      const searchUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=5&origin=*`
+      const searchRes = await fetch(searchUrl, {
+        headers: { "User-Agent": "GridMind/1.0" },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!searchRes.ok) return { error: "Wikipedia unavailable", success: false }
+
+      const searchData = await searchRes.json() as { query?: { search?: { title: string; snippet: string }[] } }
+      const hits = searchData.query?.search || []
+      if (hits.length === 0) return { results: [], note: "No Wikipedia results found", success: true }
+
+      const top = hits[0]
+      const topSummaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(top.title.replace(/ /g, "_"))}`
+      const topRes = await fetch(topSummaryUrl, { headers: { "User-Agent": "GridMind/1.0" }, signal: AbortSignal.timeout(8000) })
+      if (topRes.ok) {
+        const topData = await topRes.json() as { title: string; extract: string; description?: string; content_urls?: { desktop?: { page: string } } }
+        return {
+          title: topData.title,
+          description: topData.description || "",
+          summary: topData.extract?.slice(0, 4000) || top.snippet.replace(/<[^>]+>/g, ""),
+          url: topData.content_urls?.desktop?.page || "",
+          otherResults: hits.slice(1).map(h => ({ title: h.title, snippet: h.snippet.replace(/<[^>]+>/g, "") })),
+          success: true,
+        }
+      }
+
+      return { results: hits.map(h => ({ title: h.title, snippet: h.snippet.replace(/<[^>]+>/g, "") })), success: true }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Wikipedia search failed", success: false }
+    }
+  },
+})
+
+// Brave Search API — high-quality independent web search, no Google dependency
+const searchBraveWeb = tool({
+  description: "Search the web using Brave Search API — higher quality results than DuckDuckGo. Use this when searchWeb returns poor/empty results. Requires BRAVE_SEARCH_API_KEY environment variable.",
+  inputSchema: z.object({
+    query: z.string().describe("The search query"),
+    count: z.number().optional().describe("Number of results to return (default 5, max 20)"),
+  }),
+  execute: async ({ query, count = 5 }) => {
+    const apiKey = process.env.BRAVE_SEARCH_API_KEY
+    if (!apiKey) return { error: "BRAVE_SEARCH_API_KEY not configured — skipping Brave Search", results: [], success: false }
+    try {
+      const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${Math.min(count, 20)}`
+      const res = await fetch(url, {
+        headers: {
+          "Accept": "application/json",
+          "Accept-Encoding": "gzip",
+          "X-Subscription-Token": apiKey,
+        },
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!res.ok) return { error: `Brave Search HTTP ${res.status}`, results: [], success: false }
+      const data = await res.json() as { web?: { results?: { title: string; url: string; description: string }[] } }
+      const results = (data.web?.results || []).map(r => ({ title: r.title, url: r.url, snippet: r.description || "" }))
+      return { query, results, success: true }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Brave Search failed", results: [], success: false }
+    }
+  },
+})
+
+// Google Search via Serper API — best quality search results (Google index)
+const searchGoogleSerper = tool({
+  description: "Search Google via Serper API — the highest quality web search available, using Google's index. Use this when other search tools return poor results. Requires SERPER_API_KEY environment variable.",
+  inputSchema: z.object({
+    query: z.string().describe("The search query"),
+    num: z.number().optional().describe("Number of results (default 5)"),
+  }),
+  execute: async ({ query, num = 5 }) => {
+    const apiKey = process.env.SERPER_API_KEY
+    if (!apiKey) return { error: "SERPER_API_KEY not configured — skipping Google Serper", results: [], success: false }
+    try {
+      const res = await fetch("https://google.serper.dev/search", {
+        method: "POST",
+        headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: query, num }),
+        signal: AbortSignal.timeout(10000),
+      })
+      if (!res.ok) return { error: `Serper HTTP ${res.status}`, results: [], success: false }
+      const data = await res.json() as {
+        organic?: { title: string; link: string; snippet: string }[]
+        answerBox?: { answer?: string; snippet?: string }
+        knowledgeGraph?: { title: string; description?: string; website?: string; attributes?: Record<string, string> }
+      }
+      const results = (data.organic || []).map(r => ({ title: r.title, url: r.link, snippet: r.snippet || "" }))
+      return {
+        query,
+        results,
+        answerBox: data.answerBox?.answer || data.answerBox?.snippet || null,
+        knowledgeGraph: data.knowledgeGraph || null,
+        success: true,
+      }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Serper search failed", results: [], success: false }
+    }
+  },
+})
+
 // Helper function to extract text from HTML
 function extractTextFromHTML(html: string): string {
-  // Remove script and style tags
-  let text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
-  text = text.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
-  
-  // Remove HTML tags but keep content
-  text = text.replace(/<[^>]+>/g, " ")
-  
-  // Decode HTML entities
-  text = text.replace(/&nbsp;/g, " ")
-  text = text.replace(/&amp;/g, "&")
-  text = text.replace(/&lt;/g, "<")
-  text = text.replace(/&gt;/g, ">")
-  text = text.replace(/&quot;/g, '"')
-  text = text.replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num)))
-  
-  // Clean up whitespace
-  text = text.replace(/\s+/g, " ").trim()
-  
-  return text
+  const sections: string[] = []
+
+  // ── 1. JSON-LD structured data (highest quality — contains phone, address, hours, price, rating) ──
+  const jsonLdRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+  let jm: RegExpExecArray | null
+  while ((jm = jsonLdRe.exec(html)) !== null) {
+    try {
+      const raw = JSON.parse(jm[1].trim())
+      const items: Record<string, unknown>[] = Array.isArray(raw) ? raw : [raw]
+      for (const item of items) {
+        const lines: string[] = []
+        const s = (v: unknown) => (v ? String(v) : "")
+        if (item["@type"]) lines.push(`Type: ${Array.isArray(item["@type"]) ? (item["@type"] as string[]).join(", ") : item["@type"]}`)
+        if (item.name) lines.push(`Name: ${s(item.name)}`)
+        if (item.description) lines.push(`Description: ${s(item.description).slice(0, 300)}`)
+        if (item.telephone) lines.push(`Phone: ${s(item.telephone)}`)
+        if (item.email) lines.push(`Email: ${s(item.email)}`)
+        if (item.url) lines.push(`Website: ${s(item.url)}`)
+        if (item.address) {
+          const a = item.address as Record<string, string>
+          if (typeof a === "string") lines.push(`Address: ${a}`)
+          else lines.push(`Address: ${[a.streetAddress, a.addressLocality, a.addressRegion, a.postalCode, a.addressCountry].filter(Boolean).join(", ")}`)
+        }
+        if (item.openingHours) lines.push(`Opening Hours: ${Array.isArray(item.openingHours) ? (item.openingHours as string[]).join(", ") : item.openingHours}`)
+        if (item.priceRange) lines.push(`Price Range: ${s(item.priceRange)}`)
+        if (item.starRating) lines.push(`Star Rating: ${s((item.starRating as Record<string,unknown>).ratingValue)}`)
+        if (item.aggregateRating) {
+          const r = item.aggregateRating as Record<string, unknown>
+          lines.push(`Rating: ${s(r.ratingValue)}/5 (${s(r.reviewCount)} reviews)`)
+        }
+        if (item.checkinTime) lines.push(`Check-in: ${s(item.checkinTime)}`)
+        if (item.checkoutTime) lines.push(`Check-out: ${s(item.checkoutTime)}`)
+        if (item.servesCuisine) lines.push(`Cuisine: ${Array.isArray(item.servesCuisine) ? (item.servesCuisine as string[]).join(", ") : item.servesCuisine}`)
+        if (item.numberOfRooms) lines.push(`Rooms: ${s(item.numberOfRooms)}`)
+        if (item.amenityFeature) {
+          const amenities = (Array.isArray(item.amenityFeature) ? item.amenityFeature : [item.amenityFeature]) as Record<string, unknown>[]
+          lines.push(`Amenities: ${amenities.map(a => s(a.name)).filter(Boolean).join(", ")}`)
+        }
+        if (item.hasMap) lines.push(`Map: ${s(item.hasMap)}`)
+        if (lines.length > 1) sections.push("=== STRUCTURED DATA ===\n" + lines.join("\n"))
+      }
+    } catch { /* invalid JSON, skip */ }
+  }
+
+  // ── 2. Key meta tags ──
+  const metaPhone = html.match(/<meta[^>]*(?:name|property)=["'](?:og:phone_number|business:contact_data:phone_number|phone)[^"']*["'][^>]*content=["']([^"']+)["']/i)
+  const metaDesc = html.match(/<meta[^>]*(?:name|property)=["'](?:og:description|description)["'][^>]*content=["']([^"']+)["']/i)
+  const metaEmail = html.match(/<meta[^>]*(?:name|property)=["'](?:og:email|email)["'][^>]*content=["']([^"']+)["']/i)
+  if (metaPhone) sections.push(`Phone (meta): ${metaPhone[1]}`)
+  if (metaEmail) sections.push(`Email (meta): ${metaEmail[1]}`)
+  if (metaDesc) sections.push(`Description: ${metaDesc[1].slice(0, 200)}`)
+
+  // ── 3. Plain text body ──
+  let text = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, num) => String.fromCharCode(parseInt(num)))
+    .replace(/\s+/g, " ").trim()
+  sections.push(text)
+
+  return sections.join("\n\n").slice(0, 8000)
 }
 
 // System prompt for ENRICH mode - adding columns to existing rows
@@ -626,10 +831,14 @@ const SCRAPER_ENRICH_PROMPT = `You are GridMind Scraper — a universal data enr
 
 ━━━ RULES ━━━
 - NEVER invent or hallucinate data. Use only what tools return.
-- If a value is not found, use "N/A"
+- N/A is a LAST RESORT — before writing N/A for Phone, Website, Email, Address, Hours, or Price you MUST first:
+  1. If the entry has a website URL → scrapeWebPage(url) — phone/hours/price are usually in JSON-LD structured data on the page
+  2. If no website → searchWeb("{name} {city} contact phone website opening hours") → scrapeWebPage the top result
+  3. Only write N/A after both steps above genuinely returned nothing
+- TARGET: less than 20% N/A across all cells. Many N/A values = you did not search enough.
 - Be consistent across all rows
 - Run tool calls in bulk — do not call one tool per row when one call covers all rows
-- If scrapeWebPage returns success=false or a "blocked" error, skip that URL and try the next one from searchWeb results — do NOT give up entirely
+- If scrapeWebPage returns success=false or a "blocked" error, skip that URL and try the next one — do NOT give up entirely
 
 FINAL RESPONSE — output ONLY this JSON (no prose):
 \`\`\`json
@@ -672,17 +881,24 @@ const SCRAPER_GENERATE_PROMPT = `You are GridMind Scraper — a universal data r
   → searchWeb(query) → scrapeWebPage(url) for each of the top 3-5 results
 
 ━━━ EXECUTION ━━━
-1. ANNOUNCE — output the plan as the FIRST thinking step: which tool, what query, why
-2. RESEARCH — call ALL needed tools. For places, call searchOpenStreetMap once per place type + location. Collect as many rows as the user asked for.
-3. OUTPUT — after ALL tools have run, return the complete JSON table
+1. PLAN — state which tool you will use and why, then act immediately
+2. RESEARCH — call ALL needed tools. For places: searchOpenStreetMap once. For companies: Companies House or OpenCorporates. For facts: Wikipedia first. For web data: try Serper → Brave → searchWeb in order.
+3. FALLBACK — if first tool returns 0 results, immediately try the next best tool with a refined query
+4. FILL GAPS — after the main data call, look for N/A values in key columns (Phone, Website, Email, Hours, Price, Rating):
+   → Entries with a website URL: scrapeWebPage(website) — structured JSON-LD data on the page usually has phone/hours/price
+   → Entries without a website: searchWeb("{name} {city} phone website contact") → scrapeWebPage the top result
+   → Batch 3–5 entries per search round to stay efficient
+5. OUTPUT — after gap-filling is done, return the final JSON table
 
 ━━━ RULES ━━━
 - Only use REAL data from tool results — never fabricate rows, names, or addresses
-- If a field is unavailable, use "N/A"
+- N/A is a LAST RESORT — for Phone, Website, Email, Address, Hours, or Price always attempt a follow-up web search before accepting N/A. Only write N/A if that search also fails.
+- TARGET: less than 20% N/A across all cells. Too many N/A values means you stopped searching too early.
 - Deduplicate results — each place/company appears only once
 - Column names must match what the user asked for (e.g. "Phone", "Website", "Address", "Opening Hours", "Rating")
 - If the user asks for 20 results and you got 35, include 20
-- If scrapeWebPage returns success=false or a "blocked" error for a URL, move on to the next URL from searchWeb — never stop on a single blocked page
+- If a search tool returns an API key error, immediately fall back to the next search tool
+- If scrapeWebPage returns success=false or blocked, move on to the next URL — never stop on a single blocked page
 
 FINAL RESPONSE — output ONLY this JSON (no prose before or after):
 \`\`\`json
@@ -752,7 +968,7 @@ async function streamGenerateMode(
   send({ type: "thinking", content: "🔍 Analyzing your request..." })
 
   const result = await generateText({
-    model: openai("gpt-4o-mini"),
+    model: openai(process.env.OPENAI_MODEL || "gpt-4o"),
     system: SCRAPER_GENERATE_PROMPT,
     prompt: `User request: ${prompt}
 
@@ -770,8 +986,8 @@ Instructions:
 4. Return real, scraped data - do not make up information
 
 Please search, scrape, and return the data in the required JSON format.`,
-    tools: { scrapeWebPage, searchWeb, searchOpenStreetMap, searchCompaniesHouse, searchOpenCorporates },
-    stopWhen: stepCountIs(20),
+    tools: { scrapeWebPage, searchWeb, searchBraveWeb, searchGoogleSerper, searchWikipedia, searchOpenStreetMap, searchCompaniesHouse, searchOpenCorporates },
+    stopWhen: stepCountIs(40),
     onStepFinish: ({ toolCalls, toolResults }) => {
       for (const tc of toolCalls || []) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -879,7 +1095,7 @@ async function streamEnrichMode(
   }
 
   const result = await generateText({
-    model: openai("gpt-4o-mini"),
+    model: openai(process.env.OPENAI_MODEL || "gpt-4o"),
     system: SCRAPER_ENRICH_PROMPT,
     prompt: `User request: ${prompt}
 
@@ -894,8 +1110,8 @@ ${formatChatHistory(chatHistory)}
 ${rowContext}
 
 Please scrape the requested data and return it in the required JSON format.`,
-    tools: { scrapeWebPage, searchWeb, searchOpenStreetMap, searchCompaniesHouse, searchOpenCorporates, extractFromRowData },
-    stopWhen: stepCountIs(20),
+    tools: { scrapeWebPage, searchWeb, searchBraveWeb, searchGoogleSerper, searchWikipedia, searchOpenStreetMap, searchCompaniesHouse, searchOpenCorporates, extractFromRowData },
+    stopWhen: stepCountIs(40),
     onStepFinish: ({ toolCalls, toolResults }) => {
       for (const tc of toolCalls || []) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
