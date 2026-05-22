@@ -135,7 +135,7 @@ export default function TableEditorPage() {
   const [filteredRows, setFilteredRows] = useState<number[] | null>(null)
   
   // AI Chat state
-  const [showAIChat, setShowAIChat] = useState(true)
+  const [showAIChat, setShowAIChat] = useState(false)
 
   // Loopster-style column names, editing state, autorun
   const [colNames, setColNames] = useState<{ [key: number]: string }>({ 0: "Input" })
@@ -1454,7 +1454,7 @@ export default function TableEditorPage() {
         <Input
           value={projectName}
           onChange={(e) => setProjectName(e.target.value)}
-          className="h-8 max-w-xs border-none bg-transparent px-1 text-sm font-medium focus-visible:ring-1"
+          className="h-8 max-w-32 sm:max-w-xs border-none bg-transparent px-1 text-sm font-medium focus-visible:ring-1"
           placeholder="Untitled Project"
         />
         <div className="ml-auto flex items-center gap-2">
@@ -1464,7 +1464,7 @@ export default function TableEditorPage() {
             ) : (
               <Cloud className="h-3.5 w-3.5" />
             )}
-            <span>{sync.isSaving ? "Saving..." : "Saved"}</span>
+            <span className="hidden sm:inline">{sync.isSaving ? "Saving..." : "Saved"}</span>
           </div>
           <ThemeToggle />
           <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-primary-foreground cursor-pointer">
@@ -1474,7 +1474,8 @@ export default function TableEditorPage() {
       </div>
 
       {/* Toolbar */}
-      <div className="flex items-center gap-2 border-b border-border px-4 py-2">
+      <div className="border-b border-border overflow-x-auto">
+        <div className="flex items-center gap-2 px-4 py-2 min-w-max">
         {/* <Button variant="ghost" size="sm" className="gap-2">
           <Upload className="h-4 w-4" />
           Connect API
@@ -1546,6 +1547,7 @@ export default function TableEditorPage() {
           <Sparkles className="h-4 w-4" />
           AI Agent
         </Button>
+        </div>
       </div>
 
       {/* Search Bar */}
@@ -2408,7 +2410,8 @@ export default function TableEditorPage() {
       </div>
 
       {/* AI Chat Panel - full right side of page */}
-      <div data-ai-chat-panel="true">
+      {showAIChat && <div className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={() => setShowAIChat(false)} />}
+      <div data-ai-chat-panel="true" className={showAIChat ? "fixed inset-y-0 right-0 z-40 md:relative md:inset-auto md:z-auto" : ""}>
         <AIChatPanel
           isOpen={showAIChat}
           onClose={() => setShowAIChat(false)}

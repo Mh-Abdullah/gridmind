@@ -346,7 +346,7 @@ export default function LandingPage() {
       </header>
 
       {/* ── Hero ── */}
-      <section className="relative flex flex-col items-center justify-center text-center px-6 pt-32 pb-28 overflow-hidden" style={{ minHeight: "92vh" }}>
+      <section className="relative flex flex-col items-center justify-center text-center px-6 pt-20 md:pt-32 pb-16 md:pb-28 overflow-hidden" style={{ minHeight: "92vh" }}>
 
         {/* ── Multi-layer background ── */}
         <div className="absolute inset-0 -z-10 pointer-events-none">
@@ -396,7 +396,7 @@ export default function LandingPage() {
         </div>
 
         {/* ── Headline ── */}
-        <h1 className="max-w-4xl text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.06] animate-[gm-fadein_0.7s_ease_0.1s_both]">
+        <h1 className="max-w-4xl text-4xl sm:text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.06] animate-[gm-fadein_0.7s_ease_0.1s_both]">
           Turn Raw Data Into{" "}
           <br className="hidden md:block" />
           <span className="relative inline-block">
@@ -460,7 +460,7 @@ export default function LandingPage() {
           ].map((s) => (
             <div
               key={s.label}
-              className="group flex flex-col items-center justify-center px-10 py-6 bg-background hover:bg-muted/40 transition-colors duration-150 min-w-36"
+              className="group flex flex-col items-center justify-center px-6 sm:px-10 py-6 bg-background hover:bg-muted/40 transition-colors duration-150 min-w-36"
             >
               <p className="text-3xl font-bold text-foreground group-hover:text-primary transition-colors duration-200 tabular-nums">{s.value}</p>
               <p className="text-xs text-muted-foreground mt-1 tracking-wide">{s.label}</p>
@@ -470,11 +470,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── CSV Import ── */}
-      <section ref={importSectionRef} id="import" className="relative px-6 py-24 bg-secondary/20">
+      <section ref={importSectionRef} id="import" className="relative px-6 py-16 md:py-24 bg-secondary/20">
         <div className="max-w-4xl mx-auto">
           <div className="text-center mb-12">
             <span className="text-xs font-semibold tracking-widest uppercase text-primary">Quick Start</span>
-            <h2 className="mt-2 text-4xl font-bold">From file to insights in seconds</h2>
+            <h2 className="mt-2 text-3xl md:text-4xl font-bold">From file to insights in seconds</h2>
             <p className="mt-3 text-muted-foreground max-w-xl mx-auto">
               Drop your CSV or Excel file, give your spreadsheet a name, and let GridMind agents do the heavy lifting.
             </p>
@@ -585,11 +585,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── Agents ── */}
-      <section id="agents" className="relative px-6 py-24 overflow-hidden">
+      <section id="agents" className="relative px-6 py-16 md:py-24 overflow-hidden">
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-16">
             <span className="text-xs font-semibold tracking-widest uppercase text-primary">AI Agents</span>
-            <h2 className="mt-2 text-4xl font-bold">Five agents. Every data workflow covered.</h2>
+            <h2 className="mt-2 text-3xl md:text-4xl font-bold">Five agents. Every data workflow covered.</h2>
             <p className="mt-3 text-muted-foreground max-w-xl mx-auto">
               Each agent is purpose-built for a specific business task. Chain them together or let the Orchestrator decide.
             </p>
@@ -611,11 +611,11 @@ export default function LandingPage() {
       </section>
 
       {/* ── Pricing ── */}
-      <section id="pricing" className="relative px-6 py-24 bg-secondary/20">
+      <section id="pricing" className="relative px-6 py-16 md:py-24 bg-secondary/20">
         <div className="max-w-5xl mx-auto">
           <div className="text-center mb-16">
             <span className="text-xs font-semibold tracking-widest uppercase text-primary">Pricing</span>
-            <h2 className="mt-2 text-4xl font-bold">Simple, transparent pricing</h2>
+            <h2 className="mt-2 text-3xl md:text-4xl font-bold">Simple, transparent pricing</h2>
             <p className="mt-3 text-muted-foreground">Start for free. Upgrade when you need more power.</p>
           </div>
 

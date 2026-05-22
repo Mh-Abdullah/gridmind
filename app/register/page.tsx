@@ -60,7 +60,7 @@ export default function RegisterPage() {
       <div className="absolute top-6 right-6">
         <ThemeToggle />
       </div>
-      <div className="bg-card p-8 rounded-lg shadow-md w-96 border border-border">
+      <div className="bg-card p-6 sm:p-8 rounded-lg shadow-md w-full max-w-sm mx-4 border border-border">
         <h1 className="text-3xl font-bold mb-6 text-center text-foreground">Sign Up</h1>
 
         {error && (

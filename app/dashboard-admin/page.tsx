@@ -5,6 +5,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AdminSidebar } from "@/components/admin-sidebar";
+import { Menu } from "lucide-react";
 
 interface User {
   id: string;
@@ -19,6 +20,7 @@ export default function AdminDashboardPage() {
   const router = useRouter();
   const [users, setUsers] = useState<User[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -61,24 +63,44 @@ export default function AdminDashboardPage() {
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Sidebar */}
-      <AdminSidebar />
+      {/* Desktop sidebar */}
+      <div className="hidden md:block">
+        <AdminSidebar />
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setSidebarOpen(false)} />
+          <div className="absolute inset-y-0 left-0">
+            <AdminSidebar />
+          </div>
+        </div>
+      )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="border-b border-border bg-background px-6 py-4">
+        <header className="border-b border-border bg-background px-4 md:px-6 py-4">
           <div className="flex items-center justify-between">
-            <h1 className="text-2xl font-bold text-foreground">Dashboard</h1>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setSidebarOpen(true)}
+                className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+              >
+                <Menu className="h-5 w-5" />
+              </button>
+              <h1 className="text-xl md:text-2xl font-bold text-foreground">Dashboard</h1>
+            </div>
             <ThemeToggle />
           </div>
         </header>
 
         {/* Main Content Area */}
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto p-4 md:p-6">
           {/* Welcome Section */}
           <div className="mb-8">
-            <h2 className="text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! </h2>
+            <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-2">Welcome, {user?.name}! </h2>
             <p className="text-muted-foreground">Manage users and monitor your GridMind platform</p>
           </div>
 

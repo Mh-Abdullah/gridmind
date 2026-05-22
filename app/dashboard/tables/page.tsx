@@ -4,7 +4,7 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Table2, Search, Wand2, Upload, MapPin, PlaySquare, FolderPlus, Trash2, X, CheckCircle2 } from "lucide-react"
+import { Table2, Search, Wand2, Upload, MapPin, PlaySquare, FolderPlus, Trash2, X, CheckCircle2, Menu } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { useEffect, useRef, useState, useCallback } from "react"
@@ -26,6 +26,7 @@ export default function TablesPage() {
   const [importName, setImportName] = useState("")
   const [isDragging, setIsDragging] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
   const importFileRef = useRef<HTMLInputElement>(null)
 
   // Fetch user's spreadsheets from Convex
@@ -231,14 +232,35 @@ export default function TablesPage() {
 
   return (
     <div className="flex h-screen bg-background">
-      <AppSidebar />
+      {/* Desktop sidebar */}
+      <div className="hidden md:block">
+        <AppSidebar />
+      </div>
+
+      {/* Mobile sidebar overlay */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/50" onClick={() => setSidebarOpen(false)} />
+          <div className="absolute inset-y-0 left-0">
+            <AppSidebar />
+          </div>
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="border-b border-border bg-background px-8 h-16 flex items-center justify-between shrink-0">
-          <div>
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Workspace</p>
-            <h1 className="text-lg font-semibold text-foreground">Tables</h1>
+        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+            >
+              <Menu className="h-5 w-5" />
+            </button>
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Workspace</p>
+              <h1 className="text-lg font-semibold text-foreground">Tables</h1>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />
@@ -248,15 +270,16 @@ export default function TablesPage() {
               className="gap-1.5 text-sm"
             >
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-              New table
+              <span className="hidden sm:inline">New table</span>
+              <span className="sm:hidden">New</span>
             </Button>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto px-8 py-10">
+        <main className="flex-1 overflow-auto px-4 md:px-8 py-6 md:py-10">
 
           {/* ── Hero ── */}
-          <div className="relative mb-14 overflow-hidden rounded-2xl border border-border bg-card">
+          <div className="relative mb-8 md:mb-14 overflow-hidden rounded-2xl border border-border bg-card">
             {/* Ambient layers */}
             <div className="absolute inset-0 pointer-events-none">
               <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_70%_-10%,hsl(var(--primary)/0.07),transparent)]" />
@@ -265,7 +288,7 @@ export default function TablesPage() {
               <div className="absolute top-8 right-56 h-28 w-28 rounded-full bg-accent/[0.07] blur-2xl animate-[gm-float_9s_ease-in-out_infinite_2s]" />
             </div>
 
-            <div className="relative px-8 py-10">
+            <div className="relative px-4 md:px-8 py-6 md:py-10">
               <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-8">
 
                 {/* Left */}
@@ -281,7 +304,7 @@ export default function TablesPage() {
                     </span>
                   </div>
 
-                  <h2 className="text-[2.6rem] font-bold tracking-tight leading-[1.08] text-foreground">
+                  <h2 className="text-3xl md:text-[2.6rem] font-bold tracking-tight leading-[1.08] text-foreground">
                     Good{" "}
                     {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},
                     <br />
@@ -300,7 +323,7 @@ export default function TablesPage() {
                 </div>
 
                 {/* Right: stat strip */}
-                <div className="flex items-stretch gap-px rounded-xl border border-border overflow-hidden bg-border shrink-0 self-end">
+                <div className="flex items-stretch gap-px rounded-xl border border-border overflow-hidden bg-border shrink-0 self-start lg:self-end">
                   {[
                     { value: spreadsheets?.length ?? "—", label: "Tables" },
                     { value: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }), label: "Today" },
@@ -380,9 +403,9 @@ export default function TablesPage() {
             </div>
 
             {/* Column headers */}
-            <div className="grid grid-cols-[1fr_60px_100px_36px] gap-4 px-4 pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 border-b border-border">
+            <div className="grid grid-cols-[1fr_100px_36px] sm:grid-cols-[1fr_60px_100px_36px] gap-4 px-4 pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/50 border-b border-border">
               <span>Name</span>
-              <span className="text-right">Cols</span>
+              <span className="hidden sm:block text-right">Cols</span>
               <span className="text-right">Updated</span>
               <span />
             </div>
@@ -409,7 +432,7 @@ export default function TablesPage() {
                     key={sheet._id}
                     onClick={() => router.push(`/dashboard/tables/${sheet.tableId}`)}
                     style={{ animationDelay: `${i * 40}ms` }}
-                    className="group relative grid grid-cols-[1fr_60px_100px_36px] gap-4 items-center px-4 py-3.5
+                    className="group relative grid grid-cols-[1fr_100px_36px] sm:grid-cols-[1fr_60px_100px_36px] gap-4 items-center px-4 py-3.5
                       border-b border-border/50 last:border-b-0 cursor-pointer
                       hover:bg-muted/25 transition-colors duration-150
                       animate-[gm-tilein_0.35s_ease_both]"
@@ -426,7 +449,7 @@ export default function TablesPage() {
                       </div>
                       <span className="text-sm font-medium text-foreground truncate group-hover:text-primary transition-colors duration-150">{sheet.name}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground text-right tabular-nums">{sheet.numCols}</span>
+                    <span className="hidden sm:block text-xs text-muted-foreground text-right tabular-nums">{sheet.numCols}</span>
                     <span className="text-xs text-muted-foreground text-right">{formatDate(sheet.updatedAt)}</span>
                     <div className="flex justify-end">
                       <button
