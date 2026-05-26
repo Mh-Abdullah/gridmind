@@ -462,6 +462,105 @@ function runNormalizeColumn(
   send({ type: "result", data: { success: true, updates, summary: `Normalized ${Object.keys(updates).length} values` } })
 }
 
+async function runReadFileColumn(
+  colIdx: number,
+  sourceCol: number,
+  cells: { [key: string]: string },
+  numRows: number,
+  send: (obj: object) => void
+) {
+  if (!process.env.OPENAI_API_KEY) {
+    send({ type: "error", content: "OpenAI API key not configured." })
+    return
+  }
+
+  const updates: { [key: string]: string } = {}
+  let processed = 0
+
+  send({ type: "thinking", content: `📂 Reading files from column ${getColLabel(sourceCol)}...` })
+
+  for (let r = 0; r < numRows; r++) {
+    const fileRef = (cells[`${r}-${sourceCol}`] ?? "").trim()
+    if (!fileRef) continue
+
+    send({ type: "thinking", content: `📄 Row ${r + 1}: ${fileRef.slice(0, 60)}` })
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const content: any[] = [
+        { type: "text", text: "Extract all text and meaningful content from this file. Return only the extracted content." },
+      ]
+      let skipAI = false
+
+      if (fileRef.startsWith("data:")) {
+        // Local upload stored as data URL
+        const match = fileRef.match(/^data:([^;]+);base64,(.+)$/)
+        if (!match) continue
+        const mimeType = match[1]
+        const base64Data = match[2]
+
+        if (mimeType.startsWith("image/")) {
+          // Pass as data URL string — Buffer objects get stripped by AI SDK v6 Zod validation
+          content.push({ type: "image", image: fileRef })
+        } else if (mimeType === "application/pdf") {
+          // AI SDK v6 uses "mediaType" (not "mimeType") for file parts
+          content.push({ type: "file", data: fileRef, mediaType: "application/pdf" })
+        } else {
+          // Plain text / CSV — decode directly, no AI needed
+          updates[`${r}-${colIdx}`] = Buffer.from(base64Data, "base64").toString("utf-8").slice(0, 4000)
+          processed++
+          skipAI = true
+        }
+      } else {
+        // Remote URL
+        const url = fileRef.startsWith("http") ? fileRef : `https://${fileRef}`
+        const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? ""
+
+        if (["jpg", "jpeg", "png", "gif", "webp"].includes(ext)) {
+          // Pass URL as string — new URL() instances get stripped by AI SDK v6 Zod validation
+          content.push({ type: "image", image: url })
+        } else if (ext === "pdf") {
+          const res = await fetch(url, {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(15000),
+          })
+          if (!res.ok) continue
+          const b64 = Buffer.from(await res.arrayBuffer()).toString("base64")
+          // AI SDK v6 uses "mediaType" (not "mimeType") for file parts; data must be a data URL string
+          content.push({ type: "file", data: `data:application/pdf;base64,${b64}`, mediaType: "application/pdf" })
+        } else {
+          // Plain fetch for text-based files
+          const res = await fetch(url, {
+            headers: { "User-Agent": "Mozilla/5.0" },
+            signal: AbortSignal.timeout(10000),
+          })
+          if (!res.ok) continue
+          updates[`${r}-${colIdx}`] = extractTextFromHTML(await res.text()).slice(0, 4000)
+          processed++
+          skipAI = true
+        }
+      }
+
+      if (!skipAI) {
+        const { text } = await generateText({
+          model: openai(process.env.OPENAI_MODEL || "gpt-4o"),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          messages: [{ role: "user", content }] as any,
+        })
+        updates[`${r}-${colIdx}`] = text.trim()
+        processed++
+      }
+    } catch (err) {
+      console.error(`[ReadFile] Row ${r} failed:`, err)
+    }
+  }
+
+  send({
+    type: "result",
+    data: { success: true, updates, summary: `Processed ${processed} file${processed !== 1 ? "s" : ""}` },
+  })
+}
+
 export async function POST(request: NextRequest) {
   const body: RunColumnRequest = await request.json()
   const { colIdx, colType, prompt = "", sourceCol = 0, regex = "", cells, numRows, numCols, selectedRows } = body
@@ -481,6 +580,8 @@ export async function POST(request: NextRequest) {
           runRegexColumn(colIdx, sourceCol, regex, cells, numRows, send)
         } else if (colType === "Normalize Company" || colType === "Normalize Domain") {
           runNormalizeColumn(colIdx, colType, sourceCol, cells, numRows, send)
+        } else if (colType === "Read File") {
+          await runReadFileColumn(colIdx, sourceCol, cells, numRows, send)
         } else {
           send({ type: "error", content: `Unknown column type: ${colType}` })
         }

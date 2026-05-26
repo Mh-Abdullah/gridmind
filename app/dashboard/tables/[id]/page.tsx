@@ -35,7 +35,6 @@ import {
   RotateCcw,
   RotateCw,
   Settings,
-  Zap,
   Link2,
   AlignJustify,
   Type,
@@ -161,6 +160,9 @@ export default function TableEditorPage() {
   const [newColAIPrompt, setNewColAIPrompt] = useState("")
   const [newColTab, setNewColTab] = useState("All")
   const addColPanelRef = useRef<HTMLDivElement>(null)
+  // Persistent file input for "User Input - File" cells (must stay mounted across cell edit cycles)
+  const cellFileInputRef = useRef<HTMLInputElement>(null)
+  const pendingFileCellRef = useRef<{ row: number; col: number } | null>(null)
   // Add-column: configure step
   const [newColStep, setNewColStep] = useState<"browse" | "configure">("browse")
   const [newColConfigPrompt, setNewColConfigPrompt] = useState("")
@@ -763,7 +765,7 @@ export default function TableEditorPage() {
   }
 
   // Types that need a configure step before adding
-  const COL_TYPES_NEED_CONFIG = ["AI Agent", "AI Web", "Scrape Website", "Regex", "Normalize Company", "Read File"]
+  const COL_TYPES_NEED_CONFIG = ["AI Agent", "AI Web", "Scrape Website", "Regex", "Normalize Company", "Normalize Domain", "Read File"]
 
   const confirmAddColumn = (colType: string = newColColumnType) => {
     if (COL_TYPES_NEED_CONFIG.includes(colType)) {
@@ -792,6 +794,8 @@ export default function TableEditorPage() {
       runRegexColumn(newColIdx, sourceCol, regex)
     } else if (colType === "Normalize Company" || colType === "Normalize Domain") {
       runNormalizeColumn(newColIdx, colType, sourceCol)
+    } else if (colType === "Read File") {
+      runColumn(newColIdx, "Read File", "", sourceCol)
     }
   }
 
@@ -1032,15 +1036,26 @@ export default function TableEditorPage() {
     const newColNames: { [key: number]: string } = {}
     const newColColumnType: { [key: number]: string } = {}
     const newColFieldType: { [key: number]: string } = {}
+    // Convex batch: tombstone deleted/old-keyed cells, re-save shifted cells
+    const convexBatch: { [key: string]: string } = {}
 
     for (let row = 0; row < numRows; row++) {
       for (let col = 0; col < numCols; col++) {
-        if (col === colIndex) continue
+        if (col === colIndex) {
+          // Delete this column's cells from Convex
+          convexBatch[`${row}-${col}`] = ""
+          continue
+        }
         const newCol = col < colIndex ? col : col - 1
         const v = getCellValue(row, col)
         if (v) newCells[`${row}-${newCol}`] = v
         const fmt = cellFormatting[`${row}-${col}`]
         if (fmt && Object.keys(fmt).length) newFormatting[`${row}-${newCol}`] = fmt
+        if (col > colIndex) {
+          // Column shifted left: delete old Convex key, write new key
+          convexBatch[`${row}-${col}`] = ""
+          convexBatch[`${row}-${newCol}`] = v  // "" = delete if empty, value = upsert
+        }
       }
     }
     for (let col = 0; col < numCols; col++) {
@@ -1058,6 +1073,11 @@ export default function TableEditorPage() {
     setColFieldType(newColFieldType)
     setNumCols(numCols - 1)
     setColMenuOpen(null)
+
+    // Persist cell deletions/shifts to Convex so the column doesn't reappear
+    sync.setCellsBatch(convexBatch)
+    // Persist column name changes to Convex
+    sync.setColumnNamesBatch(newColNames)
   }
 
   // Toggle hide column
@@ -1444,6 +1464,26 @@ export default function TableEditorPage() {
 
   return (
     <div className="flex h-screen bg-background">
+      {/* Persistent hidden file input for "User Input - File" cells */}
+      <input
+        ref={cellFileInputRef}
+        type="file"
+        accept=".pdf,.jpg,.jpeg,.png,.gif,.webp,.txt,.csv"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          const target = pendingFileCellRef.current
+          if (!file || !target) return
+          if (file.size > 10 * 1024 * 1024) { alert("File too large (max 10 MB)"); return }
+          const reader = new FileReader()
+          reader.onload = (ev) => {
+            setCellValue(target.row, target.col, ev.target?.result as string)
+            pendingFileCellRef.current = null
+            if (cellFileInputRef.current) cellFileInputRef.current.value = ""
+          }
+          reader.readAsDataURL(file)
+        }}
+      />
       {/* Main content area */}
       <div className="flex flex-col flex-1 min-w-0 transition-all duration-300">
       {/* Top Header */}
@@ -2040,16 +2080,6 @@ export default function TableEditorPage() {
                                 ))}
                               </>
                             )}
-                            {(newColTab === "All" || newColTab === "Data Tools") && (
-                              <>
-                                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 bg-muted/20">API (PRO)</div>
-                                <button disabled className="flex w-full items-center gap-3 px-3 py-2 text-sm border-b border-border/50 opacity-40 cursor-not-allowed">
-                                  <Link2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                                  <span className="flex-1 text-left">HTTP (POST/GET)</span>
-                                  <span className="flex items-center gap-0.5 rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground"><Zap className="h-2.5 w-2.5" />PRO</span>
-                                </button>
-                              </>
-                            )}
                             {(newColTab === "All" || newColTab === "Enrichments") && (
                               <>
                                 <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">Tools</div>
@@ -2218,12 +2248,14 @@ export default function TableEditorPage() {
                         colSpan={mergeInfo.colSpan}
                         style={{
                           width,
-                          height,
+                          height: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "auto" : height,
+                          minHeight: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? height : undefined,
                           backgroundColor: bgColor,
                           borderBottom: "1px solid var(--border)",
                           borderRight: "1px solid var(--border)",
                           padding: 0,
                           userSelect: "none",
+                          verticalAlign: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "top" : "middle",
                         }}
                         className={`${
                           isSelected ? "ring-2 ring-inset ring-primary" : ""
@@ -2237,7 +2269,34 @@ export default function TableEditorPage() {
                         title={cellValue}
                       >
                         {isEditing ? (
-                          colFieldType[colIndex] === "Boolean" ? (
+                          colColumnType[colIndex] === "User Input - File" ? (
+                            <div
+                              style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", paddingLeft: "8px", paddingRight: "4px", gap: "4px", boxSizing: "border-box" }}
+                            >
+                              <input
+                                ref={editInputRef}
+                                value={cellValue.startsWith("data:") ? "" : cellValue}
+                                placeholder={cellValue.startsWith("data:") ? "(file uploaded)" : "Paste URL or upload..."}
+                                onChange={(e) => setCellValue(rowIndex, colIndex, e.target.value)}
+                                onKeyDown={(e) => handleCellKeyDown(e, rowIndex, colIndex)}
+                                onBlur={() => setEditingCell(null)}
+                                autoFocus
+                                style={{ flex: 1, height: "100%", border: "none", outline: "none", background: "transparent", fontSize: `${fontSize}px`, color: formatting.textColor || "inherit", fontFamily: "inherit" }}
+                              />
+                              <button
+                                title="Upload file"
+                                style={{ cursor: "pointer", display: "flex", alignItems: "center", padding: "2px 3px", borderRadius: "3px", background: "none", border: "none", color: "var(--muted-foreground)", flexShrink: 0, fontSize: "14px" }}
+                                onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  pendingFileCellRef.current = { row: rowIndex, col: colIndex }
+                                  cellFileInputRef.current?.click()
+                                }}
+                              >
+                                📁
+                              </button>
+                            </div>
+                          ) : colFieldType[colIndex] === "Boolean" ? (
                             <select
                               ref={editInputRef as unknown as React.RefObject<HTMLSelectElement>}
                               value={cellValue}
@@ -2315,9 +2374,9 @@ export default function TableEditorPage() {
                           <div 
                             style={{
                               width: "100%",
-                              height: "100%",
+                              height: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "auto" : "100%",
                               display: "flex",
-                              alignItems: "center",
+                              alignItems: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "flex-start" : "center",
                               justifyContent: colFieldType[colIndex] === "Number"
                                 ? "flex-end"
                                 : formatting.alignment === "center" ? "center" : formatting.alignment === "right" ? "flex-end" : "flex-start",
@@ -2326,19 +2385,55 @@ export default function TableEditorPage() {
                               fontWeight: formatting.bold ? "bold" : "normal",
                               fontStyle: formatting.italic ? "italic" : "normal",
                               textDecoration: formatting.underline ? "underline" : "none",
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
+                              // Scrape Website / Read File: clamped (3 lines) by default, expanded when selected
+                              ...((colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? (
+                                isSelected ? {
+                                  whiteSpace: "pre-wrap",
+                                  overflow: "auto",
+                                  textOverflow: "unset",
+                                  wordBreak: "break-word",
+                                } : {
+                                  display: "-webkit-box",
+                                  WebkitLineClamp: 3,
+                                  WebkitBoxOrient: "vertical",
+                                  overflow: "hidden",
+                                  whiteSpace: "normal",
+                                  wordBreak: "break-word",
+                                  textOverflow: "ellipsis",
+                                }
+                              ) : {
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }),
                               paddingLeft: formatting.alignment === "left" ? `${paddingLeft}px` : "8px",
                               paddingRight: (formatting.alignment === "right" || colFieldType[colIndex] === "Number") ? `${paddingLeft}px` : "8px",
-                              paddingTop: "0px",
-                              paddingBottom: "0px",
+                              paddingTop: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "6px" : "0px",
+                              paddingBottom: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "6px" : "0px",
                               boxSizing: "border-box",
                               userSelect: "none",
                               WebkitUserSelect: "none",
                             }}
                           >
-                            {colFieldType[colIndex] === "URL" && cellValue && /^https?:\/\//i.test(cellValue) ? (
+                            {colColumnType[colIndex] === "User Input - File" ? (
+                              cellValue ? (
+                                cellValue.startsWith("data:") ? (
+                                  <span style={{ color: "var(--primary)", display: "flex", alignItems: "center", gap: "4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                                    📎 {(cellValue.match(/data:([^;]+)/)?.[1] ?? "file").split("/").pop()?.toUpperCase()}
+                                  </span>
+                                ) : /^https?:\/\//i.test(cellValue) ? (
+                                  <a href={cellValue} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "var(--primary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                                    📎 {cellValue.split("/").pop()?.split("?")[0] ?? cellValue}
+                                  </a>
+                                ) : (
+                                  <span>📎 {cellValue}</span>
+                                )
+                              ) : (
+                                <span style={{ color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}>
+                                  📁 Double-click to upload
+                                </span>
+                              )
+                            ) : colFieldType[colIndex] === "URL" && cellValue && /^https?:\/\//i.test(cellValue) ? (
                               <a
                                 href={cellValue}
                                 target="_blank"
