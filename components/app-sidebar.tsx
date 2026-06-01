@@ -6,14 +6,11 @@ import {
   Table2,
   FileText,
   Grid3X3,
-  Box,
   Plug,
-  Settings,
   CreditCard,
-  PlayCircle,
-  MessageSquare,
-  ChevronDown,
+  BarChart2,
   LogOut,
+  ChevronDown,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
@@ -45,9 +42,8 @@ export function AppSidebar({ className }: AppSidebarProps) {
     { icon: Table2, label: "Tables", href: "/dashboard/tables" },
     { icon: FileText, label: "Contexts", href: "/contexts" },
     { icon: Grid3X3, label: "Templates", href: "/templates" },
-    { icon: Box, label: "Models", href: "/models" },
     { icon: Plug, label: "Integrations", href: "/integrations" },
-    { icon: Settings, label: "Settings", href: "/settings" },
+    { icon: BarChart2, label: "Usage", href: "/usage" },
     { icon: CreditCard, label: "Billing", href: "/billing" },
   ]
 

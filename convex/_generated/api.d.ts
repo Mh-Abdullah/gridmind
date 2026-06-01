@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as contexts from "../contexts.js";
 import type * as spreadsheets from "../spreadsheets.js";
 import type * as users from "../users.js";
 
@@ -18,6 +19,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  contexts: typeof contexts;
   spreadsheets: typeof spreadsheets;
   users: typeof users;
 }>;

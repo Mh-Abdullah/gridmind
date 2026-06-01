@@ -78,4 +78,15 @@ export default defineSchema({
   })
     .index("by_spreadsheet", ["spreadsheetId"])
     .index("by_spreadsheet_col", ["spreadsheetId", "colIndex"]),
+
+  // Contexts - reusable knowledge pieces
+  contexts: defineTable({
+    userId: v.string(),
+    title: v.string(),
+    icon: v.optional(v.string()),
+    content: v.string(), // Markdown content
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"]),
 });

@@ -16,6 +16,7 @@ interface ScraperRequest {
     cells: { [colIndex: string]: string }
   }[]
   existingColumns?: string[] // Column headers/labels
+  businessContext?: string  // User's saved context docs injected from Contexts page
   tableInfo: {
     tableId: string
     projectName: string
@@ -917,7 +918,7 @@ Headers and row values must be in the same order.\``
 
 export async function POST(request: NextRequest) {
   const body: ScraperRequest = await request.json()
-  const { prompt, mode = "generate", chatHistory, selectedRows, existingColumns, tableInfo } = body
+  const { prompt, mode = "generate", chatHistory, selectedRows, existingColumns, tableInfo, businessContext } = body
 
   if (!process.env.OPENAI_API_KEY) {
     return new Response(
@@ -934,9 +935,9 @@ export async function POST(request: NextRequest) {
 
       try {
         if (mode === "generate" || !selectedRows || selectedRows.length === 0) {
-          await streamGenerateMode(prompt, tableInfo, chatHistory, send)
+          await streamGenerateMode(prompt, tableInfo, chatHistory, send, businessContext)
         } else {
-          await streamEnrichMode(prompt, selectedRows, existingColumns || [], tableInfo, chatHistory, send)
+          await streamEnrichMode(prompt, selectedRows, existingColumns || [], tableInfo, chatHistory, send, businessContext)
         }
       } catch (error) {
         console.error("Scraper API error:", error)
@@ -962,7 +963,8 @@ async function streamGenerateMode(
   prompt: string,
   tableInfo: ScraperRequest["tableInfo"],
   chatHistory: ScraperRequest["chatHistory"],
-  send: (obj: object) => void
+  send: (obj: object) => void,
+  businessContext?: string
 ) {
   console.log("[Scraper] Starting GENERATE mode with prompt:", prompt)
   send({ type: "thinking", content: "🔍 Analyzing your request..." })
@@ -975,7 +977,7 @@ async function streamGenerateMode(
 Context:
 - Project name: ${tableInfo.projectName}
 - This is a NEW data generation request - the user wants you to search the web and create table data
-
+${businessContext ? `\nBusiness context (about this user's company/ICP — tailor results to their target market):\n${businessContext}\n` : ""}
 Recent chat context:
 ${formatChatHistory(chatHistory)}
 
@@ -1080,7 +1082,8 @@ async function streamEnrichMode(
   existingColumns: string[],
   tableInfo: ScraperRequest["tableInfo"],
   chatHistory: ScraperRequest["chatHistory"],
-  send: (obj: object) => void
+  send: (obj: object) => void,
+  businessContext?: string
 ) {
   console.log("[Scraper] Starting ENRICH mode with prompt:", prompt)
   send({ type: "thinking", content: `🔍 Enriching ${selectedRows!.length} row(s)...` })
@@ -1103,7 +1106,7 @@ Spreadsheet context:
 - Project: ${tableInfo.projectName}
 - Dimensions: ${tableInfo.numRows} rows × ${tableInfo.numCols} columns
 - Existing columns: ${existingColumns.join(", ")}
-
+${businessContext ? `\nBusiness context (about this user's company/ICP — use to enrich more relevantly):\n${businessContext}\n` : ""}
 Recent chat context:
 ${formatChatHistory(chatHistory)}
 

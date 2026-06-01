@@ -4,7 +4,11 @@ import { AppSidebar } from "@/components/app-sidebar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/theme-toggle"
-import { Table2, Search, Wand2, Upload, MapPin, PlaySquare, FolderPlus, Trash2, X, CheckCircle2, Menu } from "lucide-react"
+import { Table2, Search, Wand2, Upload, MapPin, PlaySquare, FolderPlus, Trash2, X, CheckCircle2, Menu, ArrowRight, Loader2, ExternalLink, Sparkles } from "lucide-react"
+import { PREDEFINED_TEMPLATES, ALL_CATEGORIES, CATEGORY_COLORS, CATEGORY_DOT_COLORS } from "@/lib/templates-data"
+import { cn } from "@/lib/utils"
+import LocalBusinessesModal from "@/components/local-businesses-modal"
+import GoogleSearchModal from "@/components/google-search-modal"
 import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { useEffect, useRef, useState, useCallback } from "react"
@@ -29,6 +33,24 @@ export default function TablesPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const importFileRef = useRef<HTMLInputElement>(null)
 
+  // Template search modal state
+  const [showTemplateModal, setShowTemplateModal] = useState(false)
+  const [templateCategory, setTemplateCategory] = useState("All")
+  const [previewedTemplate, setPreviewedTemplate] = useState<typeof PREDEFINED_TEMPLATES[number] | null>(null)
+
+  // AI creator modal state
+  const [showCreatorModal, setShowCreatorModal] = useState(false)
+  const [creatorDescription, setCreatorDescription] = useState("")
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [generatedTemplate, setGeneratedTemplate] = useState<{ title: string; description: string; category: string; columns: string[]; sampleRows: Record<string, string>[] } | null>(null)
+  const [generateError, setGenerateError] = useState("")
+
+  // Local businesses modal state
+  const [showLocalModal, setShowLocalModal] = useState(false)
+
+  // Google Search modal state
+  const [showGoogleSearchModal, setShowGoogleSearchModal] = useState(false)
+
   // Fetch user's spreadsheets from Convex
   const spreadsheets = useQuery(
     api.spreadsheets.getSpreadsheetsByUser,
@@ -40,6 +62,7 @@ export default function TablesPage() {
   const deleteSpreadsheet = useMutation(api.spreadsheets.deleteSpreadsheet)
   const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
   const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
+  const updateColumnNames = useMutation(api.spreadsheets.updateColumnNamesBatch)
 
   // Process any pending import saved from the landing page
   useEffect(() => {
@@ -61,13 +84,16 @@ export default function TablesPage() {
         const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name })
 
         const cells: { cellKey: string; value: string }[] = []
-        csvData.headers.forEach((h: string, ci: number) => { if (h.trim()) cells.push({ cellKey: `0-${ci}`, value: h }) })
         csvData.rows.forEach((row: string[], ri: number) => {
-          row.forEach((val: string, ci: number) => { if (val.trim()) cells.push({ cellKey: `${ri + 1}-${ci}`, value: val }) })
+          row.forEach((val: string, ci: number) => { if (val.trim()) cells.push({ cellKey: `${ri}-${ci}`, value: val }) })
         })
 
+        const names = csvData.headers
+          .map((h: string, ci: number) => ({ colIndex: ci, name: h.trim() }))
+          .filter((n: { colIndex: number; name: string }) => n.name !== "")
+        if (names.length > 0) await updateColumnNames({ spreadsheetId, names })
         if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
-        await updateMetadata({ spreadsheetId, numRows: csvData.rows.length + 1, numCols: csvData.headers.length })
+        await updateMetadata({ spreadsheetId, numRows: csvData.rows.length, numCols: csvData.headers.length })
 
         router.push(`/dashboard/tables/${tableId}`)
       } catch (err) {
@@ -167,13 +193,16 @@ export default function TablesPage() {
       const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name: importName.trim() })
 
       const cells: { cellKey: string; value: string }[] = []
-      importFile.headers.forEach((h, ci) => { if (h.trim()) cells.push({ cellKey: `0-${ci}`, value: h }) })
       importFile.rows.forEach((row, ri) => {
-        row.forEach((val, ci) => { if (val.trim()) cells.push({ cellKey: `${ri + 1}-${ci}`, value: val }) })
+        row.forEach((val, ci) => { if (val.trim()) cells.push({ cellKey: `${ri}-${ci}`, value: val }) })
       })
 
+      const names = importFile.headers
+        .map((h, ci) => ({ colIndex: ci, name: h.trim() }))
+        .filter((n) => n.name !== "")
+      if (names.length > 0) await updateColumnNames({ spreadsheetId, names })
       if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
-      await updateMetadata({ spreadsheetId, numRows: importFile.rows.length + 1, numCols: importFile.headers.length })
+      await updateMetadata({ spreadsheetId, numRows: importFile.rows.length, numCols: importFile.headers.length })
 
       setShowImportModal(false)
       setImportFile(null)
@@ -210,13 +239,57 @@ export default function TablesPage() {
     return new Date(timestamp).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
   }
 
+  // ── Template helpers ──
+  const filteredTemplates = templateCategory === "All"
+    ? PREDEFINED_TEMPLATES
+    : PREDEFINED_TEMPLATES.filter((t) => t.categories.includes(templateCategory))
+
+  const createTableFromTemplate = async (tpl: { title: string; columns: string[]; sampleRows: Record<string, string>[] }) => {
+    if (!user?.id) return
+    setIsCreating(true)
+    try {
+      const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name: tpl.title })
+      const cells: { cellKey: string; value: string }[] = []
+      tpl.sampleRows.forEach((row, ri) => tpl.columns.forEach((col, ci) => { if (row[col]) cells.push({ cellKey: `${ri}-${ci}`, value: row[col] }) }))
+      const names = tpl.columns.map((col, ci) => ({ colIndex: ci, name: col }))
+      await updateColumnNames({ spreadsheetId, names })
+      if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
+      await updateMetadata({ spreadsheetId, numRows: tpl.sampleRows.length, numCols: tpl.columns.length })
+      router.push(`/dashboard/tables/${tableId}`)
+    } catch (err) {
+      console.error("Failed to create table:", err)
+      setIsCreating(false)
+    }
+  }
+
+  const handleGenerate = async () => {
+    if (!creatorDescription.trim()) return
+    setIsGenerating(true)
+    setGenerateError("")
+    setGeneratedTemplate(null)
+    try {
+      const res = await fetch("/api/ai/generate-template", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ description: creatorDescription.trim() }),
+      })
+      if (!res.ok) throw new Error("Generation failed")
+      setGeneratedTemplate(await res.json())
+    } catch {
+      setGenerateError("Failed to generate. Please try again.")
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
   const projectOptions = [
     { icon: Table2, label: "Blank table", description: "Start with an empty table", action: () => setShowNameModal(true) },
-    { icon: Search, label: "Search templates", description: "Browse pre-built templates", action: () => {} },
-    { icon: Wand2, label: "Creator", description: "AI-powered table generation", action: () => {} },
+    { icon: Search, label: "Search templates", description: "Browse pre-built templates", action: () => { setPreviewedTemplate(null); setShowTemplateModal(true) } },
+    { icon: Wand2, label: "Creator", description: "AI-powered table generation", action: () => { setGeneratedTemplate(null); setCreatorDescription(""); setGenerateError(""); setShowCreatorModal(true) } },
     { icon: Upload, label: "Import & enrich CSV", description: "Upload and enhance your data", action: () => setShowImportModal(true) },
-    { icon: PlaySquare, label: "Run Google Search", description: "Search and extract data", action: () => {} },
-    { icon: MapPin, label: "Local businesses", description: "Find nearby businesses", action: () => {} },
+    { icon: PlaySquare, label: "Run Google Search", description: "Search and extract data", action: () => setShowGoogleSearchModal(true) },
+    { icon: MapPin, label: "Local businesses", description: "Find nearby businesses", action: () => setShowLocalModal(true) },
   ]
 
   if (loading) {
@@ -466,6 +539,256 @@ export default function TablesPage() {
           </section>
         </main>
       </div>
+
+      {/* ── Google Search Modal ── */}
+      {showGoogleSearchModal && <GoogleSearchModal onClose={() => setShowGoogleSearchModal(false)} />}
+
+      {/* ── Local Businesses Modal ── */}
+      {showLocalModal && <LocalBusinessesModal onClose={() => setShowLocalModal(false)} />}
+
+      {/* ── Search Templates Modal ── */}
+      {showTemplateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-4xl rounded-2xl border border-border bg-background shadow-2xl flex flex-col max-h-[85vh]">
+
+            {/* ─ Grid view ─ */}
+            {!previewedTemplate ? (
+              <>
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">Search Templates</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">Click a template to preview it before using.</p>
+                  </div>
+                  <button className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-muted" onClick={() => setShowTemplateModal(false)}>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Category filter */}
+                <div className="flex items-center gap-1.5 flex-wrap px-6 py-3 border-b border-border shrink-0">
+                  {ALL_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setTemplateCategory(cat)}
+                      className={cn(
+                        "rounded-full px-3 py-1 text-xs font-medium transition-all",
+                        templateCategory === cat
+                          ? "bg-primary text-primary-foreground"
+                          : "bg-muted text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Template grid */}
+                <div className="overflow-y-auto flex-1 p-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {filteredTemplates.map((tpl) => (
+                      <div
+                        key={tpl.id}
+                        className="group relative flex flex-col rounded-xl border border-border bg-card p-4 cursor-pointer hover:border-primary/30 hover:shadow-md transition-all duration-200"
+                        onClick={() => setPreviewedTemplate(tpl)}
+                      >
+                        <div className="flex items-start justify-between gap-2 mb-2">
+                          <h4 className="text-[13px] font-semibold text-foreground leading-snug">{tpl.title}</h4>
+                          <div className="flex flex-col items-end gap-0.5 shrink-0">
+                            {tpl.categories.map((cat) => (
+                              <span key={cat} className={cn("flex items-center gap-1 text-[11px] font-medium", CATEGORY_COLORS[cat] ?? "text-muted-foreground")}>
+                                <span className={cn("h-1.5 w-1.5 rounded-full", CATEGORY_DOT_COLORS[cat] ?? "bg-muted-foreground")} />
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                        <p className="text-[12px] text-muted-foreground leading-relaxed line-clamp-2 flex-1">{tpl.description}</p>
+                        <div className="mt-3 flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground">{tpl.columns.length} columns</span>
+                          <span className="flex items-center gap-1 text-[11px] font-medium text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                            Preview <ArrowRight className="h-3 w-3" />
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* Preview header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+                  <div>
+                    <h3 className="text-base font-bold text-foreground">{previewedTemplate.title}</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{previewedTemplate.description}</p>
+                  </div>
+                  <button className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-muted" onClick={() => { if (!isCreating) setShowTemplateModal(false) }}>
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                {/* Category tags + column count */}
+                <div className="flex items-center gap-3 px-6 py-2.5 border-b border-border shrink-0">
+                  {previewedTemplate.categories.map((cat) => (
+                    <span key={cat} className={cn("flex items-center gap-1.5 text-xs font-medium", CATEGORY_COLORS[cat] ?? "text-muted-foreground")}>
+                      <span className={cn("h-2 w-2 rounded-full", CATEGORY_DOT_COLORS[cat] ?? "bg-muted-foreground")} />
+                      {cat}
+                    </span>
+                  ))}
+                  <span className="text-xs text-muted-foreground">· {previewedTemplate.columns.length} columns · {previewedTemplate.sampleRows.length} sample rows</span>
+                </div>
+
+                {/* Preview table */}
+                <div className="flex-1 overflow-auto p-6">
+                  <div className="rounded-lg border border-border overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/60 border-b border-border">
+                            <th className="w-10 px-3 py-2.5 text-left text-muted-foreground font-medium border-r border-border">ID</th>
+                            {previewedTemplate.columns.map((col) => (
+                              <th key={col} className="px-3 py-2.5 text-left text-muted-foreground font-medium whitespace-nowrap border-r border-border last:border-r-0">{col}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {previewedTemplate.sampleRows.map((row, i) => (
+                            <tr key={i} className="border-b border-border last:border-0 hover:bg-muted/20">
+                              <td className="px-3 py-2.5 text-muted-foreground border-r border-border">{i + 1}</td>
+                              {previewedTemplate.columns.map((col) => (
+                                <td key={col} className="px-3 py-2.5 text-foreground whitespace-nowrap max-w-40 truncate border-r border-border last:border-r-0">
+                                  {row[col] ?? ""}
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                          <tr className="bg-muted/10">
+                            <td className="px-3 py-2.5 text-muted-foreground border-r border-border">{previewedTemplate.sampleRows.length + 1}</td>
+                            <td className="px-3 py-2.5 text-muted-foreground/50 italic" colSpan={previewedTemplate.columns.length}>← ADD YOUR DATA HERE</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Footer actions */}
+                <div className="px-6 py-4 border-t border-border shrink-0 flex items-center gap-2">
+                  <Button onClick={() => createTableFromTemplate(previewedTemplate)} disabled={isCreating} className="gap-2">
+                    {isCreating ? <><Loader2 className="h-4 w-4 animate-spin" />Creating…</> : <><ExternalLink className="h-4 w-4" />Use Template</>}
+                  </Button>
+                  <Button variant="outline" onClick={() => setPreviewedTemplate(null)} disabled={isCreating}>
+                    ← Back
+                  </Button>
+                </div>
+              </>
+            )}
+
+          </div>
+        </div>
+      )}
+
+      {/* ── AI Creator Modal ── */}
+      {showCreatorModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+          <div className="w-full max-w-2xl rounded-2xl border border-border bg-background shadow-2xl flex flex-col max-h-[85vh]">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <div className="flex items-center gap-2">
+                <Sparkles className="h-4 w-4 text-primary" />
+                <div>
+                  <h3 className="text-sm font-semibold text-foreground">AI Template Creator</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">Describe what you need and AI will build the template.</p>
+                </div>
+              </div>
+              <button className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:bg-muted" onClick={() => { if (!isGenerating && !isCreating) setShowCreatorModal(false) }}>
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+              {/* Description input */}
+              {!generatedTemplate && (
+                <div className="space-y-3">
+                  <label className="text-xs font-medium text-muted-foreground">What kind of table do you want to create?</label>
+                  <textarea
+                    rows={3}
+                    value={creatorDescription}
+                    onChange={(e) => setCreatorDescription(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter" && e.metaKey) handleGenerate() }}
+                    placeholder="e.g. track job applicants with their skills, resume links, interview stages and scores…"
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 resize-none"
+                    disabled={isGenerating}
+                  />
+                  {generateError && <p className="text-xs text-destructive">{generateError}</p>}
+                </div>
+              )}
+
+              {/* Generated preview */}
+              {generatedTemplate && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-base font-bold text-foreground">{generatedTemplate.title}</h4>
+                      <p className="text-xs text-muted-foreground mt-0.5">{generatedTemplate.description}</p>
+                    </div>
+                    <span className={cn("flex items-center gap-1 text-xs font-medium", CATEGORY_COLORS[generatedTemplate.category] ?? "text-muted-foreground")}>
+                      <span className={cn("h-2 w-2 rounded-full", CATEGORY_DOT_COLORS[generatedTemplate.category] ?? "bg-muted-foreground")} />
+                      {generatedTemplate.category}
+                    </span>
+                  </div>
+                  <div className="rounded-lg border border-border overflow-hidden">
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-muted/50 border-b border-border">
+                            <th className="px-3 py-2 text-left text-muted-foreground font-medium w-8">#</th>
+                            {generatedTemplate.columns.map((col) => (
+                              <th key={col} className="px-3 py-2 text-left text-muted-foreground font-medium whitespace-nowrap">{col}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {generatedTemplate.sampleRows.map((row, i) => (
+                            <tr key={i} className="border-b border-border last:border-0">
+                              <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                              {generatedTemplate.columns.map((col) => (
+                                <td key={col} className="px-3 py-2 text-foreground whitespace-nowrap max-w-40 truncate">{row[col] ?? ""}</td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{generatedTemplate.columns.length} columns · {generatedTemplate.sampleRows.length} sample rows</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-border shrink-0 flex items-center gap-2">
+              {!generatedTemplate ? (
+                <>
+                  <Button onClick={handleGenerate} disabled={isGenerating || !creatorDescription.trim()} className="gap-2">
+                    {isGenerating ? <><Loader2 className="h-4 w-4 animate-spin" />Generating…</> : <><Wand2 className="h-4 w-4" />Generate Template</>}
+                  </Button>
+                  <Button variant="ghost" onClick={() => setShowCreatorModal(false)}>Cancel</Button>
+                </>
+              ) : (
+                <>
+                  <Button onClick={() => createTableFromTemplate(generatedTemplate!)} disabled={isCreating} className="gap-2">
+                    {isCreating ? <><Loader2 className="h-4 w-4 animate-spin" />Creating…</> : <><ExternalLink className="h-4 w-4" />Start Enriching</>}
+                  </Button>
+                  <Button variant="outline" onClick={() => { setGeneratedTemplate(null) }} disabled={isCreating}>Regenerate</Button>
+                  <Button variant="ghost" onClick={() => setShowCreatorModal(false)} disabled={isCreating}>Cancel</Button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Import CSV Modal ── */}
       {showImportModal && (

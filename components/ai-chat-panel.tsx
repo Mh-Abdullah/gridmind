@@ -5,6 +5,8 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { useAuth } from "@/lib/auth-context"
+import { useQuery } from "convex/react"
+import { api } from "@/convex/_generated/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
   X,
@@ -245,6 +247,28 @@ function ThinkingBox({
 
 export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onApplyFormatting, onAddColumns, onGenerateTable, pendingChanges, onKeepChanges, onUndoChanges }: AIChatPanelProps) {
   const { user } = useAuth()
+
+  // Load user's saved contexts so the AI knows about the business/ICP
+  const userContexts = useQuery(
+    api.contexts.getContextsByUser,
+    user?.id ? { userId: user.id } : "skip"
+  )
+
+  // Which context IDs the user has pinned for this conversation
+  const [selectedContextIds, setSelectedContextIds] = useState<Set<string>>(new Set())
+  const [showContextPicker, setShowContextPicker] = useState(false)
+
+  // Build a single string to inject as system context into every AI call
+  // If the user has pinned specific contexts, only use those; otherwise use none (opt-in)
+  const buildBusinessContext = (): string | undefined => {
+    if (!userContexts || userContexts.length === 0) return undefined
+    const active = selectedContextIds.size > 0
+      ? userContexts.filter(c => selectedContextIds.has(c._id))
+      : []
+    if (active.length === 0) return undefined
+    const parts = active.map(c => `### ${c.title}\n${c.content}`)
+    return `The user has attached the following business contexts to this conversation:\n\n${parts.join("\n\n---\n\n")}`
+  }
   const welcomeMessage: Message = {
     id: "welcome",
     role: "assistant",
@@ -260,6 +284,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [selectedAgent, setSelectedAgent] = useState("Scraper")
   const [showAgentMenu, setShowAgentMenu] = useState(false)
+  const contextPickerRef = useRef<HTMLDivElement>(null)
   
   // Chat history state
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
@@ -271,6 +296,18 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   const inputRef = useRef<HTMLInputElement>(null)
 
   const tableId = tableContext?.tableId || 'default'
+
+  // Close context picker on outside click
+  useEffect(() => {
+    if (!showContextPicker) return
+    const handler = (e: MouseEvent) => {
+      if (contextPickerRef.current && !contextPickerRef.current.contains(e.target as Node)) {
+        setShowContextPicker(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showContextPicker])
 
   // Load chat sessions on mount
   useEffect(() => {
@@ -471,6 +508,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         prompt,
         mode: "generate",
         chatHistory,
+        businessContext: buildBusinessContext(),
         tableInfo: {
           tableId: tableContext?.tableId || "new",
           projectName: tableContext?.projectName || "Untitled",
@@ -498,6 +536,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         prompt,
         mode: "enrich",
         chatHistory,
+        businessContext: buildBusinessContext(),
         selectedRows,
         existingColumns,
         tableInfo: {
@@ -603,6 +642,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt, cells, numRows, numCols, chatHistory,
+          businessContext: buildBusinessContext(),
           selectedCells: hasSelection ? selectedCellsList : undefined,
         }),
       })
@@ -774,6 +814,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           messages: conversationHistory,
+          businessContext: buildBusinessContext(),
           tableInfo: tableContext ? {
             tableId: tableContext.tableId,
             projectName: tableContext.projectName,
@@ -1262,6 +1303,34 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       {/* Input area */}
       <div className="border-t border-border p-3">
         <div className="rounded-lg border border-border bg-muted/30 focus-within:border-primary/50 focus-within:ring-1 focus-within:ring-primary/20 transition-all">
+
+          {/* Attached context pills */}
+          {selectedContextIds.size > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3 pt-2.5">
+              {userContexts?.filter(c => selectedContextIds.has(c._id)).map(c => (
+                <span
+                  key={c._id}
+                  className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2.5 py-0.5 text-xs font-medium"
+                >
+                  {c.icon && !c.icon.startsWith("http") ? (
+                    <span className="text-xs">{c.icon}</span>
+                  ) : null}
+                  {c.title}
+                  <button
+                    onClick={() => setSelectedContextIds(prev => {
+                      const next = new Set(prev)
+                      next.delete(c._id)
+                      return next
+                    })}
+                    className="ml-0.5 rounded-full hover:bg-muted p-0.5 transition-colors"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Text input */}
           <div className="p-3 pb-2">
             <textarea
@@ -1290,15 +1359,71 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
           {/* Bottom toolbar */}
           <div className="flex items-center justify-between px-2 pb-2">
             <div className="flex items-center gap-1">
-              {/* Add attachment button */}
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                title="Add context"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
+              {/* Context picker button */}
+              <div className="relative" ref={contextPickerRef}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={`h-7 w-7 transition-colors ${selectedContextIds.size > 0 ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}
+                  title="Attach context"
+                  onClick={() => setShowContextPicker(v => !v)}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+
+                {showContextPicker && (
+                  <div className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-border bg-popover shadow-lg z-50 overflow-hidden">
+                    <div className="px-3 py-2 border-b border-border">
+                      <p className="text-xs font-semibold text-foreground">Attach Context</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Select contexts to give the AI business knowledge</p>
+                    </div>
+                    {!userContexts || userContexts.length === 0 ? (
+                      <div className="px-3 py-4 text-center">
+                        <p className="text-xs text-muted-foreground">No contexts saved yet.</p>
+                        <a href="/contexts" className="text-xs text-primary hover:underline mt-1 block">Create one on the Contexts page →</a>
+                      </div>
+                    ) : (
+                      <div className="max-h-52 overflow-y-auto py-1">
+                        {userContexts.map(c => {
+                          const isSelected = selectedContextIds.has(c._id)
+                          return (
+                            <button
+                              key={c._id}
+                              className={`w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-muted transition-colors ${isSelected ? "bg-primary/5" : ""}`}
+                              onClick={() => {
+                                setSelectedContextIds(prev => {
+                                  const next = new Set(prev)
+                                  if (next.has(c._id)) next.delete(c._id)
+                                  else next.add(c._id)
+                                  return next
+                                })
+                              }}
+                            >
+                              <div className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSelected ? "border-primary bg-primary" : "border-border bg-background"}`}>
+                                {isSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
+                              </div>
+                              <span className="text-base leading-none shrink-0">
+                                {c.icon && !c.icon.startsWith("http") ? c.icon : "📄"}
+                              </span>
+                              <span className="text-sm truncate">{c.title}</span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {selectedContextIds.size > 0 && (
+                      <div className="border-t border-border px-3 py-2">
+                        <button
+                          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                          onClick={() => setSelectedContextIds(new Set())}
+                        >
+                          Clear all
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
               
               {/* Agent selector */}
               <div className="relative">

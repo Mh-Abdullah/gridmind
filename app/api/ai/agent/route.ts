@@ -25,6 +25,7 @@ interface AgentRequest {
   numCols: number
   chatHistory?: { role: "user" | "assistant" | "system"; content: string }[]
   selectedCells?: SelectedCell[]
+  businessContext?: string
 }
 
 interface CellChange {
@@ -120,7 +121,7 @@ Omit "changes" if no values change. Omit "formatting" if no formatting changes. 
 
 export async function POST(request: NextRequest) {
   const body: AgentRequest = await request.json()
-  const { prompt, cells, numRows, numCols, chatHistory, selectedCells } = body
+  const { prompt, cells, numRows, numCols, chatHistory, selectedCells, businessContext } = body
 
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
@@ -211,7 +212,7 @@ If the instruction asks to add/expand info about specific text, find that text i
 
   const userPrompt = `User instruction: ${prompt}
 ${selectionBlock}
-${recentHistory ? `Recent conversation:\n${recentHistory}\n` : ""}
+${recentHistory ? `Recent conversation:\n${recentHistory}\n` : ""}${businessContext ? `\nBusiness context (about this user's company/customers — use this to make smarter decisions):\n${businessContext}\n` : ""}
 FULL SPREADSHEET CONTENT (${numRows} rows × ${numCols} cols):
 ${spreadsheetText}
 

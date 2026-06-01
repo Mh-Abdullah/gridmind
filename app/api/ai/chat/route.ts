@@ -9,6 +9,7 @@ interface ChatMessage {
 interface ChatRequest {
   messages: ChatMessage[]
   context?: string
+  businessContext?: string
   tableInfo?: {
     tableId: string
     projectName: string
@@ -47,9 +48,9 @@ You have access to the user's spreadsheet context including:
 export async function POST(request: NextRequest) {
   try {
     const body: ChatRequest = await request.json()
-    const { messages, context, tableInfo, spreadsheetData } = body
+    const { messages, context, businessContext, tableInfo, spreadsheetData } = body
 
-    console.log("[Chat API] Request received:", { messageCount: messages?.length, hasContext: !!context, hasTableInfo: !!tableInfo })
+    console.log("[Chat API] Request received:", { messageCount: messages?.length, hasContext: !!context, hasBusinessContext: !!businessContext, hasTableInfo: !!tableInfo })
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return NextResponse.json(
@@ -62,6 +63,11 @@ export async function POST(request: NextRequest) {
     const fullMessages: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
     ]
+
+    // Inject saved business contexts so the AI knows the user's company/ICP
+    if (businessContext) {
+      fullMessages.push({ role: "system", content: businessContext })
+    }
 
     // Add spreadsheet context
     if (tableInfo || spreadsheetData) {

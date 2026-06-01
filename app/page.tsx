@@ -243,6 +243,7 @@ export default function LandingPage() {
   const createSpreadsheet = useMutation(api.spreadsheets.getOrCreateSpreadsheet)
   const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
   const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
+  const updateColumnNames = useMutation(api.spreadsheets.updateColumnNamesBatch)
 
   const [csvData, setCsvData] = useState<ParsedCSV | null>(null)
   const [fileName, setFileName] = useState("")
@@ -287,20 +288,23 @@ export default function LandingPage() {
 
         const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name })
 
-        // Build flat cell array: row 0 = headers, rows 1..n = data
+        // Build flat cell array: data rows start at row 0; headers go to columnNames
         const cells: { cellKey: string; value: string }[] = []
-        csvData.headers.forEach((h, ci) => { if (h.trim()) cells.push({ cellKey: `0-${ci}`, value: h }) })
         csvData.rows.forEach((row, ri) => {
-          row.forEach((val, ci) => { if (val.trim()) cells.push({ cellKey: `${ri + 1}-${ci}`, value: val }) })
+          row.forEach((val, ci) => { if (val.trim()) cells.push({ cellKey: `${ri}-${ci}`, value: val }) })
         })
 
+        const names = csvData.headers
+          .map((h, ci) => ({ colIndex: ci, name: h.trim() }))
+          .filter((n) => n.name !== "")
+        if (names.length > 0) await updateColumnNames({ spreadsheetId, names })
         if (cells.length > 0) {
           await batchUpdateCells({ spreadsheetId, cells })
         }
 
         await updateMetadata({
           spreadsheetId,
-          numRows: csvData.rows.length + 1,
+          numRows: csvData.rows.length,
           numCols: csvData.headers.length,
         })
 
