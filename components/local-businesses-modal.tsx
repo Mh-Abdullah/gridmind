@@ -9,7 +9,7 @@ import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { useRouter } from "next/navigation"
 import { X, Loader2, MapPin, Search, ExternalLink, Zap } from "lucide-react"
-import type { BusinessMarker } from "./local-businesses-map"
+import type { BusinessMarker, MapBounds } from "./local-businesses-map"
 
 // Dynamically import map (Leaflet is client-only)
 const LocalBusinessesMap = dynamic(() => import("./local-businesses-map"), {
@@ -62,6 +62,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
   const { user } = useAuth()
 
   const [center, setCenter] = useState<[number, number]>([40.7484, -73.9967]) // fallback until geolocation resolves
+  const [mapBounds, setMapBounds] = useState<MapBounds | null>(null)
   const [locationInput, setLocationInput] = useState("")
   const [isGeocoding, setIsGeocoding] = useState(false)
   const [geocodeError, setGeocodeError] = useState("")
@@ -125,14 +126,22 @@ export default function LocalBusinessesModal({ onClose }: Props) {
     setSearchError("")
     try {
       const params = new URLSearchParams({
-        lat: center[0].toString(),
-        lng: center[1].toString(),
-        radiusKm: radiusKm.toString(),
         type: businessType,
         text: searchText,
         searchMode,
         maxResults: maxResults.toString(),
       })
+      // Prefer viewport bbox over center+radius when available
+      if (mapBounds) {
+        params.set("south", mapBounds.south.toString())
+        params.set("north", mapBounds.north.toString())
+        params.set("west", mapBounds.west.toString())
+        params.set("east", mapBounds.east.toString())
+      } else {
+        params.set("lat", center[0].toString())
+        params.set("lng", center[1].toString())
+        params.set("radiusKm", radiusKm.toString())
+      }
       const res = await fetch(`/api/local-businesses?${params}`)
       if (!res.ok) { setSearchError("Search failed. Try a different location or type."); return }
       const data = await res.json()
@@ -143,7 +152,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
     } finally {
       setIsSearching(false)
     }
-  }, [center, radiusKm, businessType, searchText, searchMode, maxResults])
+  }, [center, radiusKm, mapBounds, businessType, searchText, searchMode, maxResults])
 
   const handleCreate = useCallback(async (withData: boolean) => {
     if (!user?.id) return
@@ -244,6 +253,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
             radiusKm={radiusKm}
             businesses={businessMarkers}
             onMapClick={(lat, lng) => setCenter([lat, lng])}
+            onBoundsChange={setMapBounds}
           />
 
           {/* Live-location loading overlay */}
@@ -256,22 +266,13 @@ export default function LocalBusinessesModal({ onClose }: Props) {
             </div>
           )}
 
-          {/* Radius slider overlay */}
-          <div className="absolute bottom-3 left-3 right-3 z-1000 bg-white/90 backdrop-blur rounded-lg border border-border px-4 py-2.5 shadow">
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-gray-600 shrink-0 whitespace-nowrap">
-                Radius: {radiusKm < 1 ? `${Math.round(radiusKm * 1000)}m` : `${radiusKm} km`} / {(radiusKm * 0.621).toFixed(2)} miles
-              </span>
-              <input
-                type="range"
-                min={0.2}
-                max={10}
-                step={0.1}
-                value={radiusKm}
-                onChange={(e) => setRadiusKm(parseFloat(e.target.value))}
-                className="flex-1 cursor-pointer h-1.5 accent-indigo-500"
-              />
-            </div>
+          {/* Radius slider overlay — shown only as a fallback hint when no bbox yet */}
+          <div className="absolute bottom-3 left-3 right-3 z-1000 bg-white/90 backdrop-blur rounded-lg border border-border px-4 py-2 shadow">
+            <p className="text-[11px] text-gray-500 text-center leading-tight">
+              {mapBounds
+                ? <span className="flex items-center justify-center gap-1.5"><span className="inline-block h-1.5 w-1.5 rounded-full bg-indigo-500" />Searching visible map area · pan or zoom to adjust</span>
+                : "Pan or zoom the map to set the search area"}
+            </p>
           </div>
         </div>
 

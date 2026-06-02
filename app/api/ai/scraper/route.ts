@@ -390,18 +390,33 @@ const searchOpenStreetMap = tool({
         tagFilter = `[~"name|brand|amenity|tourism|shop|leisure|historic|office"~"${placeType.replace(/\s+/g, "_")}",i]`
       }
 
-      // Step 3: Query Overpass API (free OSM data service)
+      // Step 3: Query Overpass API — race all mirrors in parallel
       const overpassQuery = `[out:json][timeout:30];(nwr${tagFilter}(${bbox}););out body center ${maxResults};`
-      const overpassRes = await fetch("https://overpass-api.de/api/interpreter", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: `data=${encodeURIComponent(overpassQuery)}`,
-        signal: AbortSignal.timeout(30000),
-      })
-      if (!overpassRes.ok) return { error: `Overpass API error: HTTP ${overpassRes.status}`, results: [] }
+      const overpassEndpoints = [
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.openstreetmap.ru/api/interpreter",
+      ]
 
       type OsmElement = { tags?: Record<string, string> }
-      const data = await overpassRes.json() as { elements: OsmElement[] }
+
+      const tryOverpass = async (url: string): Promise<{ elements: OsmElement[] }> => {
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: `data=${encodeURIComponent(overpassQuery)}`,
+          signal: AbortSignal.timeout(25000),
+        })
+        if (!res.ok) throw new Error(`${url} returned HTTP ${res.status}`)
+        return res.json()
+      }
+
+      let data: { elements: OsmElement[] }
+      try {
+        data = await Promise.any(overpassEndpoints.map(tryOverpass))
+      } catch {
+        return { error: "Overpass API unavailable — all mirrors failed", results: [] }
+      }
 
       const seen = new Set<string>()
       const results = data.elements

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react"
 import {
   MapContainer,
   TileLayer,
-  Circle,
   Marker,
   Popup,
   useMap,
@@ -23,11 +22,19 @@ export interface BusinessMarker {
   address?: string
 }
 
+export interface MapBounds {
+  north: number
+  south: number
+  east: number
+  west: number
+}
+
 interface Props {
   center: [number, number]
   radiusKm: number
   businesses?: BusinessMarker[]
   onMapClick?: (lat: number, lng: number) => void
+  onBoundsChange?: (bounds: MapBounds) => void
 }
 
 // Syncs map view to center prop changes
@@ -37,6 +44,22 @@ function MapController({ center }: { center: [number, number] }) {
     map.setView(center, map.getZoom(), { animate: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [center[0], center[1]])
+  return null
+}
+
+// Emits viewport bounds on pan/zoom and on first mount
+function BoundsTracker({ onChange }: { onChange: (b: MapBounds) => void }) {
+  const map = useMap()
+  useEffect(() => {
+    const emit = () => {
+      const b = map.getBounds()
+      onChange({ north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() })
+    }
+    emit()
+    map.on("moveend zoomend", emit)
+    return () => { map.off("moveend zoomend", emit) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map])
   return null
 }
 
@@ -50,7 +73,7 @@ function ClickHandler({ onClick }: { onClick?: (lat: number, lng: number) => voi
   return null
 }
 
-export default function LocalBusinessesMap({ center, radiusKm, businesses = [], onMapClick }: Props) {
+export default function LocalBusinessesMap({ center, radiusKm, businesses = [], onMapClick, onBoundsChange }: Props) {
   const [icons, setIcons] = useState<{ default: InstanceType<typeof L.Icon>; result: InstanceType<typeof L.Icon> } | null>(null)
 
   // Initialize Leaflet icons client-side only — avoids Turbopack running Leaflet before the DOM exists
@@ -98,18 +121,7 @@ export default function LocalBusinessesMap({ center, radiusKm, businesses = [], 
       />
       <MapController center={center} />
       <ClickHandler onClick={onMapClick} />
-
-      {/* Radius circle */}
-      <Circle
-        center={center}
-        radius={radiusKm * 1000}
-        pathOptions={{
-          color: "#6366f1",
-          fillColor: "#6366f1",
-          fillOpacity: 0.12,
-          weight: 2,
-        }}
-      />
+      {onBoundsChange && <BoundsTracker onChange={onBoundsChange} />}
 
       {/* Center pin */}
       <Marker position={center} icon={icons.default} />
