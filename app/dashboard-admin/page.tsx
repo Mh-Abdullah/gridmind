@@ -6,21 +6,18 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AdminSidebar } from "@/components/admin-sidebar";
 import { Menu } from "lucide-react";
-
-interface User {
-  id: string;
-  email: string;
-  name: string;
-  role: string;
-  createdAt: string;
-}
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 
 export default function AdminDashboardPage() {
-  const { user, loading, isAdmin, logout } = useAuth();
+  const { user, loading, isAdmin } = useAuth();
   const router = useRouter();
-  const [users, setUsers] = useState<User[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Real-time user list from Convex — updates automatically when users are added/removed
+  const allUsers = useQuery(api.users.getAllUsers, isAdmin ? {} : "skip");
+  const users = allUsers ?? [];
+  const loadingUsers = allUsers === undefined;
 
   useEffect(() => {
     if (!loading && !user) {
@@ -31,27 +28,6 @@ export default function AdminDashboardPage() {
       router.push("/dashboard");
     }
   }, [user, loading, isAdmin, router]);
-
-  useEffect(() => {
-    if (isAdmin) {
-      fetchUsers();
-    }
-  }, [isAdmin]);
-
-  const fetchUsers = async () => {
-    setLoadingUsers(true);
-    try {
-      const response = await fetch("/api/admin/users");
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.users);
-      }
-    } catch (error) {
-      console.error("Failed to fetch users:", error);
-    } finally {
-      setLoadingUsers(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -124,13 +100,7 @@ export default function AdminDashboardPage() {
           <div className="bg-card border border-border rounded-lg">
             <div className="border-b border-border px-6 py-4 flex justify-between items-center">
               <h2 className="text-xl font-bold text-foreground">User Management</h2>
-              <button
-                onClick={fetchUsers}
-                disabled={loadingUsers}
-                className="bg-primary text-primary-foreground px-4 py-2 rounded-lg hover:bg-primary/90 disabled:opacity-50 text-sm font-medium"
-              >
-                {loadingUsers ? "Loading..." : "Refresh"}
-              </button>
+              <span className="text-xs text-muted-foreground">Live — updates automatically</span>
             </div>
 
             <div className="overflow-x-auto">

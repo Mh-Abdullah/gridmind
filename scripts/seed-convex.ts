@@ -23,10 +23,9 @@ async function seed() {
 
   // Hash passwords
   const adminPasswordHash = bcryptjs.hashSync("1234", 10);
-  const testPasswordHash = bcryptjs.hashSync("test1234", 10);
+  const testPasswordHash = bcryptjs.hashSync("test1234", 10); // kept for mutation signature
 
-  console.log("Creating admin user: mh.abdulla.688@gmail.com (password: 1234)");
-  console.log("Creating test user: test@example.com (password: test1234)\n");
+  console.log("Creating admin user: mh.abdulla.688@gmail.com (password: 1234)\n");
 
   try {
     // Import the api properly for runtime
@@ -38,9 +37,8 @@ async function seed() {
     });
 
     console.log("✅ Seed completed successfully!");
-    console.log("\n📋 Created users:");
+    console.log("\n📋 Admin user:");
     console.log("  - Admin: mh.abdulla.688@gmail.com / 1234");
-    console.log("  - User:  test@example.com / test1234");
   } catch (error) {
     console.error("❌ Seed failed:", error);
     process.exit(1);

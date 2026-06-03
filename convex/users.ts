@@ -132,6 +132,13 @@ export const seedUsers = mutation({
         createdAt: now,
         updatedAt: now,
       });
+    } else {
+      // Force-update password and role in case they were wrong
+      await ctx.db.patch(existingAdmin._id, {
+        password: args.adminPasswordHash,
+        role: "admin",
+        updatedAt: now,
+      });
     }
     
     // Check if test user already exists
@@ -147,6 +154,11 @@ export const seedUsers = mutation({
         password: args.testPasswordHash,
         role: "user",
         createdAt: now,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.patch(existingTest._id, {
+        password: args.testPasswordHash,
         updatedAt: now,
       });
     }
