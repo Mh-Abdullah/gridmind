@@ -2094,7 +2094,7 @@ export default function TableEditorPage() {
                                     className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
                                     <span className="text-muted-foreground shrink-0">{item.icon}</span>
                                     <span className="flex-1 text-left">{item.label}</span>
-                                    <span className={`text-[11px] shrink-0 ${item.credit === "Free" ? "text-green-600 dark:text-green-400 font-medium" : "text-muted-foreground"}`}>{item.credit}</span>
+                                    <span className={`text-[11px] shrink-0 ${item.credit === "Free" ? "text-foreground font-medium" : "text-muted-foreground"}`}>{item.credit}</span>
                                   </button>
                                 ))}
                               </>
@@ -2682,7 +2682,7 @@ export default function TableEditorPage() {
 
       {/* Copy Notification */}
       {showCopyNotification && (
-        <div className="fixed bottom-4 right-4 bg-green-600 text-white px-4 py-2 rounded shadow-lg z-50">
+        <div className="fixed bottom-4 right-4 bg-foreground text-background px-4 py-2 rounded shadow-lg z-50">
           Copied {selectedCells.size} cell(s)
         </div>
       )}

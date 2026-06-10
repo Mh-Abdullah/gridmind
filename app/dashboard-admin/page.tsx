@@ -127,8 +127,8 @@ export default function AdminDashboardPage() {
                           <span
                             className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${
                               u.role === "admin" 
-                                ? "bg-red-500/10 text-red-600" 
-                                : "bg-blue-500/10 text-blue-600"
+                                ? "bg-muted text-foreground" 
+                                : "bg-muted text-muted-foreground"
                             }`}
                           >
                             {u.role.toUpperCase()}

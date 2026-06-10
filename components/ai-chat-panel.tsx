@@ -212,7 +212,7 @@ function ThinkingBox({
         className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/50 transition-colors"
       >
         {isDone ? (
-          <Check className="h-3 w-3 text-green-500 shrink-0" />
+          <Check className="h-3 w-3 text-foreground shrink-0" />
         ) : (
           <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
         )}
@@ -229,7 +229,7 @@ function ThinkingBox({
         <div className="px-3 pb-2 pt-1 border-t border-border/40 space-y-1.5 max-h-72 overflow-y-auto">
           {steps.map((step, i) => (
             <div key={i} className="flex items-start gap-2 text-muted-foreground min-w-0">
-              <Check className="h-3 w-3 mt-0.5 text-green-500 shrink-0" />
+              <Check className="h-3 w-3 mt-0.5 text-foreground shrink-0" />
               <span className="whitespace-pre-line wrap-break-word min-w-0 flex-1">{step}</span>
             </div>
           ))}
@@ -1142,7 +1142,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                 </AvatarFallback>
               </Avatar>
             ) : (
-              <div className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-linear-to-br from-violet-500 via-purple-500 to-blue-500 shadow-md">
+              <div className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-foreground shadow-md">
                 <BrainCircuit className="h-4 w-4 text-white" />
               </div>
             )}
@@ -1279,19 +1279,19 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         <div className="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-4 py-2">
           <div className="flex items-center gap-2">
             <span className="text-sm text-muted-foreground">1 file changed</span>
-            <span className="text-sm font-medium text-green-500">+{pendingChanges.newChanges.length}</span>
+            <span className="text-sm font-medium text-foreground">+{pendingChanges.newChanges.length}</span>
           </div>
           <div className="flex items-center gap-2">
             <Button
               size="sm"
-              className="h-7 px-3 bg-teal-500 hover:bg-teal-600 text-white text-xs font-medium"
+              className="h-7 px-3 bg-foreground hover:bg-foreground/80 text-background text-xs font-medium"
               onClick={onKeepChanges}
             >
               Keep
             </Button>
             <Button
               size="sm"
-              className="h-7 px-3 bg-orange-500 hover:bg-orange-600 text-white text-xs font-medium"
+              className="h-7 px-3 bg-muted hover:bg-muted/60 text-foreground border border-border text-xs font-medium"
               onClick={onUndoChanges}
             >
               Undo

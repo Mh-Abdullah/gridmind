@@ -1,21 +1,21 @@
 export const CATEGORY_COLORS: Record<string, string> = {
-  Starters: "text-green-600",
-  Sales: "text-orange-500",
-  Operations: "text-green-500",
-  Marketing: "text-amber-500",
-  Strategy: "text-blue-500",
-  GTM: "text-purple-500",
-  Research: "text-indigo-500",
+  Starters: "text-foreground",
+  Sales: "text-foreground/70",
+  Operations: "text-foreground",
+  Marketing: "text-muted-foreground",
+  Strategy: "text-foreground/80",
+  GTM: "text-muted-foreground",
+  Research: "text-foreground/70",
 }
 
 export const CATEGORY_DOT_COLORS: Record<string, string> = {
-  Starters: "bg-green-500",
-  Sales: "bg-orange-500",
-  Operations: "bg-green-500",
-  Marketing: "bg-amber-500",
-  Strategy: "bg-blue-500",
-  GTM: "bg-purple-500",
-  Research: "bg-indigo-500",
+  Starters: "bg-foreground",
+  Sales: "bg-foreground/60",
+  Operations: "bg-foreground/80",
+  Marketing: "bg-muted-foreground",
+  Strategy: "bg-foreground/70",
+  GTM: "bg-muted-foreground",
+  Research: "bg-foreground/60",
 }
 
 export interface Template {

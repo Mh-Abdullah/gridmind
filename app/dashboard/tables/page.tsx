@@ -381,7 +381,7 @@ export default function TablesPage() {
                     Good{" "}
                     {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},
                     <br />
-                    <span className="bg-linear-to-r from-primary via-violet-500 to-primary bg-clip-text text-transparent animate-[gm-gradshift_6s_ease_infinite]">
+                    <span className="text-foreground">
                       {user?.name}.
                     </span>
                   </h2>
@@ -820,7 +820,7 @@ export default function TablesPage() {
                   isDragging
                     ? "border-primary bg-primary/10 scale-[1.01]"
                     : importFile
-                    ? "border-emerald-500/50 bg-emerald-500/5"
+                    ? "border-border bg-muted/30"
                     : "border-border hover:border-primary/50 hover:bg-primary/5"
                 }`}
               >
@@ -833,7 +833,7 @@ export default function TablesPage() {
                 />
                 {importFile ? (
                   <>
-                    <CheckCircle2 className="h-8 w-8 text-emerald-500" />
+                    <CheckCircle2 className="h-8 w-8 text-foreground" />
                     <p className="font-medium text-foreground text-sm">{importFile.name}</p>
                     <p className="text-xs text-muted-foreground">
                       {importFile.headers.length} columns · {importFile.rows.length} rows — click to replace
@@ -854,9 +854,9 @@ export default function TablesPage() {
               {importFile && (
                 <div className="rounded-xl border border-border bg-card overflow-hidden">
                   <div className="px-4 py-2 border-b border-border flex items-center gap-2 bg-muted/30">
-                    <div className="h-2 w-2 rounded-full bg-rose-400" />
-                    <div className="h-2 w-2 rounded-full bg-amber-400" />
-                    <div className="h-2 w-2 rounded-full bg-emerald-400" />
+                    <div className="h-2 w-2 rounded-full bg-foreground/40" />
+                    <div className="h-2 w-2 rounded-full bg-foreground/25" />
+                    <div className="h-2 w-2 rounded-full bg-foreground/15" />
                     <span className="ml-2 text-xs text-muted-foreground font-mono">{importFile.name} — preview</span>
                   </div>
                   <div className="overflow-x-auto">

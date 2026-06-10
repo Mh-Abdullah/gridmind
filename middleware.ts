@@ -11,8 +11,8 @@ export function middleware(request: NextRequest) {
   const publicRoutes = ["/login", "/register", "/"];
 
   if (publicRoutes.includes(pathname)) {
-    // If user is already logged in and tries to access login/register, redirect to appropriate dashboard
-    if (token && verifyToken(token) && (pathname === "/login" || pathname === "/register")) {
+    // If user is already logged in and tries to access login/register/landing, redirect to appropriate dashboard
+    if (token && verifyToken(token) && (pathname === "/login" || pathname === "/register" || pathname === "/")) {
       const decoded = verifyToken(token);
       const redirectPath = decoded?.role === "admin" ? "/dashboard-admin" : "/dashboard/tables";
       return NextResponse.redirect(new URL(redirectPath, request.url));
@@ -48,5 +48,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/dashboard-admin/:path*", "/login", "/register"],
+  matcher: ["/dashboard/:path*", "/dashboard-admin/:path*", "/login", "/register", "/"],
 };

@@ -763,7 +763,7 @@ export default function ContextsPage() {
               className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm text-foreground hover:bg-muted transition-colors w-full text-left"
             >
               <div className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background">
-                <Target className="h-4 w-4 text-emerald-600" />
+                <Target className="h-4 w-4 text-foreground" />
               </div>
               ICP Generator
             </button>

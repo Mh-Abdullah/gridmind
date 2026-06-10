@@ -270,7 +270,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
           <div className="absolute bottom-3 left-3 right-3 z-1000 bg-white/90 backdrop-blur rounded-lg border border-border px-4 py-2 shadow">
             <p className="text-[11px] text-gray-500 text-center leading-tight">
               {mapBounds
-                ? <span className="flex items-center justify-center gap-1.5"><span className="inline-block h-1.5 w-1.5 rounded-full bg-indigo-500" />Searching visible map area · pan or zoom to adjust</span>
+                ? <span className="flex items-center justify-center gap-1.5"><span className="inline-block h-1.5 w-1.5 rounded-full bg-foreground" />Searching visible map area · pan or zoom to adjust</span>
                 : "Pan or zoom the map to set the search area"}
             </p>
           </div>

@@ -234,8 +234,8 @@ export function SavingIndicator({
 }) {
   if (!isConnected) {
     return (
-      <div className="flex items-center gap-2 text-xs text-yellow-600">
-        <div className="h-2 w-2 rounded-full bg-yellow-500" />
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="h-2 w-2 rounded-full bg-muted-foreground" />
         <span>Offline mode</span>
       </div>
     );
@@ -252,8 +252,8 @@ export function SavingIndicator({
 
   if (lastSaved) {
     return (
-      <div className="flex items-center gap-2 text-xs text-green-600">
-        <div className="h-2 w-2 rounded-full bg-green-500" />
+      <div className="flex items-center gap-2 text-xs text-foreground">
+        <div className="h-2 w-2 rounded-full bg-foreground" />
         <span>Saved</span>
       </div>
     );
