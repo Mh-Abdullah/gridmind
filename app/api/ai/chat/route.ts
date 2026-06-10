@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
+import { chargeCreditsForAction, refundCredits } from "@/lib/billing-server"
+
 // Types for the request
 interface ChatMessage {
   role: "user" | "assistant" | "system"
@@ -107,13 +109,21 @@ export async function POST(request: NextRequest) {
     console.log("[Chat API] API keys status:", { hasOpenAI: !!openaiKey, hasAnthropic: !!anthropicKey })
     
     if (openaiKey) {
+      const billing = await chargeCreditsForAction(request, "chat", "Sheet chat request")
+      const billingContext = billing.charge.skipped
+        ? null
+        : { userId: billing.user.id, transactionId: String(billing.charge.transactionId) }
       // Use OpenAI API
       console.log("[Chat API] Using OpenAI")
-      return await streamOpenAI(fullMessages, openaiKey)
+      return await streamOpenAI(fullMessages, openaiKey, billingContext)
     } else if (anthropicKey) {
+      const billing = await chargeCreditsForAction(request, "chat", "Sheet chat request")
+      const billingContext = billing.charge.skipped
+        ? null
+        : { userId: billing.user.id, transactionId: String(billing.charge.transactionId) }
       // Use Anthropic API
       console.log("[Chat API] Using Anthropic")
-      return await streamAnthropic(fullMessages, anthropicKey)
+      return await streamAnthropic(fullMessages, anthropicKey, billingContext)
     } else {
       // Use mock response for demo
       console.log("[Chat API] Using mock response (no API keys)")
@@ -122,15 +132,25 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Chat API error:", error)
     const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    const status =
+      errorMessage.includes("Authentication required")
+        ? 401
+        : errorMessage.includes("Not enough credits")
+          ? 402
+          : 500
     return NextResponse.json(
       { error: "Failed to process chat request", details: errorMessage },
-      { status: 500 }
+      { status }
     )
   }
 }
 
 // OpenAI streaming implementation
-async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
+async function streamOpenAI(
+  messages: ChatMessage[],
+  apiKey: string,
+  billingContext: { userId: string; transactionId: string } | null
+) {
   console.log("[Chat API] Using OpenAI with model:", process.env.OPENAI_MODEL || "gpt-4o")
   
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -151,6 +171,9 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
   if (!response.ok) {
     const error = await response.text()
     console.error("OpenAI API error:", response.status, error)
+    if (billingContext) {
+      await refundCredits(billingContext.userId, billingContext.transactionId, "OpenAI chat failed before completion")
+    }
     
     // Return user-friendly error messages for common issues
     if (response.status === 429) {
@@ -230,7 +253,11 @@ async function streamOpenAI(messages: ChatMessage[], apiKey: string) {
 }
 
 // Anthropic streaming implementation
-async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
+async function streamAnthropic(
+  messages: ChatMessage[],
+  apiKey: string,
+  billingContext: { userId: string; transactionId: string } | null
+) {
   // Convert messages format for Anthropic
   const systemMessage = messages
     .filter(m => m.role === "system")
@@ -262,6 +289,13 @@ async function streamAnthropic(messages: ChatMessage[], apiKey: string) {
   if (!response.ok) {
     const error = await response.text()
     console.error("Anthropic API error:", response.status, error)
+    if (billingContext) {
+      await refundCredits(
+        billingContext.userId,
+        billingContext.transactionId,
+        "Anthropic chat failed before completion"
+      )
+    }
     return NextResponse.json({ 
       error: "AI service error", 
       details: `Anthropic API returned ${response.status}`,

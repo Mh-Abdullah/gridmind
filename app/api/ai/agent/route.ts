@@ -2,6 +2,8 @@ import { NextRequest } from "next/server"
 import { streamText } from "ai"
 import { openai } from "@ai-sdk/openai"
 
+import { chargeCreditsForAction, refundCredits } from "@/lib/billing-server"
+
 interface SelectedCell {
   row: number
   col: number
@@ -128,6 +130,26 @@ export async function POST(request: NextRequest) {
     return new Response(
       `data: ${JSON.stringify({ type: "error", content: "OpenAI API key not configured." })}\n\ndata: [DONE]\n\n`,
       { status: 200, headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } }
+    )
+  }
+
+  let billingUserId: string | null = null
+  let billingTransactionId: string | null = null
+
+  try {
+    const billing = await chargeCreditsForAction(request, "agent", "AI agent spreadsheet action")
+    if (!billing.charge.skipped) {
+      billingUserId = billing.user.id
+      billingTransactionId = String(billing.charge.transactionId)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Billing failed"
+    return new Response(
+      `data: ${JSON.stringify({ type: "error", content: message })}\n\ndata: [DONE]\n\n`,
+      {
+        status: message.includes("Authentication required") ? 401 : message.includes("Not enough credits") ? 402 : 500,
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+      }
     )
   }
 
@@ -289,6 +311,9 @@ Return the JSON with the required changes.`
           })
         }
       } catch (error) {
+        if (billingTransactionId && billingUserId) {
+          await refundCredits(billingUserId, billingTransactionId, "AI agent request failed")
+        }
         console.error("[Agent API] error:", error)
         send({ type: "error", content: error instanceof Error ? error.message : "Failed to process agent request" })
       } finally {

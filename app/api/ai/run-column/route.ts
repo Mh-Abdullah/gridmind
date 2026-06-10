@@ -2,6 +2,8 @@ import { NextRequest } from "next/server"
 import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
 
+import { chargeCreditsForAction, refundCredits } from "@/lib/billing-server"
+
 interface RunColumnRequest {
   colIdx: number
   colType: string
@@ -565,6 +567,49 @@ export async function POST(request: NextRequest) {
   const body: RunColumnRequest = await request.json()
   const { colIdx, colType, prompt = "", sourceCol = 0, regex = "", cells, numRows, numCols, selectedRows } = body
 
+  const requiresOpenAI = colType === "AI Agent" || colType === "AI Web" || colType === "Read File"
+  if (requiresOpenAI && !process.env.OPENAI_API_KEY) {
+    return new Response(`data: ${JSON.stringify({ type: "error", content: "OpenAI API key not configured." })}\n\ndata: [DONE]\n\n`, {
+      status: 503,
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+      },
+    })
+  }
+
+  const billableActionByColumnType: Record<string, string> = {
+    "AI Agent": "run_column_ai",
+    "AI Web": "run_column_ai",
+    "Scrape Website": "run_column_scrape",
+    "Read File": "run_column_read_file",
+  }
+
+  const actionKey = billableActionByColumnType[colType]
+  let billingUserId: string | null = null
+  let billingTransactionId: string | null = null
+
+  if (actionKey) {
+    try {
+      const billing = await chargeCreditsForAction(request, actionKey, `Run column: ${colType}`)
+      if (!billing.charge.skipped) {
+        billingUserId = billing.user.id
+        billingTransactionId = String(billing.charge.transactionId)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Billing failed"
+      return new Response(`data: ${JSON.stringify({ type: "error", content: message })}\n\ndata: [DONE]\n\n`, {
+        status: message.includes("Authentication required") ? 401 : message.includes("Not enough credits") ? 402 : 500,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
+      })
+    }
+  }
+
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
@@ -586,6 +631,9 @@ export async function POST(request: NextRequest) {
           send({ type: "error", content: `Unknown column type: ${colType}` })
         }
       } catch (error) {
+        if (billingTransactionId && billingUserId) {
+          await refundCredits(billingUserId, billingTransactionId, `Run column failed: ${colType}`)
+        }
         console.error("[RunColumn] error:", error)
         send({ type: "error", content: error instanceof Error ? error.message : "Failed to run column" })
       } finally {

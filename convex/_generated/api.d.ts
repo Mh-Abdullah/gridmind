@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as billing from "../billing.js";
 import type * as contexts from "../contexts.js";
 import type * as spreadsheets from "../spreadsheets.js";
 import type * as users from "../users.js";
@@ -19,6 +20,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  billing: typeof billing;
   contexts: typeof contexts;
   spreadsheets: typeof spreadsheets;
   users: typeof users;

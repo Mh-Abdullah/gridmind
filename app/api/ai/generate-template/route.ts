@@ -2,12 +2,27 @@ import { NextRequest, NextResponse } from "next/server"
 import { generateText } from "ai"
 import { openai } from "@ai-sdk/openai"
 
+import { chargeCreditsForAction, refundCredits } from "@/lib/billing-server"
+
 export async function POST(req: NextRequest) {
+  let billingTransactionId: string | null = null
+  let billingUserId: string | null = null
+
   try {
     const { description } = await req.json()
 
     if (!description || typeof description !== "string" || description.trim().length === 0) {
       return NextResponse.json({ error: "Description is required" }, { status: 400 })
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return NextResponse.json({ error: "OpenAI API key not configured" }, { status: 503 })
+    }
+
+    const billing = await chargeCreditsForAction(req, "generate_template", "Template generation")
+    if (!billing.charge.skipped) {
+      billingTransactionId = String(billing.charge.transactionId)
+      billingUserId = billing.user.id
     }
 
     const prompt = `You are a data analyst helping users create spreadsheet templates for business workflows.
@@ -57,7 +72,17 @@ Make column names concise. Sample data must be realistic, professional, and spec
 
     return NextResponse.json(data)
   } catch (err) {
+    if (billingTransactionId && billingUserId) {
+      await refundCredits(billingUserId, billingTransactionId, "Template generation failed")
+    }
+
     console.error("[generate-template] error:", err)
-    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+    const message = err instanceof Error ? err.message : "Internal server error"
+    const status = message.includes("Authentication required")
+      ? 401
+      : message.includes("Not enough credits")
+        ? 402
+        : 500
+    return NextResponse.json({ error: message }, { status })
   }
 }

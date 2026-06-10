@@ -9,10 +9,12 @@ export default defineSchema({
     password: v.string(), // hashed password
     avatar: v.optional(v.string()),
     role: v.string(), // "user" or "admin"
+    polarCustomerId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
-    .index("by_email", ["email"]),
+    .index("by_email", ["email"])
+    .index("by_polarCustomerId", ["polarCustomerId"]),
 
   // Spreadsheet documents - stores the main table metadata
   spreadsheets: defineTable({
@@ -89,4 +91,76 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_userId", ["userId"]),
+
+  billingPackages: defineTable({
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    credits: v.number(),
+    internalCostCents: v.number(),
+    markupMultiplier: v.number(),
+    salePriceCents: v.number(),
+    polarProductId: v.optional(v.string()),
+    polarSyncedAt: v.optional(v.number()),
+    isActive: v.boolean(),
+    isFeatured: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_slug", ["slug"])
+    .index("by_active", ["isActive"])
+    .index("by_featured", ["isFeatured"]),
+
+  usagePricing: defineTable({
+    actionKey: v.string(),
+    label: v.string(),
+    creditsCost: v.number(),
+    internalCostCents: v.number(),
+    markupMultiplier: v.number(),
+    userChargeCents: v.number(),
+    isActive: v.boolean(),
+    updatedAt: v.number(),
+  }).index("by_actionKey", ["actionKey"]),
+
+  creditAccounts: defineTable({
+    userId: v.string(),
+    balanceCredits: v.number(),
+    totalPurchasedCredits: v.number(),
+    totalAdminGrantedCredits: v.number(),
+    totalSpentCredits: v.number(),
+    updatedAt: v.number(),
+  }).index("by_userId", ["userId"]),
+
+  packageAssignments: defineTable({
+    userId: v.string(),
+    packageId: v.id("billingPackages"),
+    packageName: v.string(),
+    creditsGranted: v.number(),
+    source: v.union(v.literal("admin"), v.literal("polar_order"), v.literal("refund")),
+    status: v.union(v.literal("active"), v.literal("reversed")),
+    polarOrderId: v.optional(v.string()),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_packageId", ["packageId"])
+    .index("by_polarOrderId", ["polarOrderId"]),
+
+  creditTransactions: defineTable({
+    userId: v.string(),
+    type: v.union(v.literal("grant"), v.literal("debit"), v.literal("refund")),
+    creditsDelta: v.number(),
+    balanceAfter: v.number(),
+    actionKey: v.optional(v.string()),
+    internalCostCents: v.optional(v.number()),
+    userChargeCents: v.optional(v.number()),
+    packageId: v.optional(v.id("billingPackages")),
+    assignmentId: v.optional(v.id("packageAssignments")),
+    externalRef: v.optional(v.string()),
+    note: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_externalRef", ["externalRef"])
+    .index("by_assignmentId", ["assignmentId"]),
 });

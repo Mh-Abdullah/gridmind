@@ -4,7 +4,7 @@ import { useCallback, useRef, useState } from "react"
 import type React from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
-import { useMutation } from "convex/react"
+import { useMutation, useQuery } from "convex/react"
 import {
   ArrowRight,
   Bot,
@@ -14,7 +14,6 @@ import {
   Globe2,
   MailCheck,
   MessageSquareText,
-  Minus,
   Sparkles,
   UploadCloud,
 } from "lucide-react"
@@ -80,66 +79,6 @@ const AGENTS: Agent[] = [
       "Read one instruction and choose the right sequence of sheet edits, enrichments, scraping tasks, and follow-up actions.",
     capabilities: ["Multi-step execution", "Agent routing", "Sheet automation"],
     icon: Bot,
-  },
-]
-
-const PLANS = [
-  {
-    name: "Free",
-    price: "$0",
-    period: "/month",
-    description: "For individuals exploring AI data enrichment.",
-    cta: "Get Started Free",
-    href: "/register",
-    highlighted: false,
-    features: [
-      "5 spreadsheets",
-      "500 AI credits / month",
-      "CSV and Excel import",
-      "Basic column enrichment",
-      "Community support",
-    ],
-    missing: ["Web scraper agent", "Priority processing", "Team collaboration", "API access"],
-  },
-  {
-    name: "Pro",
-    price: "$29",
-    period: "/month",
-    description: "For professionals who need power and speed.",
-    cta: "Start Free Trial",
-    href: "/register",
-    highlighted: true,
-    badge: "Most Popular",
-    features: [
-      "Unlimited spreadsheets",
-      "10,000 AI credits / month",
-      "All import formats",
-      "All AI agents",
-      "Web scraper agent",
-      "Priority processing",
-      "Email support",
-    ],
-    missing: ["Team collaboration", "API access"],
-  },
-  {
-    name: "Enterprise",
-    price: "$99",
-    period: "/month",
-    description: "For teams that move fast with data at scale.",
-    cta: "Contact Sales",
-    href: "/register",
-    highlighted: false,
-    features: [
-      "Unlimited everything",
-      "Unlimited AI credits",
-      "All Pro features",
-      "Team collaboration",
-      "REST API access",
-      "SSO / SAML",
-      "Dedicated support",
-      "SLA guarantee",
-    ],
-    missing: [],
   },
 ]
 
@@ -233,6 +172,7 @@ export default function LandingPage() {
   const importSectionRef = useRef<HTMLDivElement>(null)
 
   const { user } = useAuth()
+  const publicPackages = useQuery(api.billing.getPublicPackages, {}) ?? []
   const createSpreadsheet = useMutation(api.spreadsheets.getOrCreateSpreadsheet)
   const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
   const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
@@ -643,19 +583,19 @@ export default function LandingPage() {
           </div>
 
           <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">
-            {PLANS.map((plan) => (
+            {publicPackages.map((plan) => (
               <div
-                key={plan.name}
+                key={plan.id}
                 className={`relative flex flex-col rounded-lg border p-7 transition-all duration-200 ${
-                  plan.highlighted
+                  plan.isFeatured
                     ? "z-10 border-primary bg-primary/5 shadow-2xl shadow-primary/15 md:-translate-y-2"
                     : "border-border bg-card hover:border-primary/40 hover:shadow-lg"
                 }`}
               >
-                {plan.badge && (
+                {plan.isFeatured && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                     <span className="inline-block rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-lg shadow-primary/30">
-                      {plan.badge}
+                      Featured
                     </span>
                   </div>
                 )}
@@ -663,42 +603,50 @@ export default function LandingPage() {
                 <div className="mb-6">
                   <h3 className="text-sm font-semibold uppercase text-muted-foreground">{plan.name}</h3>
                   <div className="mt-2 flex items-baseline gap-1">
-                    <span className="text-4xl font-bold text-foreground">{plan.price}</span>
-                    <span className="text-sm text-muted-foreground">{plan.period}</span>
+                    <span className="text-4xl font-bold text-foreground">${(plan.salePriceCents / 100).toFixed(2)}</span>
+                    <span className="text-sm text-muted-foreground">one-time</span>
                   </div>
-                  <p className="mt-2 text-sm text-muted-foreground">{plan.description}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">{plan.description || "Credits package created by your admin team."}</p>
                 </div>
 
                 <Button
-                  className={`mb-6 w-full ${plan.highlighted ? "shadow-lg shadow-primary/25" : ""}`}
-                  variant={plan.highlighted ? "default" : "outline"}
+                  className={`mb-6 w-full ${plan.isFeatured ? "shadow-lg shadow-primary/25" : ""}`}
+                  variant={plan.isFeatured ? "default" : "outline"}
                   asChild
                 >
-                  <Link href={plan.href}>{plan.cta}</Link>
+                  <Link href={user?.id && plan.polarProductId ? `/api/billing/checkout?packageId=${plan.id}` : "/register"}>
+                    {user?.id && plan.polarProductId ? "Buy credits" : "Get started"}
+                  </Link>
                 </Button>
 
                 <ul className="flex-1 space-y-2.5">
-                  {plan.features.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2.5 text-sm text-foreground">
-                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
-                      {feature}
-                    </li>
-                  ))}
-                  {plan.missing.map((feature) => (
-                    <li key={feature} className="flex items-start gap-2.5 text-sm text-muted-foreground/55">
-                      <Minus className="mt-0.5 h-4 w-4 shrink-0" />
-                      {feature}
-                    </li>
-                  ))}
+                  <li className="flex items-start gap-2.5 text-sm text-foreground">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+                    {plan.credits.toLocaleString()} credits included
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm text-foreground">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+                    Internal cost {`$${(plan.internalCostCents / 100).toFixed(2)}`} with {plan.markupMultiplier.toFixed(1)}x pricing
+                  </li>
+                  <li className="flex items-start gap-2.5 text-sm text-foreground">
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+                    {plan.polarProductId ? "Polar checkout connected" : "Awaiting Polar product link"}
+                  </li>
                 </ul>
               </div>
             ))}
           </div>
 
+          {publicPackages.length === 0 && (
+            <div className="rounded-lg border border-dashed border-border bg-card/60 p-8 text-center text-sm text-muted-foreground">
+              No live packages yet. An admin can create them from the billing dashboard.
+            </div>
+          )}
+
           <p className="mt-10 text-center text-sm text-muted-foreground">
-            All plans include a 14-day free trial. No credit card required.{" "}
+            Packages are loaded from the admin billing dashboard, so pricing and credits stay dynamic.{" "}
             <Link href="/register" className="text-primary underline underline-offset-4 hover:text-primary/80">
-              Sign up now
+              Create an account
             </Link>
           </p>
         </div>

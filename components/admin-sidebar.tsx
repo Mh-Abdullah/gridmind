@@ -5,7 +5,7 @@ import {
   LayoutDashboard,
   Users,
   FileText,
-  Settings,
+  Wallet,
   BarChart3,
   Shield,
   LogOut,
@@ -30,19 +30,18 @@ interface AdminSidebarProps {
 
 export function AdminSidebar({ className }: AdminSidebarProps) {
   const { user, logout } = useAuth()
-  
+
   const adminItems = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard-admin" },
     { icon: Users, label: "Users", href: "/dashboard-admin/users" },
+    { icon: Wallet, label: "Billing", href: "/dashboard-admin/billing" },
     { icon: BarChart3, label: "Analytics", href: "/dashboard-admin/analytics" },
     { icon: FileText, label: "Reports", href: "/dashboard-admin/reports" },
     { icon: Shield, label: "Security", href: "/dashboard-admin/security" },
-    { icon: Settings, label: "Settings", href: "/dashboard-admin/settings" },
   ]
 
   return (
     <aside className={cn("flex h-screen w-64 flex-col border-r border-border bg-sidebar", className)}>
-      {/* Brand */}
       <div className="flex items-center gap-2 border-b border-border px-4 py-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
           <span className="text-lg font-bold text-primary-foreground">G</span>
@@ -52,7 +51,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
         </div>
       </div>
 
-      {/* Navigation */}
       <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-4">
         {adminItems.map((item) => (
           <Link
@@ -66,7 +64,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
         ))}
       </nav>
 
-      {/* Account Section */}
       <div className="border-t border-sidebar-border p-3">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -74,7 +71,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
               <div className="flex items-center gap-2">
                 <Avatar className="h-8 w-8">
                   <AvatarImage src="" alt={user?.name} />
-                  <AvatarFallback>{user?.name?.split(" ").map(n => n[0]).join("").toUpperCase() || "AD"}</AvatarFallback>
+                  <AvatarFallback>{user?.name?.split(" ").map((n) => n[0]).join("").toUpperCase() || "AD"}</AvatarFallback>
                 </Avatar>
                 <div className="flex flex-col items-start">
                   <span className="text-xs font-medium text-sidebar-foreground">{user?.name || "Admin"}</span>
