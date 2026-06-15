@@ -5,7 +5,12 @@ import type { Id } from "@/convex/_generated/dataModel"
 import { convexClient } from "@/lib/convex-server"
 import { requireAuthenticatedUser } from "@/lib/server-auth"
 
-export async function chargeCreditsForAction(request: NextRequest, actionKey: string, note?: string) {
+export async function chargeCreditsForAction(
+  request: NextRequest,
+  actionKey: string,
+  note?: string,
+  quantity?: number
+) {
   const user = await requireAuthenticatedUser(request)
   if (!user) {
     throw new Error("Authentication required")
@@ -14,6 +19,7 @@ export async function chargeCreditsForAction(request: NextRequest, actionKey: st
   const charge = await convexClient.mutation(api.billing.consumeCredits, {
     userId: user.id,
     actionKey,
+    quantity,
     note,
   })
 

@@ -3,7 +3,9 @@ import { v } from "convex/values"
 import type { Doc } from "./_generated/dataModel"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { mutation, query } from "./_generated/server"
+import { FREE_TIER_CREDITS } from "../lib/access-policy"
 import { DEFAULT_USAGE_PRICING, calculateSalePriceCents } from "../lib/billing-config"
+import { parsePackageDescription } from "../lib/package-period"
 
 async function getOrCreateCreditAccount(ctx: MutationCtx, userId: string): Promise<Doc<"creditAccounts">> {
   const existing = await ctx.db
@@ -15,9 +17,12 @@ async function getOrCreateCreditAccount(ctx: MutationCtx, userId: string): Promi
     return existing
   }
 
+  const user = await getUserRecordById(ctx, userId)
+  const startingCredits = user?.role === "user" ? FREE_TIER_CREDITS : 0
+
   const accountId = await ctx.db.insert("creditAccounts", {
     userId,
-    balanceCredits: 0,
+    balanceCredits: startingCredits,
     totalPurchasedCredits: 0,
     totalAdminGrantedCredits: 0,
     totalSpentCredits: 0,
@@ -66,28 +71,107 @@ function normalizeUsageRule(input: {
   }
 }
 
-export const getPublicPackages = query({
-  args: {},
-  handler: async (ctx) => {
-    const packages = await ctx.db
-      .query("billingPackages")
-      .withIndex("by_active", (q) => q.eq("isActive", true))
-      .collect()
+function getPackageExpiresAt(createdAt: number, periodMonths?: number) {
+  if (!Number.isFinite(createdAt) || !periodMonths || !Number.isFinite(periodMonths) || periodMonths <= 0) {
+    return undefined
+  }
 
-    return packages
-      .sort((a, b) => Number(b.isFeatured) - Number(a.isFeatured) || a.salePriceCents - b.salePriceCents)
-      .map((pkg) => ({
-        id: pkg._id,
-        name: pkg.name,
-        slug: pkg.slug,
-        description: pkg.description,
-        credits: pkg.credits,
-        salePriceCents: pkg.salePriceCents,
-        internalCostCents: pkg.internalCostCents,
-        markupMultiplier: pkg.markupMultiplier,
-        polarProductId: pkg.polarProductId,
-        isFeatured: pkg.isFeatured,
-      }))
+  const expiresAt = new Date(createdAt)
+  expiresAt.setMonth(expiresAt.getMonth() + periodMonths)
+  return expiresAt.getTime()
+}
+
+async function getActivePackageLocks(ctx: QueryCtx | MutationCtx, userId: string) {
+  try {
+    const assignments = await ctx.db
+      .query("packageAssignments")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect()
+    const packages = await ctx.db.query("billingPackages").collect()
+
+    const packageById = new Map(packages.map((pkg) => [pkg._id, pkg]))
+    const now = Date.now()
+    const activeLocks = new Map<string, { packageId: string; packageName: string; lockedUntil?: number }>()
+
+    for (const assignment of assignments) {
+      if (assignment.status !== "active") {
+        continue
+      }
+
+      const pkg = packageById.get(assignment.packageId)
+      if (!pkg) {
+        continue
+      }
+
+      const lockedUntil = getPackageExpiresAt(assignment.createdAt, pkg.periodMonths)
+      if (lockedUntil && lockedUntil <= now) {
+        continue
+      }
+
+      activeLocks.set(String(assignment.packageId), {
+        packageId: String(assignment.packageId),
+        packageName: assignment.packageName,
+        lockedUntil,
+      })
+    }
+
+    return activeLocks
+  } catch (error) {
+    console.error("[billing] Failed to resolve active package locks", { userId, error })
+    return new Map()
+  }
+}
+
+export const getPublicPackages = query({
+  args: { userId: v.optional(v.string()) },
+  handler: async (ctx, { userId }) => {
+    try {
+      const packages = await ctx.db
+        .query("billingPackages")
+        .withIndex("by_active", (q) => q.eq("isActive", true))
+        .collect()
+
+      const activeLocks = userId ? await getActivePackageLocks(ctx, userId) : null
+
+      return packages
+        .sort((a, b) => Number(b.isFeatured) - Number(a.isFeatured) || a.salePriceCents - b.salePriceCents)
+        .map((pkg) => {
+          const parsed = parsePackageDescription(pkg.description)
+          return {
+            id: pkg._id,
+            name: pkg.name,
+            slug: pkg.slug,
+            description: parsed.description,
+            periodMonths: pkg.periodMonths ?? parsed.periodMonths,
+            credits: pkg.credits,
+            salePriceCents: pkg.salePriceCents,
+            polarProductId: pkg.polarProductId,
+            isFeatured: pkg.isFeatured,
+            isLockedForUser: activeLocks?.has(String(pkg._id)) ?? false,
+            lockedUntil: activeLocks?.get(String(pkg._id))?.lockedUntil,
+          }
+        })
+    } catch (error) {
+      console.error("[billing] Failed to load public packages", { userId, error })
+      return []
+    }
+  },
+})
+
+export const getUserPackagePurchaseStatus = query({
+  args: {
+    userId: v.string(),
+    packageId: v.id("billingPackages"),
+  },
+  handler: async (ctx, { userId, packageId }) => {
+    const activeLocks = await getActivePackageLocks(ctx, userId)
+    const lock = activeLocks.get(String(packageId))
+
+    return {
+      isLocked: Boolean(lock),
+      lockedUntil: lock?.lockedUntil,
+      packageName: lock?.packageName,
+    }
   },
 })
 
@@ -171,14 +255,80 @@ export const getUserBillingSummary = query({
       .withIndex("by_userId", (q) => q.eq("userId", userId))
       .collect()
 
+    const assignments = await ctx.db
+      .query("packageAssignments")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect()
+
     return {
       balanceCredits: account?.balanceCredits ?? 0,
       totalPurchasedCredits: account?.totalPurchasedCredits ?? 0,
       totalAdminGrantedCredits: account?.totalAdminGrantedCredits ?? 0,
       totalSpentCredits: account?.totalSpentCredits ?? 0,
+      recentPackageAllocations: assignments
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 5),
       recentTransactions: transactions
         .sort((a, b) => b.createdAt - a.createdAt)
         .slice(0, 10),
+    }
+  },
+})
+
+export const getUserUsageDetails = query({
+  args: { userId: v.string() },
+  handler: async (ctx, { userId }) => {
+    const transactions = await ctx.db
+      .query("creditTransactions")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect()
+
+    const debitTransactions = transactions
+      .filter((transaction) => transaction.type === "debit")
+      .sort((a, b) => b.createdAt - a.createdAt)
+
+    const usageByAction = new Map<
+      string,
+      {
+        actionKey: string
+        label: string
+        totalCredits: number
+        totalQuantity: number
+        totalRuns: number
+        lastUsedAt: number
+      }
+    >()
+
+    for (const transaction of debitTransactions) {
+      const actionKey = transaction.actionKey || "other"
+      const existing = usageByAction.get(actionKey)
+      const totalCredits = Math.abs(transaction.creditsDelta)
+      const totalQuantity = transaction.quantity ?? 1
+
+      if (existing) {
+        existing.totalCredits += totalCredits
+        existing.totalQuantity += totalQuantity
+        existing.totalRuns += 1
+        existing.lastUsedAt = Math.max(existing.lastUsedAt, transaction.createdAt)
+        continue
+      }
+
+      const pricingRule = DEFAULT_USAGE_PRICING.find((rule) => rule.actionKey === actionKey)
+      usageByAction.set(actionKey, {
+        actionKey,
+        label: pricingRule?.label || actionKey,
+        totalCredits,
+        totalQuantity,
+        totalRuns: 1,
+        lastUsedAt: transaction.createdAt,
+      })
+    }
+
+    return {
+      totalUsageEvents: debitTransactions.length,
+      totalCreditsSpent: debitTransactions.reduce((sum, transaction) => sum + Math.abs(transaction.creditsDelta), 0),
+      usageByAction: Array.from(usageByAction.values()).sort((a, b) => b.totalCredits - a.totalCredits),
+      recentUsage: debitTransactions.slice(0, 50),
     }
   },
 })
@@ -190,9 +340,11 @@ export const upsertPackage = mutation({
     name: v.string(),
     slug: v.optional(v.string()),
     description: v.optional(v.string()),
+    periodMonths: v.optional(v.number()),
     credits: v.number(),
-    internalCostCents: v.number(),
-    markupMultiplier: v.number(),
+    salePriceCents: v.optional(v.number()),
+    internalCostCents: v.optional(v.number()),
+    markupMultiplier: v.optional(v.number()),
     polarProductId: v.optional(v.string()),
     polarSyncedAt: v.optional(v.number()),
     isActive: v.boolean(),
@@ -206,15 +358,26 @@ export const upsertPackage = mutation({
       throw new Error("Package slug is required")
     }
 
-    const salePriceCents = calculateSalePriceCents(args.internalCostCents, args.markupMultiplier)
+    const internalCostCents = Math.max(0, Math.round(args.internalCostCents ?? 0))
+    const markupMultiplier = Math.max(1, args.markupMultiplier ?? 1)
+    const parsedDescription = parsePackageDescription(args.description)
+    const salePriceCents =
+      args.salePriceCents !== undefined
+        ? Math.max(0, Math.round(args.salePriceCents))
+        : calculateSalePriceCents(internalCostCents, markupMultiplier)
+    const periodMonths = args.periodMonths
+      ? Math.max(1, Math.round(args.periodMonths))
+      : parsedDescription.periodMonths
+
     const now = Date.now()
     const payload = {
       name: args.name.trim(),
       slug,
-      description: args.description?.trim() || undefined,
+      description: parsedDescription.description,
+      periodMonths,
       credits: Math.max(0, Math.round(args.credits)),
-      internalCostCents: Math.max(0, Math.round(args.internalCostCents)),
-      markupMultiplier: Math.max(1, args.markupMultiplier),
+      internalCostCents,
+      markupMultiplier,
       salePriceCents,
       polarProductId: args.polarProductId?.trim() || undefined,
       polarSyncedAt: args.polarSyncedAt,
@@ -241,6 +404,41 @@ export const upsertPackage = mutation({
       ...payload,
       createdAt: now,
     })
+  },
+})
+
+export const deletePackage = mutation({
+  args: {
+    adminUserId: v.string(),
+    packageId: v.id("billingPackages"),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.adminUserId)
+
+    const pkg = await ctx.db.get(args.packageId)
+    if (!pkg) {
+      throw new Error("Package not found")
+    }
+
+    const existingAssignment = await ctx.db
+      .query("packageAssignments")
+      .withIndex("by_packageId", (q) => q.eq("packageId", args.packageId))
+      .first()
+
+    if (existingAssignment) {
+      throw new Error("This package cannot be deleted because it has already been assigned or purchased.")
+    }
+
+    const relatedTransaction = (await ctx.db.query("creditTransactions").collect()).find(
+      (transaction) => transaction.packageId === args.packageId
+    )
+
+    if (relatedTransaction) {
+      throw new Error("This package cannot be deleted because it is already used in billing history.")
+    }
+
+    await ctx.db.delete(args.packageId)
+    return { deleted: true }
   },
 })
 
@@ -435,6 +633,7 @@ export const consumeCredits = mutation({
   args: {
     userId: v.string(),
     actionKey: v.string(),
+    quantity: v.optional(v.number()),
     note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -466,34 +665,40 @@ export const consumeCredits = mutation({
       return { skipped: true }
     }
 
+    const quantity = Math.max(1, Math.round(args.quantity ?? 1))
+    const creditsToCharge = resolvedRule.creditsCost * quantity
+    const internalCostCents = resolvedRule.internalCostCents * quantity
+    const userChargeCents = resolvedRule.userChargeCents * quantity
+
     const account = await getOrCreateCreditAccount(ctx, args.userId)
     if (!account) {
       throw new Error("Failed to create credit account")
     }
 
-    if (account.balanceCredits < resolvedRule.creditsCost) {
+    if (account.balanceCredits < creditsToCharge) {
       throw new Error(
-        `Not enough credits. Required ${resolvedRule.creditsCost}, available ${account.balanceCredits}.`
+        `Not enough credits. Required ${creditsToCharge}, available ${account.balanceCredits}.`
       )
     }
 
-    const nextBalance = account.balanceCredits - resolvedRule.creditsCost
+    const nextBalance = account.balanceCredits - creditsToCharge
     const now = Date.now()
 
     await ctx.db.patch(account._id, {
       balanceCredits: nextBalance,
-      totalSpentCredits: account.totalSpentCredits + resolvedRule.creditsCost,
+      totalSpentCredits: account.totalSpentCredits + creditsToCharge,
       updatedAt: now,
     })
 
     const transactionId = await ctx.db.insert("creditTransactions", {
       userId: args.userId,
       type: "debit",
-      creditsDelta: -resolvedRule.creditsCost,
+      creditsDelta: -creditsToCharge,
       balanceAfter: nextBalance,
       actionKey: args.actionKey,
-      internalCostCents: resolvedRule.internalCostCents,
-      userChargeCents: resolvedRule.userChargeCents,
+      quantity,
+      internalCostCents,
+      userChargeCents,
       note: args.note?.trim() || resolvedRule.label,
       createdAt: now,
     })
@@ -502,9 +707,10 @@ export const consumeCredits = mutation({
       skipped: false,
       transactionId,
       balanceCredits: nextBalance,
-      creditsCharged: resolvedRule.creditsCost,
-      internalCostCents: resolvedRule.internalCostCents,
-      userChargeCents: resolvedRule.userChargeCents,
+      quantity,
+      creditsCharged: creditsToCharge,
+      internalCostCents,
+      userChargeCents,
     }
   },
 })
@@ -551,6 +757,7 @@ export const refundCreditTransaction = mutation({
       creditsDelta: refundedCredits,
       balanceAfter: nextBalance,
       actionKey: transaction.actionKey,
+      quantity: transaction.quantity,
       internalCostCents: transaction.internalCostCents,
       userChargeCents: transaction.userChargeCents,
       externalRef: String(transaction._id),

@@ -1,21 +1,21 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery } from "convex/react"
 
 import { api } from "@/convex/_generated/api"
-import { DEFAULT_BILLING_MARKUP } from "@/lib/billing-config"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 
 type PackageFormState = {
   packageId?: string
   name: string
   slug: string
   description: string
+  periodMonths: string
   credits: string
-  internalCostCents: string
-  markupMultiplier: string
+  salePriceCents: string
   polarProductId: string
   isActive: boolean
   isFeatured: boolean
@@ -26,13 +26,17 @@ const emptyPackageForm: PackageFormState = {
   name: "",
   slug: "",
   description: "",
+  periodMonths: "1",
   credits: "500",
-  internalCostCents: "2",
-  markupMultiplier: String(DEFAULT_BILLING_MARKUP),
+  salePriceCents: "999",
   polarProductId: "",
   isActive: true,
   isFeatured: false,
   autoSyncToPolar: true,
+}
+
+function isSoftDeletedPackage(pkg: { description?: string }) {
+  return parsePackageDescription(pkg.description).isDeleted
 }
 
 function formatMoneyFromCents(cents: number) {
@@ -50,6 +54,7 @@ function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }
 export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
   const overview = useQuery(api.billing.getAdminOverview, {})
   const upsertPackage = useMutation(api.billing.upsertPackage)
+  const deletePackage = useMutation(api.billing.deletePackage)
   const assignPackage = useMutation(api.billing.assignPackageToUser)
   const upsertUsagePricing = useMutation(api.billing.upsertUsagePricing)
 
@@ -59,9 +64,25 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
   const [assignNote, setAssignNote] = useState("")
   const [pricingDrafts, setPricingDrafts] = useState<Record<string, { creditsCost: string; internalCostCents: string; markupMultiplier: string; isActive: boolean }>>({})
   const [savingPackage, setSavingPackage] = useState(false)
+  const [deletingPackageId, setDeletingPackageId] = useState<string | null>(null)
   const [syncingPackageId, setSyncingPackageId] = useState<string | null>(null)
   const [assigningPackage, setAssigningPackage] = useState(false)
   const [savingPricingKey, setSavingPricingKey] = useState<string | null>(null)
+
+  const visiblePackages = useMemo(
+    () =>
+      overview?.packages
+        .filter((pkg) => !isSoftDeletedPackage(pkg))
+        .map((pkg) => {
+          const parsed = parsePackageDescription(pkg.description)
+          return {
+            ...pkg,
+            description: parsed.description,
+            periodMonths: parsed.periodMonths,
+          }
+        }) ?? [],
+    [overview]
+  )
 
   useEffect(() => {
     if (!overview) return
@@ -83,14 +104,10 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
       setAssignUserId(overview.users[0].id)
     }
 
-    if (!assignPackageId && overview.packages.length > 0) {
-      setAssignPackageId(overview.packages[0]._id)
+    if (!assignPackageId && visiblePackages.length > 0) {
+      setAssignPackageId(visiblePackages[0]._id)
     }
-  }, [overview, assignPackageId, assignUserId])
-
-  const computedSalePriceCents = Math.round(
-    Number(packageForm.internalCostCents || 0) * Number(packageForm.markupMultiplier || DEFAULT_BILLING_MARKUP)
-  )
+  }, [overview, assignPackageId, assignUserId, visiblePackages])
 
   const syncPackageToPolar = async (packageId: string) => {
     setSyncingPackageId(packageId)
@@ -121,17 +138,30 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
         name: packageForm.name,
         slug: packageForm.slug || undefined,
         description: packageForm.description || undefined,
+        periodMonths: Number(packageForm.periodMonths || 0),
         credits: Number(packageForm.credits),
-        internalCostCents: Number(packageForm.internalCostCents),
-        markupMultiplier: Number(packageForm.markupMultiplier),
+        internalCostCents: Number(packageForm.salePriceCents),
+        markupMultiplier: 1,
         polarProductId: packageForm.polarProductId || undefined,
         polarSyncedAt: undefined,
         isActive: packageForm.isActive,
         isFeatured: packageForm.isFeatured,
       })
 
+      const createdOrUpdatedLabel = packageForm.packageId ? "Package updated" : "Package created"
+
       if (packageForm.autoSyncToPolar) {
-        await syncPackageToPolar(String(packageId))
+        try {
+          await syncPackageToPolar(String(packageId))
+        } catch (error) {
+          setPackageForm(emptyPackageForm)
+          alert(
+            `${createdOrUpdatedLabel} locally, but Polar sync failed. Update POLAR_ACCESS_TOKEN in .env.local or turn off auto-sync.\n\n${
+              error instanceof Error ? error.message : "Failed to sync package to Polar"
+            }`
+          )
+          return
+        }
       }
 
       setPackageForm(emptyPackageForm)
@@ -157,6 +187,44 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
       alert(error instanceof Error ? error.message : "Failed to assign package")
     } finally {
       setAssigningPackage(false)
+    }
+  }
+
+  const handleDeletePackage = async (pkg: {
+    _id: string
+    name: string
+    slug: string
+    description?: string
+    periodMonths?: number
+    credits: number
+    salePriceCents: number
+    polarProductId?: string
+    polarSyncedAt?: number
+  }) => {
+    const confirmed = window.confirm(
+      `Delete package "${pkg.name}"? This only works if the package has never been assigned or purchased.`
+    )
+    if (!confirmed) return
+
+    setDeletingPackageId(pkg._id)
+    try {
+      await deletePackage({
+        adminUserId: adminUserId as never,
+        packageId: pkg._id as never,
+      })
+
+      if (packageForm.packageId === pkg._id) {
+        setPackageForm(emptyPackageForm)
+      }
+
+      if (assignPackageId === pkg._id) {
+        const fallbackPackage = visiblePackages.find((item) => item._id !== pkg._id)
+        setAssignPackageId(fallbackPackage?._id || "")
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to delete package")
+    } finally {
+      setDeletingPackageId(null)
     }
   }
 
@@ -198,12 +266,14 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
             <div>
               <h3 className="text-xl font-bold text-foreground">Package Builder</h3>
               <p className="text-sm text-muted-foreground">
-                Admin controls credits, internal cost, 2x markup, and optional Polar product mapping.
+                Admin controls the package name, slug, description, credits, price, and optional Polar product mapping.
               </p>
             </div>
             <div className="rounded-lg border border-primary/25 bg-primary/5 px-3 py-2 text-right">
               <p className="text-xs uppercase text-muted-foreground">Customer price</p>
-              <p className="text-lg font-semibold text-foreground">{formatMoneyFromCents(computedSalePriceCents)}</p>
+              <p className="text-lg font-semibold text-foreground">
+                {formatMoneyFromCents(Number(packageForm.salePriceCents || 0))}
+              </p>
             </div>
           </div>
 
@@ -227,6 +297,17 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
               />
             </div>
             <div className="space-y-2">
+              <FieldLabel htmlFor="package-period">Time Period In Months</FieldLabel>
+              <Input
+                id="package-period"
+                placeholder="1"
+                type="number"
+                min="1"
+                value={packageForm.periodMonths}
+                onChange={(event) => setPackageForm((current) => ({ ...current, periodMonths: event.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
               <FieldLabel htmlFor="package-credits">Credits Included</FieldLabel>
               <Input
                 id="package-credits"
@@ -237,24 +318,13 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
               />
             </div>
             <div className="space-y-2">
-              <FieldLabel htmlFor="package-internal-cost">Internal Cost In Cents</FieldLabel>
+              <FieldLabel htmlFor="package-sale-price">Customer Price In Cents</FieldLabel>
               <Input
-                id="package-internal-cost"
-                placeholder="2"
+                id="package-sale-price"
+                placeholder="999"
                 type="number"
-                value={packageForm.internalCostCents}
-                onChange={(event) => setPackageForm((current) => ({ ...current, internalCostCents: event.target.value }))}
-              />
-            </div>
-            <div className="space-y-2">
-              <FieldLabel htmlFor="package-markup">Markup Multiplier</FieldLabel>
-              <Input
-                id="package-markup"
-                placeholder="2"
-                type="number"
-                step="0.1"
-                value={packageForm.markupMultiplier}
-                onChange={(event) => setPackageForm((current) => ({ ...current, markupMultiplier: event.target.value }))}
+                value={packageForm.salePriceCents}
+                onChange={(event) => setPackageForm((current) => ({ ...current, salePriceCents: event.target.value }))}
               />
             </div>
             <div className="space-y-2">
@@ -349,7 +419,7 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
                 value={assignPackageId}
                 onChange={(event) => setAssignPackageId(event.target.value)}
               >
-                {overview.packages.map((pkg) => (
+                {visiblePackages.map((pkg) => (
                   <option key={pkg._id} value={pkg._id}>
                     {pkg.name} - {pkg.credits} credits
                   </option>
@@ -383,28 +453,58 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {overview.packages.map((pkg) => (
-            <div key={pkg._id} className="rounded-lg border border-border bg-background p-4">
+          {visiblePackages.map((pkg) => (
+            <div
+              key={pkg._id}
+              className="flex min-h-[280px] flex-col rounded-xl border border-border bg-background p-4 shadow-sm"
+            >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h4 className="font-semibold text-foreground">{pkg.name}</h4>
-                  <p className="text-sm text-muted-foreground">{pkg.description || "No description yet."}</p>
+                <div className="min-w-0">
+                  <h4 className="truncate text-base font-semibold text-foreground">{pkg.name}</h4>
+                  <p className="mt-1 line-clamp-2 text-sm leading-6 text-muted-foreground">
+                    {pkg.description || "No description yet."}
+                  </p>
                 </div>
                 {pkg.isFeatured && (
-                  <span className="rounded-md bg-primary px-2 py-1 text-[11px] font-semibold text-primary-foreground">
+                  <span className="shrink-0 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
                     Featured
                   </span>
                 )}
               </div>
-              <div className="mt-4 space-y-1 text-sm text-muted-foreground">
-                <p>{pkg.credits} credits</p>
-                <p>Internal cost: {formatMoneyFromCents(pkg.internalCostCents)}</p>
-                <p>Customer price: {formatMoneyFromCents(pkg.salePriceCents)}</p>
-                <p>Markup: {pkg.markupMultiplier.toFixed(1)}x</p>
-                <p>{pkg.polarProductId ? `Polar: ${pkg.polarProductId}` : "Polar product not linked"}</p>
-                <p>{pkg.polarSyncedAt ? `Synced: ${new Date(pkg.polarSyncedAt).toLocaleString()}` : "Never synced to Polar"}</p>
+
+              <div className="mt-4 grid gap-3 rounded-lg border border-border/70 bg-card/40 p-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Period</span>
+                  <span className="font-medium text-foreground">{formatPackagePeriod(pkg.periodMonths)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Credits</span>
+                  <span className="font-medium text-foreground">{pkg.credits}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Price</span>
+                  <span className="font-medium text-foreground">{formatMoneyFromCents(pkg.salePriceCents)}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Slug</span>
+                  <span className="max-w-[55%] truncate font-mono text-xs text-foreground">{pkg.slug}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-muted-foreground">Polar</span>
+                  <span className="max-w-[55%] truncate text-right text-xs text-foreground">
+                    {pkg.polarProductId || "Not linked"}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="text-muted-foreground">Last sync</span>
+                  <span className="max-w-[55%] text-right text-xs text-foreground">
+                    {pkg.polarSyncedAt ? new Date(pkg.polarSyncedAt).toLocaleString() : "Never synced"}
+                  </span>
+                </div>
               </div>
-              <div className="mt-4 flex gap-2">
+
+              <div className="mt-auto pt-4">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Button
                   variant="outline"
                   className="w-full"
@@ -414,9 +514,9 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
                       name: pkg.name,
                       slug: pkg.slug,
                       description: pkg.description || "",
+                      periodMonths: String(pkg.periodMonths || 1),
                       credits: String(pkg.credits),
-                      internalCostCents: String(pkg.internalCostCents),
-                      markupMultiplier: String(pkg.markupMultiplier),
+                      salePriceCents: String(pkg.salePriceCents),
                       polarProductId: pkg.polarProductId || "",
                       isActive: pkg.isActive,
                       isFeatured: pkg.isFeatured,
@@ -441,6 +541,15 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
                 >
                   {syncingPackageId === pkg._id ? "Syncing..." : pkg.polarProductId ? "Resync Polar" : "Create Polar"}
                 </Button>
+                </div>
+                <Button
+                  variant="destructive"
+                  className="mt-2 w-full"
+                  onClick={() => handleDeletePackage(pkg)}
+                  disabled={deletingPackageId === pkg._id}
+                >
+                  {deletingPackageId === pkg._id ? "Deleting..." : "Delete"}
+                </Button>
               </div>
             </div>
           ))}
@@ -451,7 +560,7 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
         <div className="mb-4">
           <h3 className="text-xl font-bold text-foreground">Usage Pricing Rules</h3>
           <p className="text-sm text-muted-foreground">
-            This is where your runtime credit burn happens. If your system spends 2 cents, keep markup at 2 and users get charged 4 cents worth of credits.
+            This is where your runtime credit burn happens. These values are per usage unit, so row-based tools multiply the credit cost by the number of rows processed.
           </p>
         </div>
 
@@ -469,7 +578,7 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
                   <p className="text-xs text-muted-foreground">{rule.actionKey}</p>
                 </div>
                 <div className="space-y-2">
-                  <FieldLabel htmlFor={`${rule.actionKey}-credits`}>Credits Cost</FieldLabel>
+                  <FieldLabel htmlFor={`${rule.actionKey}-credits`}>Credits Per Unit</FieldLabel>
                   <Input
                     id={`${rule.actionKey}-credits`}
                     type="number"
@@ -483,7 +592,7 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <FieldLabel htmlFor={`${rule.actionKey}-internal`}>Internal Cost</FieldLabel>
+                  <FieldLabel htmlFor={`${rule.actionKey}-internal`}>Internal Cost Per Unit</FieldLabel>
                   <Input
                     id={`${rule.actionKey}-internal`}
                     type="number"

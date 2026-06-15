@@ -1,5 +1,56 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
+import {
+  FREE_TIER_MAX_FILES,
+  FREE_TIER_MAX_ROWS,
+  hasPremiumAccessFromAccount,
+} from "../lib/access-policy";
+
+async function getSpreadsheetAccess(ctx: MutationCtx, userId: string) {
+  const user = await ctx.db
+    .query("users")
+    .collect()
+    .then((users: { _id: string; role: string }[]) => users.find((entry) => entry._id === userId) ?? null)
+
+  if (!user) {
+    throw new Error("User not found")
+  }
+
+  if (user.role === "admin") {
+    return { isPremium: true, maxFiles: null, maxRows: null }
+  }
+
+  const account = await ctx.db
+    .query("creditAccounts")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .first()
+
+  const isPremium = hasPremiumAccessFromAccount(account)
+  return {
+    isPremium,
+    maxFiles: isPremium ? null : FREE_TIER_MAX_FILES,
+    maxRows: isPremium ? null : FREE_TIER_MAX_ROWS,
+  }
+}
+
+function getRowIndexFromCellKey(cellKey: string) {
+  const [rowSegment] = cellKey.split("-")
+  const rowIndex = Number.parseInt(rowSegment, 10)
+  return Number.isFinite(rowIndex) ? rowIndex : null
+}
+
+function assertFreeTierRowLimit(maxRows: number | null, rowIndex: number | null) {
+  if (maxRows === null || rowIndex === null) {
+    return
+  }
+
+  if (rowIndex >= maxRows) {
+    throw new Error(
+      `Free plan allows up to ${FREE_TIER_MAX_ROWS} rows per file. Upgrade to a premium package for unlimited files and rows.`
+    )
+  }
+}
 
 // Get or create a spreadsheet by tableId
 export const getOrCreateSpreadsheet = mutation({
@@ -17,6 +68,20 @@ export const getOrCreateSpreadsheet = mutation({
 
     if (existing) {
       return existing._id;
+    }
+
+    const access = await getSpreadsheetAccess(ctx, args.userId)
+    if (!access.isPremium) {
+      const spreadsheets = await ctx.db
+        .query("spreadsheets")
+        .withIndex("by_userId", (q) => q.eq("userId", args.userId))
+        .collect()
+
+      if (spreadsheets.length >= FREE_TIER_MAX_FILES) {
+        throw new Error(
+          `Free plan allows only ${FREE_TIER_MAX_FILES} file. Upgrade to a premium package for unlimited files.`
+        )
+      }
     }
 
     // Create new spreadsheet
@@ -122,6 +187,18 @@ export const updateSpreadsheetMetadata = mutation({
   },
   handler: async (ctx, args) => {
     const { spreadsheetId, ...updates } = args;
+    const spreadsheet = await ctx.db.get(spreadsheetId)
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found")
+    }
+
+    const access = await getSpreadsheetAccess(ctx, spreadsheet.userId)
+    if (access.maxRows !== null && updates.numRows !== undefined && updates.numRows > access.maxRows) {
+      throw new Error(
+        `Free plan allows up to ${FREE_TIER_MAX_ROWS} rows per file. Upgrade to a premium package for unlimited files and rows.`
+      )
+    }
+
     await ctx.db.patch(spreadsheetId, {
       ...updates,
       updatedAt: Date.now(),
@@ -155,6 +232,14 @@ export const updateCell = mutation({
     value: v.string(),
   },
   handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId)
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found")
+    }
+
+    const access = await getSpreadsheetAccess(ctx, spreadsheet.userId)
+    assertFreeTierRowLimit(access.maxRows, getRowIndexFromCellKey(args.cellKey))
+
     // Check if cell exists
     const existing = await ctx.db
       .query("cells")
@@ -199,6 +284,18 @@ export const updateCellsBatch = mutation({
     })),
   },
   handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId)
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found")
+    }
+
+    const access = await getSpreadsheetAccess(ctx, spreadsheet.userId)
+    if (access.maxRows !== null) {
+      for (const cell of args.cells) {
+        assertFreeTierRowLimit(access.maxRows, getRowIndexFromCellKey(cell.cellKey))
+      }
+    }
+
     for (const cell of args.cells) {
       const existing = await ctx.db
         .query("cells")
@@ -261,6 +358,13 @@ export const resetSpreadsheet = mutation({
   },
   handler: async (ctx, args) => {
     const { spreadsheetId, defaultNumRows = 10, defaultNumCols = 5 } = args
+    const spreadsheet = await ctx.db.get(spreadsheetId)
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found")
+    }
+
+    const access = await getSpreadsheetAccess(ctx, spreadsheet.userId)
+    const nextNumRows = access.maxRows === null ? defaultNumRows : Math.min(defaultNumRows, access.maxRows)
 
     // Delete all cells
     const cells = await ctx.db
@@ -309,7 +413,7 @@ export const resetSpreadsheet = mutation({
 
     // Reset spreadsheet metadata to defaults
     await ctx.db.patch(spreadsheetId, {
-      numRows: defaultNumRows,
+      numRows: nextNumRows,
       numCols: defaultNumCols,
       updatedAt: Date.now(),
     })
@@ -325,7 +429,17 @@ export const getCellFormatting = query({
       .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
       .collect();
     
-    const formattingObj: { [key: string]: any } = {};
+    const formattingObj: {
+      [key: string]: {
+        bold?: boolean
+        italic?: boolean
+        underline?: boolean
+        alignment?: "left" | "center" | "right"
+        textColor?: string
+        backgroundColor?: string
+        fontSize?: number
+      }
+    } = {};
     for (const fmt of formatting) {
       formattingObj[fmt.cellKey] = {
         bold: fmt.bold,
@@ -455,6 +569,14 @@ export const updateRowHeight = mutation({
     height: v.number(),
   },
   handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId)
+    if (!spreadsheet) {
+      throw new Error("Spreadsheet not found")
+    }
+
+    const access = await getSpreadsheetAccess(ctx, spreadsheet.userId)
+    assertFreeTierRowLimit(access.maxRows, args.rowIndex)
+
     const existing = await ctx.db
       .query("rowHeights")
       .withIndex("by_spreadsheet_row", (q) =>

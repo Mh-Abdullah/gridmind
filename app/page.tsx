@@ -20,6 +20,7 @@ import {
 import * as XLSX from "xlsx"
 
 import { AppFooter } from "@/components/app-footer"
+import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -584,6 +585,9 @@ export default function LandingPage() {
 
           <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">
             {publicPackages.map((plan) => (
+              (() => {
+                const parsed = parsePackageDescription(plan.description)
+                return (
               <div
                 key={plan.id}
                 className={`relative flex flex-col rounded-lg border p-7 transition-all duration-200 ${
@@ -606,7 +610,9 @@ export default function LandingPage() {
                     <span className="text-4xl font-bold text-foreground">${(plan.salePriceCents / 100).toFixed(2)}</span>
                     <span className="text-sm text-muted-foreground">one-time</span>
                   </div>
-                  <p className="mt-2 text-sm text-muted-foreground">{plan.description || "Credits package created by your admin team."}</p>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {parsed.description || "Credits package created by your admin team."}
+                  </p>
                 </div>
 
                 <Button
@@ -626,7 +632,7 @@ export default function LandingPage() {
                   </li>
                   <li className="flex items-start gap-2.5 text-sm text-foreground">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
-                    Internal cost {`$${(plan.internalCostCents / 100).toFixed(2)}`} with {plan.markupMultiplier.toFixed(1)}x pricing
+                    Valid for {formatPackagePeriod(parsed.periodMonths).toLowerCase()}
                   </li>
                   <li className="flex items-start gap-2.5 text-sm text-foreground">
                     <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
@@ -634,6 +640,8 @@ export default function LandingPage() {
                   </li>
                 </ul>
               </div>
+                )
+              })()
             ))}
           </div>
 

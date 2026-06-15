@@ -83,7 +83,7 @@ Write a structured markdown document that captures:
 
 Be concise, factual, and base everything only on the scraped content. Use markdown headings and bullet points.`,
         prompt: `Website URL: ${parsedUrl.href}\n\nScraped content:\n${pageText}\n\nGenerate a reusable business context document from this website.`,
-        maxTokens: 1200,
+        maxOutputTokens: 1200,
       })
 
       const title = parsedUrl.hostname.replace("www.", "")
@@ -110,7 +110,7 @@ Include:
 
 Be specific, actionable, and structure with clear markdown headings.`,
         prompt: `User description: "${icpDescription}"\n\nGenerate a detailed ICP context document.`,
-        maxTokens: 1200,
+        maxOutputTokens: 1200,
       })
 
       return NextResponse.json({ content: text, title: "ICP Profile", icon: "🎯" })

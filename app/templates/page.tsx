@@ -265,6 +265,7 @@ export default function TemplatesPage() {
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
       console.error("Failed to create table:", err)
+      alert(err instanceof Error ? err.message : "Failed to create table from template.")
       setIsCreating(false)
     }
   }

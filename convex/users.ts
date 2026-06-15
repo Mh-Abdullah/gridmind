@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
+import { FREE_TIER_CREDITS } from "../lib/access-policy";
 
 // Get user by email
 export const getUserByEmail = query({
@@ -48,6 +49,17 @@ export const createUser = mutation({
       createdAt: now,
       updatedAt: now,
     });
+
+    if ((args.role || "user") === "user") {
+      await ctx.db.insert("creditAccounts", {
+        userId,
+        balanceCredits: FREE_TIER_CREDITS,
+        totalPurchasedCredits: 0,
+        totalAdminGrantedCredits: 0,
+        totalSpentCredits: 0,
+        updatedAt: now,
+      });
+    }
 
     return userId;
   },

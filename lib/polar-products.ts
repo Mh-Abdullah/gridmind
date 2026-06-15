@@ -1,4 +1,5 @@
 import { Polar } from "@polar-sh/sdk"
+import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 
 type BillingPackageForPolar = {
   id: string
@@ -24,9 +25,22 @@ function getPolarClient() {
 }
 
 function buildProductPayload(pkg: BillingPackageForPolar) {
+  const parsed = parsePackageDescription(pkg.description)
+  const metadata: Record<string, string | number | boolean> = {
+    localPackageId: pkg.id,
+    localPackageSlug: pkg.slug,
+    credits: pkg.credits,
+  }
+
+  if (parsed.periodMonths) {
+    metadata.periodMonths = parsed.periodMonths
+  }
+
   return {
     name: pkg.name,
-    description: pkg.description || `${pkg.credits} credits package for GridMind`,
+    description:
+      parsed.description ||
+      `${pkg.credits} credits package for GridMind, valid for ${formatPackagePeriod(parsed.periodMonths).toLowerCase()}`,
     visibility: pkg.isActive ? "public" : "private",
     recurringInterval: null,
     recurringIntervalCount: null,
@@ -37,11 +51,7 @@ function buildProductPayload(pkg: BillingPackageForPolar) {
         priceCurrency: "usd" as const,
       },
     ],
-    metadata: {
-      localPackageId: pkg.id,
-      localPackageSlug: pkg.slug,
-      credits: pkg.credits,
-    },
+    metadata,
   }
 }
 

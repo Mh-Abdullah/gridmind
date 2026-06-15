@@ -98,6 +98,7 @@ export default function TablesPage() {
         router.push(`/dashboard/tables/${tableId}`)
       } catch (err) {
         console.error("Failed to process pending import:", err)
+        alert(err instanceof Error ? err.message : "Failed to process pending import.")
       }
     }
     run()
@@ -136,6 +137,7 @@ export default function TablesPage() {
       router.push(`/dashboard/tables/${tableId}`)
     } catch (error) {
       console.error("Failed to create table:", error)
+      alert(error instanceof Error ? error.message : "Failed to create table.")
     } finally {
       setIsCreating(false)
     }
@@ -210,6 +212,7 @@ export default function TablesPage() {
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
       console.error("Import failed:", err)
+      alert(err instanceof Error ? err.message : "Import failed.")
       setIsImporting(false)
     }
   }
@@ -259,6 +262,7 @@ export default function TablesPage() {
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
       console.error("Failed to create table:", err)
+      alert(err instanceof Error ? err.message : "Failed to create table.")
       setIsCreating(false)
     }
   }

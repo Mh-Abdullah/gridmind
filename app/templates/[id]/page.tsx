@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { useParams, useRouter, notFound } from "next/navigation"
+import { useParams, useRouter } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -83,6 +83,7 @@ export default function TemplatePreviewPage() {
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
       console.error("Failed to create table:", err)
+      alert(err instanceof Error ? err.message : "Failed to create table from template.")
       setIsCreating(false)
     }
   }

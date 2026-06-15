@@ -17,6 +17,14 @@ interface RunColumnRequest {
   selectedRows?: number[]
 }
 
+function getBillableRowCount(numRows: number, selectedRows?: number[]) {
+  if (selectedRows && selectedRows.length > 0) {
+    return selectedRows.filter((row) => row > 0 && row < numRows).length
+  }
+
+  return Math.max(0, numRows - 1)
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function getColLabel(index: number): string {
@@ -589,10 +597,16 @@ export async function POST(request: NextRequest) {
   const actionKey = billableActionByColumnType[colType]
   let billingUserId: string | null = null
   let billingTransactionId: string | null = null
+  const billingQuantity = getBillableRowCount(numRows, selectedRows)
 
   if (actionKey) {
     try {
-      const billing = await chargeCreditsForAction(request, actionKey, `Run column: ${colType}`)
+      const billing = await chargeCreditsForAction(
+        request,
+        actionKey,
+        `Run column: ${colType} (${billingQuantity} row${billingQuantity === 1 ? "" : "s"})`,
+        Math.max(1, billingQuantity)
+      )
       if (!billing.charge.skipped) {
         billingUserId = billing.user.id
         billingTransactionId = String(billing.charge.transactionId)
