@@ -9,7 +9,6 @@ import {
   ArrowUpRight,
   Check,
   Clock3,
-  CreditCard,
   Loader2,
   Menu,
   ShieldCheck,
@@ -77,7 +76,6 @@ export default function BillingPage() {
   const checkoutId = searchParams.get("checkout_id")
   const checkoutPackageId = searchParams.get("packageId")
   const summary = billingSummary
-  const hasPurchasedCredits = (summary?.totalPurchasedCredits ?? 0) > 0
   const latestPurchasedAllocation = summary?.recentPackageAllocations?.find((item) => item.source === "polar_order")
   const featuredPackage =
     packages.find((item) => item.isFeatured && item.polarProductId && !item.isLockedForUser) ??
@@ -217,11 +215,11 @@ export default function BillingPage() {
                   Secure checkout via Polar
                 </div>
                 <h2 className="mt-5 max-w-2xl text-3xl font-semibold tracking-[-0.04em] text-white md:text-4xl">
-                  Buy credits and manage your payment methods from one place.
+                  Buy credits from the available packages in one place.
                 </h2>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-blue-100/85 md:text-base">
-                  Credits power GridMind actions. Checkout and payment-method management stay in Polar, while detailed
-                  wallet activity now lives in the Usage workspace.
+                  Credits power GridMind actions. Choose an available package, complete checkout in Polar, and track
+                  wallet activity from the Usage workspace.
                 </p>
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                   <Button
@@ -237,22 +235,6 @@ export default function BillingPage() {
                       </Link>
                     ) : (
                       <span>No available package to buy right now</span>
-                    )}
-                  </Button>
-                  <Button
-                    size="lg"
-                    variant="outline"
-                    className="h-12 border-white/20 bg-white/10 text-white hover:bg-white/16"
-                    asChild={hasPurchasedCredits}
-                    disabled={!hasPurchasedCredits}
-                  >
-                    {hasPurchasedCredits ? (
-                      <a href="/api/polar/portal">
-                        Manage payment methods
-                        <CreditCard className="h-4 w-4" />
-                      </a>
-                    ) : (
-                      <span>Manage payment methods after first purchase</span>
                     )}
                   </Button>
                 </div>
@@ -288,90 +270,11 @@ export default function BillingPage() {
             </div>
           </section>
 
-          <section className="mt-6 grid gap-6 xl:grid-cols-[1fr_0.95fr]">
-            <div className="rounded-[30px] border border-border/70 bg-card/92 p-6 shadow-[0_28px_75px_-50px_rgba(15,23,42,0.45)]">
-              <section className="rounded-[30px] border border-border/70 bg-card/92 p-6 shadow-[0_28px_75px_-50px_rgba(15,23,42,0.45)]">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Payment methods</p>
-                    <h3 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">Secure portal access</h3>
-                  </div>
-                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 text-primary">
-                    <CreditCard className="h-5 w-5" />
-                  </div>
-                </div>
-                <p className="mt-4 text-sm leading-7 text-muted-foreground">
-                  Cards, invoices, and checkout details live in Polar. We expose that portal here so users can manage
-                  payment methods without leaving the authenticated billing flow.
-                </p>
-
-                <div className="mt-5 rounded-[22px] border border-border/70 bg-background/75 p-4 text-sm text-muted-foreground">
-                  <div className="flex items-center justify-between gap-3">
-                    <span>Portal status</span>
-                    <span
-                      className={cn(
-                        "rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.14em]",
-                        hasPurchasedCredits
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                          : "bg-muted text-muted-foreground"
-                      )}
-                    >
-                      {hasPurchasedCredits ? "Ready" : "Waiting for first checkout"}
-                    </span>
-                  </div>
-                  <p className="mt-3 leading-6">
-                    {hasPurchasedCredits
-                      ? "Open the secure customer portal to update cards and review payment history."
-                      : "Complete one purchase first so Polar can create your customer billing record."}
-                  </p>
-                </div>
-
-                <div className="mt-5 grid gap-3">
-                  <Button className="w-full" asChild={hasPurchasedCredits} disabled={!hasPurchasedCredits}>
-                    {hasPurchasedCredits ? (
-                      <a href="/api/polar/portal">
-                        Open payment-method portal
-                        <ArrowUpRight className="h-4 w-4" />
-                      </a>
-                    ) : (
-                      <span>Portal becomes available after first purchase</span>
-                    )}
-                  </Button>
-                  <Button variant="outline" className="w-full" asChild>
-                    <Link href="/usage">Open usage workspace</Link>
-                  </Button>
-                </div>
-              </section>
-            </div>
-
-            <section className="rounded-[30px] border border-border/70 bg-card/92 p-6 shadow-[0_28px_75px_-50px_rgba(15,23,42,0.45)]">
-                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">How it works</p>
-                <div className="mt-4 space-y-3">
-                  {[
-                    "Pick a package and complete checkout in Polar.",
-                    "GridMind receives the paid-order webhook and credits your wallet automatically.",
-                    "Review usage, wallet history, and package allocations from the Usage page.",
-                    "Use the customer portal later for cards, invoices, and payment details.",
-                  ].map((item, index) => (
-                    <div key={item} className="flex items-start gap-3 rounded-[20px] border border-border/60 bg-background/70 p-3 text-sm text-muted-foreground">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                        {index + 1}
-                      </div>
-                      <p className="leading-6">{item}</p>
-                    </div>
-                  ))}
-                </div>
-            </section>
-          </section>
-
           <section id="packages" className="mt-6 rounded-[32px] border border-border/70 bg-card/92 p-6 shadow-[0_30px_80px_-52px_rgba(15,23,42,0.45)] md:p-7">
             <div className="flex flex-col gap-4 border-b border-border/60 pb-5 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Packages</p>
                 <h3 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">Available credit plans</h3>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  These packages come from the admin billing dashboard and connect directly to Polar checkout.
-                </p>
               </div>
               <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs text-muted-foreground">
                 <Clock3 className="h-3.5 w-3.5" />

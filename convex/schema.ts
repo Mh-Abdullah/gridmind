@@ -123,6 +123,11 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_actionKey", ["actionKey"]),
 
+  billingSettings: defineTable({
+    initialCredits: v.number(),
+    updatedAt: v.number(),
+  }),
+
   creditAccounts: defineTable({
     userId: v.string(),
     balanceCredits: v.number(),

@@ -19,12 +19,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "OpenAI API key not configured" }, { status: 503 })
     }
 
-    const billing = await chargeCreditsForAction(req, "generate_template", "Template generation")
-    if (!billing.charge.skipped) {
-      billingTransactionId = String(billing.charge.transactionId)
-      billingUserId = billing.user.id
-    }
-
     const prompt = `You are a data analyst helping users create spreadsheet templates for business workflows.
 
 The user wants to create a spreadsheet template described as:
@@ -68,6 +62,18 @@ Make column names concise. Sample data must be realistic, professional, and spec
     // Validate required fields
     if (!data.title || !data.columns || !Array.isArray(data.columns) || data.columns.length === 0) {
       return NextResponse.json({ error: "Invalid template structure generated" }, { status: 500 })
+    }
+
+    const sampleRowCount = Array.isArray(data.sampleRows) ? data.sampleRows.length : 1
+    const billing = await chargeCreditsForAction(
+      req,
+      "generate_template",
+      `Template generation (${sampleRowCount} sample row${sampleRowCount === 1 ? "" : "s"})`,
+      Math.max(1, sampleRowCount)
+    )
+    if (!billing.charge.skipped) {
+      billingTransactionId = String(billing.charge.transactionId)
+      billingUserId = billing.user.id
     }
 
     return NextResponse.json(data)

@@ -1,6 +1,12 @@
 import { v } from "convex/values";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { query, mutation } from "./_generated/server";
 import { FREE_TIER_CREDITS } from "../lib/access-policy";
+
+async function getInitialCreditsSetting(ctx: MutationCtx | QueryCtx) {
+  const settings = await ctx.db.query("billingSettings").first();
+  return settings?.initialCredits ?? FREE_TIER_CREDITS;
+}
 
 // Get user by email
 export const getUserByEmail = query({
@@ -51,9 +57,10 @@ export const createUser = mutation({
     });
 
     if ((args.role || "user") === "user") {
+      const initialCredits = await getInitialCreditsSetting(ctx);
       await ctx.db.insert("creditAccounts", {
         userId,
-        balanceCredits: FREE_TIER_CREDITS,
+        balanceCredits: initialCredits,
         totalPurchasedCredits: 0,
         totalAdminGrantedCredits: 0,
         totalSpentCredits: 0,
@@ -160,12 +167,22 @@ export const seedUsers = mutation({
       .first();
     
     if (!existingTest) {
-      await ctx.db.insert("users", {
+      const testUserId = await ctx.db.insert("users", {
         email: "test@example.com",
         name: "Test User",
         password: args.testPasswordHash,
         role: "user",
         createdAt: now,
+        updatedAt: now,
+      });
+
+      const initialCredits = await getInitialCreditsSetting(ctx);
+      await ctx.db.insert("creditAccounts", {
+        userId: testUserId,
+        balanceCredits: initialCredits,
+        totalPurchasedCredits: 0,
+        totalAdminGrantedCredits: 0,
+        totalSpentCredits: 0,
         updatedAt: now,
       });
     } else {

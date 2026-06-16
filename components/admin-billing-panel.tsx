@@ -6,6 +6,7 @@ import { useMutation, useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { FREE_TIER_CREDITS } from "@/lib/access-policy"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 
 type PackageFormState = {
@@ -27,8 +28,8 @@ const emptyPackageForm: PackageFormState = {
   slug: "",
   description: "",
   periodMonths: "1",
-  credits: "500",
-  salePriceCents: "999",
+  credits: "2500",
+  salePriceCents: "1999",
   polarProductId: "",
   isActive: true,
   isFeatured: false,
@@ -55,19 +56,22 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
   const overview = useQuery(api.billing.getAdminOverview, {})
   const upsertPackage = useMutation(api.billing.upsertPackage)
   const deletePackage = useMutation(api.billing.deletePackage)
-  const assignPackage = useMutation(api.billing.assignPackageToUser)
+  const grantManualCredits = useMutation(api.billing.grantManualCredits)
   const upsertUsagePricing = useMutation(api.billing.upsertUsagePricing)
+  const updateBillingSettings = useMutation(api.billing.updateBillingSettings)
 
   const [packageForm, setPackageForm] = useState<PackageFormState>(emptyPackageForm)
-  const [assignUserId, setAssignUserId] = useState("")
-  const [assignPackageId, setAssignPackageId] = useState("")
-  const [assignNote, setAssignNote] = useState("")
+  const [manualCreditEmail, setManualCreditEmail] = useState("")
+  const [manualCreditAmount, setManualCreditAmount] = useState("")
+  const [manualCreditNote, setManualCreditNote] = useState("")
+  const [initialCreditsDraft, setInitialCreditsDraft] = useState("")
   const [pricingDrafts, setPricingDrafts] = useState<Record<string, { creditsCost: string; internalCostCents: string; markupMultiplier: string; isActive: boolean }>>({})
   const [savingPackage, setSavingPackage] = useState(false)
   const [deletingPackageId, setDeletingPackageId] = useState<string | null>(null)
   const [syncingPackageId, setSyncingPackageId] = useState<string | null>(null)
-  const [assigningPackage, setAssigningPackage] = useState(false)
+  const [grantingManualCredits, setGrantingManualCredits] = useState(false)
   const [savingPricingKey, setSavingPricingKey] = useState<string | null>(null)
+  const [savingInitialCredits, setSavingInitialCredits] = useState(false)
 
   const visiblePackages = useMemo(
     () =>
@@ -99,15 +103,22 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
       }
       return next
     })
+    setInitialCreditsDraft(String(overview.settings?.initialCredits ?? FREE_TIER_CREDITS))
+  }, [overview])
 
-    if (!assignUserId && overview.users.length > 0) {
-      setAssignUserId(overview.users[0].id)
+  const handleSaveInitialCredits = async () => {
+    setSavingInitialCredits(true)
+    try {
+      await updateBillingSettings({
+        adminUserId: adminUserId as never,
+        initialCredits: Number(initialCreditsDraft || 0),
+      })
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Failed to save initial credits")
+    } finally {
+      setSavingInitialCredits(false)
     }
-
-    if (!assignPackageId && visiblePackages.length > 0) {
-      setAssignPackageId(visiblePackages[0]._id)
-    }
-  }, [overview, assignPackageId, assignUserId, visiblePackages])
+  }
 
   const syncPackageToPolar = async (packageId: string) => {
     setSyncingPackageId(packageId)
@@ -172,21 +183,22 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
     }
   }
 
-  const handleAssignPackage = async () => {
-    if (!assignUserId || !assignPackageId) return
-    setAssigningPackage(true)
+  const handleGrantManualCredits = async () => {
+    if (!manualCreditEmail.trim() || !manualCreditAmount.trim()) return
+    setGrantingManualCredits(true)
     try {
-      await assignPackage({
+      await grantManualCredits({
         adminUserId: adminUserId as never,
-        userId: assignUserId as never,
-        packageId: assignPackageId as never,
-        note: assignNote || undefined,
+        email: manualCreditEmail.trim() as never,
+        credits: Number(manualCreditAmount) as never,
+        note: manualCreditNote || undefined,
       })
-      setAssignNote("")
+      setManualCreditAmount("")
+      setManualCreditNote("")
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to assign package")
+      alert(error instanceof Error ? error.message : "Failed to grant manual credits")
     } finally {
-      setAssigningPackage(false)
+      setGrantingManualCredits(false)
     }
   }
 
@@ -215,11 +227,6 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
 
       if (packageForm.packageId === pkg._id) {
         setPackageForm(emptyPackageForm)
-      }
-
-      if (assignPackageId === pkg._id) {
-        const fallbackPackage = visiblePackages.find((item) => item._id !== pkg._id)
-        setAssignPackageId(fallbackPackage?._id || "")
       }
     } catch (error) {
       alert(error instanceof Error ? error.message : "Failed to delete package")
@@ -260,6 +267,29 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
 
   return (
     <div className="space-y-6">
+      <section className="rounded-lg border border-border bg-card p-6">
+        <h3 className="text-xl font-bold text-foreground">Free User Credits</h3>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Set the starting credit balance for free users. This amount is applied when a free user account is created.
+        </p>
+
+        <div className="mt-5 flex flex-col gap-3 md:max-w-sm">
+          <div className="space-y-2">
+            <FieldLabel htmlFor="initial-credits">Initial credits</FieldLabel>
+            <Input
+              id="initial-credits"
+              type="number"
+              min="0"
+              value={initialCreditsDraft}
+              onChange={(event) => setInitialCreditsDraft(event.target.value)}
+            />
+          </div>
+          <Button onClick={handleSaveInitialCredits} disabled={savingInitialCredits}>
+            {savingInitialCredits ? "Saving..." : "Save initial credits"}
+          </Button>
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-lg border border-border bg-card p-6">
           <div className="mb-5 flex items-start justify-between gap-4">
@@ -311,7 +341,7 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
               <FieldLabel htmlFor="package-credits">Credits Included</FieldLabel>
               <Input
                 id="package-credits"
-                placeholder="500"
+                placeholder="2500"
                 type="number"
                 value={packageForm.credits}
                 onChange={(event) => setPackageForm((current) => ({ ...current, credits: event.target.value }))}
@@ -321,7 +351,7 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
               <FieldLabel htmlFor="package-sale-price">Customer Price In Cents</FieldLabel>
               <Input
                 id="package-sale-price"
-                placeholder="999"
+                placeholder="1999"
                 type="number"
                 value={packageForm.salePriceCents}
                 onChange={(event) => setPackageForm((current) => ({ ...current, salePriceCents: event.target.value }))}
@@ -389,56 +419,53 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
         </section>
 
         <section className="rounded-lg border border-border bg-card p-6">
-          <h3 className="text-xl font-bold text-foreground">Assign Package</h3>
+          <h3 className="text-xl font-bold text-foreground">Manual Credit Grant</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Grant a package manually to any user. Credits land in the user balance immediately.
+            Add extra credits to any user by email. This is separate from purchased packages and lands in the wallet immediately.
           </p>
 
           <div className="mt-5 space-y-3">
             <div className="space-y-2">
-              <FieldLabel htmlFor="assign-user">Select User</FieldLabel>
+              <FieldLabel htmlFor="manual-credit-email">User Email</FieldLabel>
               <select
-                id="assign-user"
+                id="manual-credit-email"
                 className="h-11 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-                value={assignUserId}
-                onChange={(event) => setAssignUserId(event.target.value)}
+                value={manualCreditEmail}
+                onChange={(event) => setManualCreditEmail(event.target.value)}
               >
+                <option value="">Select user email</option>
                 {overview.users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {(user.name || user.email) + ` - ${user.balanceCredits} credits`}
+                  <option key={user.id} value={user.email}>
+                    {user.email}
                   </option>
                 ))}
               </select>
             </div>
 
             <div className="space-y-2">
-              <FieldLabel htmlFor="assign-package">Select Package</FieldLabel>
-              <select
-                id="assign-package"
-                className="h-11 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-                value={assignPackageId}
-                onChange={(event) => setAssignPackageId(event.target.value)}
-              >
-                {visiblePackages.map((pkg) => (
-                  <option key={pkg._id} value={pkg._id}>
-                    {pkg.name} - {pkg.credits} credits
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-2">
-              <FieldLabel htmlFor="assign-note">Assignment Note</FieldLabel>
+              <FieldLabel htmlFor="manual-credit-amount">Credits To Add</FieldLabel>
               <Input
-                id="assign-note"
-                placeholder="Optional note"
-                value={assignNote}
-                onChange={(event) => setAssignNote(event.target.value)}
+                id="manual-credit-amount"
+                type="number"
+                min="1"
+                placeholder="500"
+                value={manualCreditAmount}
+                onChange={(event) => setManualCreditAmount(event.target.value)}
               />
             </div>
 
-            <Button onClick={handleAssignPackage} disabled={assigningPackage || !assignUserId || !assignPackageId}>
-              {assigningPackage ? "Assigning..." : "Assign package"}
+            <div className="space-y-2">
+              <FieldLabel htmlFor="manual-credit-note">Grant Note</FieldLabel>
+              <Input
+                id="manual-credit-note"
+                placeholder="Optional note"
+                value={manualCreditNote}
+                onChange={(event) => setManualCreditNote(event.target.value)}
+              />
+            </div>
+
+            <Button onClick={handleGrantManualCredits} disabled={grantingManualCredits || !manualCreditEmail.trim() || !manualCreditAmount.trim()}>
+              {grantingManualCredits ? "Granting..." : "Grant manual credits"}
             </Button>
           </div>
         </section>

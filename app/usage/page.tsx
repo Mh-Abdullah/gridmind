@@ -142,7 +142,7 @@ export default function UsagePage() {
         </header>
 
         <main className="flex-1 overflow-auto px-4 py-6 md:px-6 md:py-8">
-          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             {[
               {
                 label: "Current balance",
@@ -155,12 +155,6 @@ export default function UsagePage() {
                 value: formatCredits(summary?.totalPurchasedCredits ?? 0),
                 helper: "Bought through checkout",
                 icon: Sparkles,
-              },
-              {
-                label: "Admin grants",
-                value: formatCredits(summary?.totalAdminGrantedCredits ?? 0),
-                helper: "Added manually by your team",
-                icon: ReceiptText,
               },
               {
                 label: "Credits spent",

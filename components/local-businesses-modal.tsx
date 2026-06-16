@@ -100,6 +100,8 @@ export default function LocalBusinessesModal({ onClose }: Props) {
   const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
   const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
   const updateColumnNames = useMutation(api.spreadsheets.updateColumnNamesBatch)
+  const consumeCredits = useMutation(api.billing.consumeCredits)
+  const refundCreditTransaction = useMutation(api.billing.refundCreditTransaction)
 
   const geocodeLocation = useCallback(async (loc: string) => {
     if (!loc.trim()) return
@@ -157,12 +159,28 @@ export default function LocalBusinessesModal({ onClose }: Props) {
   const handleCreate = useCallback(async (withData: boolean) => {
     if (!user?.id) return
     setIsCreating(true)
+    let billingTransactionId: string | null = null
     try {
       const typeLabel = searchMode === "type"
         ? BUSINESS_TYPES.find((t) => t.value === businessType)?.label ?? businessType
         : searchText || "Businesses"
       const name = `${typeLabel} — ${locationInput || "Local"}`
       const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      const rows = withData ? businesses : []
+
+      if (rows.length > 0) {
+        const billing = await consumeCredits({
+          userId: user.id as never,
+          actionKey: "create_table_local_search",
+          quantity: rows.length,
+          note: `Local search table (${rows.length} row${rows.length === 1 ? "" : "s"})`,
+        })
+
+        if (!billing.skipped) {
+          billingTransactionId = String(billing.transactionId)
+        }
+      }
+
       const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name })
 
       const columns = [
@@ -176,7 +194,6 @@ export default function LocalBusinessesModal({ onClose }: Props) {
       const names = columns.map((col, ci) => ({ colIndex: ci, name: col }))
       await updateColumnNames({ spreadsheetId, names })
 
-      const rows = withData ? businesses : []
       rows.forEach((b, ri) => {
         const vals: string[] = [
           b.name, b.address, b.phone, b.website, b.category, b.openingHours,
@@ -196,10 +213,17 @@ export default function LocalBusinessesModal({ onClose }: Props) {
       })
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
+      if (billingTransactionId) {
+        await refundCreditTransaction({
+          userId: user.id as never,
+          transactionId: billingTransactionId as never,
+          note: "Local search table creation failed",
+        })
+      }
       console.error("Failed to create table:", err)
       setIsCreating(false)
     }
-  }, [user, businesses, businessType, searchText, searchMode, locationInput, scrapeWebsite, extractEmail])
+  }, [user, businesses, businessType, searchText, searchMode, locationInput, scrapeWebsite, extractEmail, consumeCredits, createSpreadsheet, updateColumnNames, batchUpdateCells, updateMetadata, router, refundCreditTransaction])
 
   const businessMarkers: BusinessMarker[] = businesses.map((b) => ({
     name: b.name,

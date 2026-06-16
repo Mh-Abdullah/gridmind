@@ -71,7 +71,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
       </div>
 
       {/* Start New Button */}
-      <div className="shrink-0 px-3 py-4">
+      <div className="shrink-0 px-3 py-3">
         <Button className="w-full justify-start gap-2 bg-primary text-primary-foreground hover:bg-primary/90" size="sm">
           <CirclePlus className="h-4 w-4" />
           Start New
@@ -79,9 +79,9 @@ export function AppSidebar({ className }: AppSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 pb-4">
+      <nav className="shrink-0 px-3 pb-3">
         {/* Platform Section */}
-        <div className="space-y-2">
+        <div className="space-y-1.5">
           <h3 className="px-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">Platform</h3>
           <div className="space-y-0.5">
             {platformItems.map((item) => (
@@ -101,7 +101,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
 
       <div className="shrink-0 border-t border-sidebar-border bg-sidebar">
         {/* Usage Stats */}
-        <div className="space-y-4 p-3">
+        <div className="space-y-3 p-3">
         <div className="rounded-2xl border border-border/70 bg-background/70 p-3 shadow-[0_16px_40px_-32px_rgba(15,23,42,0.45)]">
           <div className="flex items-center justify-between gap-3">
             <div>

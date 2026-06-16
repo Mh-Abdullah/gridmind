@@ -70,6 +70,8 @@ export default function GoogleSearchModal({ onClose }: Props) {
   const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
   const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
   const updateColumnNames = useMutation(api.spreadsheets.updateColumnNamesBatch)
+  const consumeCredits = useMutation(api.billing.consumeCredits)
+  const refundCreditTransaction = useMutation(api.billing.refundCreditTransaction)
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return
@@ -125,9 +127,25 @@ export default function GoogleSearchModal({ onClose }: Props) {
   const handleCreate = useCallback(async (withData: boolean) => {
     if (!user?.id) return
     setIsCreating(true)
+    let billingTransactionId: string | null = null
     try {
       const name = query.trim() || "Google Search"
       const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      const rows = withData ? results : []
+
+      if (rows.length > 0) {
+        const billing = await consumeCredits({
+          userId: user.id as never,
+          actionKey: "create_table_google_search",
+          quantity: rows.length,
+          note: `Google search table (${rows.length} row${rows.length === 1 ? "" : "s"})`,
+        })
+
+        if (!billing.skipped) {
+          billingTransactionId = String(billing.transactionId)
+        }
+      }
+
       const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name })
 
       const columns = [
@@ -141,7 +159,6 @@ export default function GoogleSearchModal({ onClose }: Props) {
       await updateColumnNames({ spreadsheetId, names })
 
       const cells: { cellKey: string; value: string }[] = []
-      const rows = withData ? results : []
       rows.forEach((r, ri) => {
         const vals: string[] = [
           r.title, r.url, r.snippet, r.displayedLink,
@@ -160,10 +177,17 @@ export default function GoogleSearchModal({ onClose }: Props) {
       })
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
+      if (billingTransactionId) {
+        await refundCreditTransaction({
+          userId: user.id as never,
+          transactionId: billingTransactionId as never,
+          note: "Google search table creation failed",
+        })
+      }
       console.error("Failed to create table:", err)
       setIsCreating(false)
     }
-  }, [user, results, query, scrapeWebsite, extractEntities, extractEmail])
+  }, [user, results, query, scrapeWebsite, extractEntities, extractEmail, consumeCredits, createSpreadsheet, updateColumnNames, batchUpdateCells, updateMetadata, router, refundCreditTransaction])
 
   const rowCount = results.length > 0 ? results.length : numResults
 

@@ -4,7 +4,7 @@ import type { Doc } from "./_generated/dataModel"
 import type { MutationCtx, QueryCtx } from "./_generated/server"
 import { mutation, query } from "./_generated/server"
 import { FREE_TIER_CREDITS } from "../lib/access-policy"
-import { DEFAULT_USAGE_PRICING, calculateSalePriceCents } from "../lib/billing-config"
+import { DEFAULT_USAGE_PRICING, calculateSalePriceCents, getEffectiveCreditsCost } from "../lib/billing-config"
 import { parsePackageDescription } from "../lib/package-period"
 
 async function getOrCreateCreditAccount(ctx: MutationCtx, userId: string): Promise<Doc<"creditAccounts">> {
@@ -18,7 +18,7 @@ async function getOrCreateCreditAccount(ctx: MutationCtx, userId: string): Promi
   }
 
   const user = await getUserRecordById(ctx, userId)
-  const startingCredits = user?.role === "user" ? FREE_TIER_CREDITS : 0
+  const startingCredits = user?.role === "user" ? await getInitialCreditsSetting(ctx) : 0
 
   const accountId = await ctx.db.insert("creditAccounts", {
     userId,
@@ -39,6 +39,18 @@ async function getOrCreateCreditAccount(ctx: MutationCtx, userId: string): Promi
 async function getUserRecordById(ctx: MutationCtx | QueryCtx, userId: string) {
   const users = await ctx.db.query("users").collect()
   return users.find((user) => user._id === userId) ?? null
+}
+
+async function getUserRecordByEmail(ctx: MutationCtx | QueryCtx, email: string) {
+  return await ctx.db
+    .query("users")
+    .withIndex("by_email", (q) => q.eq("email", email.trim().toLowerCase()))
+    .first()
+}
+
+async function getInitialCreditsSetting(ctx: MutationCtx | QueryCtx) {
+  const settings = await ctx.db.query("billingSettings").first()
+  return settings?.initialCredits ?? FREE_TIER_CREDITS
 }
 
 async function requireAdmin(ctx: MutationCtx, adminUserId: string) {
@@ -79,6 +91,59 @@ function getPackageExpiresAt(createdAt: number, periodMonths?: number) {
   const expiresAt = new Date(createdAt)
   expiresAt.setMonth(expiresAt.getMonth() + periodMonths)
   return expiresAt.getTime()
+}
+
+function buildCreditSourceBreakdown(account?: {
+  balanceCredits?: number
+  totalPurchasedCredits?: number
+  totalAdminGrantedCredits?: number
+  totalSpentCredits?: number
+} | null) {
+  const balanceCredits = account?.balanceCredits ?? 0
+  const totalPurchasedCredits = account?.totalPurchasedCredits ?? 0
+  const totalAdminGrantedCredits = account?.totalAdminGrantedCredits ?? 0
+  const totalSpentCredits = account?.totalSpentCredits ?? 0
+
+  const inferredFreeCredits = Math.max(
+    0,
+    balanceCredits + totalSpentCredits - totalPurchasedCredits - totalAdminGrantedCredits
+  )
+
+  let remainingSpent = totalSpentCredits
+
+  const freeUsed = Math.min(inferredFreeCredits, remainingSpent)
+  remainingSpent -= freeUsed
+
+  const grantedUsed = Math.min(totalAdminGrantedCredits, remainingSpent)
+  remainingSpent -= grantedUsed
+
+  const purchasedUsed = Math.min(totalPurchasedCredits, remainingSpent)
+
+  return {
+    inferredFreeCredits,
+    purchasedUsed,
+    purchasedRemaining: Math.max(0, totalPurchasedCredits - purchasedUsed),
+    grantedUsed,
+    grantedRemaining: Math.max(0, totalAdminGrantedCredits - grantedUsed),
+  }
+}
+
+function getBillableUnits(actionKey: string, quantity: number) {
+  const normalizedQuantity = Math.max(1, Math.round(quantity))
+
+  if (
+    actionKey === "run_column_ai" ||
+    actionKey === "run_column_scrape" ||
+    actionKey === "run_column_read_file" ||
+    actionKey === "generate_template" ||
+    actionKey === "create_table_local_search" ||
+    actionKey === "create_table_google_search"
+  ) {
+    // Charge row-based tools in small row batches so larger runs scale gently.
+    return Math.max(1, Math.ceil(normalizedQuantity / 10))
+  }
+
+  return normalizedQuantity
 }
 
 async function getActivePackageLocks(ctx: QueryCtx | MutationCtx, userId: string) {
@@ -199,6 +264,7 @@ export const getAdminOverview = query({
       ctx.db.query("users").collect(),
       ctx.db.query("creditAccounts").collect(),
     ])
+    const initialCredits = await getInitialCreditsSetting(ctx)
 
     const accountByUserId = new Map(accounts.map((account) => [account.userId, account]))
     const pricingByAction = new Map(usagePricing.map((rule) => [rule.actionKey, rule]))
@@ -206,22 +272,37 @@ export const getAdminOverview = query({
     const mergedPricing = DEFAULT_USAGE_PRICING.map((rule) => {
       const existing = pricingByAction.get(rule.actionKey)
       if (existing) {
-        return existing
+        return {
+          ...existing,
+          creditsCost: getEffectiveCreditsCost({
+            actionKey: existing.actionKey,
+            creditsCost: existing.creditsCost,
+            internalCostCents: existing.internalCostCents,
+            markupMultiplier: existing.markupMultiplier,
+          }),
+        }
       }
+      const normalizedDefault = normalizeUsageRule(rule)
       return {
         _id: `default:${rule.actionKey}`,
         actionKey: rule.actionKey,
         label: rule.label,
-        creditsCost: rule.creditsCost,
-        internalCostCents: rule.internalCostCents,
-        markupMultiplier: rule.markupMultiplier,
-        userChargeCents: calculateSalePriceCents(rule.internalCostCents, rule.markupMultiplier),
+        creditsCost: getEffectiveCreditsCost({
+          actionKey: rule.actionKey,
+          ...normalizedDefault,
+        }),
+        internalCostCents: normalizedDefault.internalCostCents,
+        markupMultiplier: normalizedDefault.markupMultiplier,
+        userChargeCents: normalizedDefault.userChargeCents,
         isActive: true,
         updatedAt: 0,
       }
     })
 
     return {
+      settings: {
+        initialCredits,
+      },
       packages: packages.sort((a, b) => b.updatedAt - a.updatedAt),
       usagePricing: mergedPricing,
       users: users
@@ -239,6 +320,142 @@ export const getAdminOverview = query({
           }
         }),
     }
+  },
+})
+
+export const getAdminBillingAnalytics = query({
+  args: {},
+  handler: async (ctx) => {
+    const [users, accounts, assignments] = await Promise.all([
+      ctx.db.query("users").collect(),
+      ctx.db.query("creditAccounts").collect(),
+      ctx.db.query("packageAssignments").collect(),
+    ])
+
+    const accountByUserId = new Map(accounts.map((account) => [account.userId, account]))
+    const assignmentsByUserId = new Map<string, Doc<"packageAssignments">[]>()
+
+    for (const assignment of assignments) {
+      const list = assignmentsByUserId.get(assignment.userId) ?? []
+      list.push(assignment)
+      assignmentsByUserId.set(assignment.userId, list)
+    }
+
+    const purchasedUsers = users
+      .filter((user) => user.role === "user")
+      .map((user) => {
+        const account = accountByUserId.get(user._id)
+        const breakdown = buildCreditSourceBreakdown(account)
+        const userAssignments = assignmentsByUserId.get(user._id) ?? []
+        const purchasedAssignments = userAssignments.filter((item) => item.source === "polar_order")
+
+        return {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          purchasedCredits: account?.totalPurchasedCredits ?? 0,
+          purchasedUsedCredits: breakdown.purchasedUsed,
+          purchasedRemainingCredits: breakdown.purchasedRemaining,
+          currentBalanceCredits: account?.balanceCredits ?? 0,
+          totalSpentCredits: account?.totalSpentCredits ?? 0,
+          packagePurchases: purchasedAssignments.length,
+          latestPurchaseAt: purchasedAssignments.sort((a, b) => b.createdAt - a.createdAt)[0]?.createdAt,
+        }
+      })
+      .filter((user) => user.purchasedCredits > 0)
+      .sort((a, b) => b.purchasedCredits - a.purchasedCredits || b.currentBalanceCredits - a.currentBalanceCredits)
+
+    const grantedUsers = users
+      .filter((user) => user.role === "user")
+      .map((user) => {
+        const account = accountByUserId.get(user._id)
+        const breakdown = buildCreditSourceBreakdown(account)
+        const userAssignments = assignmentsByUserId.get(user._id) ?? []
+        const packageGrantAssignments = userAssignments.filter((item) => item.source === "admin")
+
+        return {
+          id: user._id,
+          email: user.email,
+          name: user.name,
+          grantedCredits: account?.totalAdminGrantedCredits ?? 0,
+          grantedUsedCredits: breakdown.grantedUsed,
+          grantedRemainingCredits: breakdown.grantedRemaining,
+          currentBalanceCredits: account?.balanceCredits ?? 0,
+          totalSpentCredits: account?.totalSpentCredits ?? 0,
+          packageGrantCount: packageGrantAssignments.length,
+        }
+      })
+      .filter((user) => user.grantedCredits > 0)
+      .sort((a, b) => b.grantedCredits - a.grantedCredits || b.currentBalanceCredits - a.currentBalanceCredits)
+
+    return {
+      overview: {
+        purchasedUsers: purchasedUsers.length,
+        grantedUsers: grantedUsers.length,
+        totalPurchasedCredits: purchasedUsers.reduce((sum, user) => sum + user.purchasedCredits, 0),
+        totalPurchasedUsedCredits: purchasedUsers.reduce((sum, user) => sum + user.purchasedUsedCredits, 0),
+        totalPurchasedRemainingCredits: purchasedUsers.reduce((sum, user) => sum + user.purchasedRemainingCredits, 0),
+        totalGrantedCredits: grantedUsers.reduce((sum, user) => sum + user.grantedCredits, 0),
+        totalGrantedUsedCredits: grantedUsers.reduce((sum, user) => sum + user.grantedUsedCredits, 0),
+        totalGrantedRemainingCredits: grantedUsers.reduce((sum, user) => sum + user.grantedRemainingCredits, 0),
+      },
+      purchasedUsers,
+      grantedUsers,
+    }
+  },
+})
+
+export const updateBillingSettings = mutation({
+  args: {
+    adminUserId: v.string(),
+    initialCredits: v.number(),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.adminUserId)
+
+    const normalizedInitialCredits = Math.max(0, Math.round(args.initialCredits))
+    const [existing, users, accounts] = await Promise.all([
+      ctx.db.query("billingSettings").first(),
+      ctx.db.query("users").collect(),
+      ctx.db.query("creditAccounts").collect(),
+    ])
+    const now = Date.now()
+
+    const userById = new Map(users.map((user) => [user._id, user]))
+
+    for (const account of accounts) {
+      const user = userById.get(account.userId)
+      if (!user || user.role !== "user") {
+        continue
+      }
+
+      const isFreeOnlyAccount =
+        (account.totalPurchasedCredits ?? 0) === 0 && (account.totalAdminGrantedCredits ?? 0) === 0
+
+      if (!isFreeOnlyAccount) {
+        continue
+      }
+
+      const recalculatedBalance = Math.max(0, normalizedInitialCredits - (account.totalSpentCredits ?? 0))
+
+      await ctx.db.patch(account._id, {
+        balanceCredits: recalculatedBalance,
+        updatedAt: now,
+      })
+    }
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        initialCredits: normalizedInitialCredits,
+        updatedAt: now,
+      })
+      return existing._id
+    }
+
+    return await ctx.db.insert("billingSettings", {
+      initialCredits: normalizedInitialCredits,
+      updatedAt: now,
+    })
   },
 })
 
@@ -553,6 +770,60 @@ export const assignPackageToUser = mutation({
   },
 })
 
+export const grantManualCredits = mutation({
+  args: {
+    adminUserId: v.string(),
+    email: v.string(),
+    credits: v.number(),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx, args.adminUserId)
+
+    const email = args.email.trim().toLowerCase()
+    if (!email) {
+      throw new Error("User email is required")
+    }
+
+    const credits = Math.max(0, Math.round(args.credits))
+    if (credits <= 0) {
+      throw new Error("Credits must be greater than zero")
+    }
+
+    const user = await getUserRecordByEmail(ctx, email)
+    if (!user) {
+      throw new Error("User not found for the provided email")
+    }
+
+    const account = await getOrCreateCreditAccount(ctx, user._id)
+    const nextBalance = account.balanceCredits + credits
+    const now = Date.now()
+
+    await ctx.db.patch(account._id, {
+      balanceCredits: nextBalance,
+      totalAdminGrantedCredits: account.totalAdminGrantedCredits + credits,
+      updatedAt: now,
+    })
+
+    const transactionId = await ctx.db.insert("creditTransactions", {
+      userId: user._id,
+      type: "grant",
+      creditsDelta: credits,
+      balanceAfter: nextBalance,
+      note: args.note?.trim() || `Manual credit grant by admin`,
+      createdAt: now,
+    })
+
+    return {
+      transactionId,
+      userId: user._id,
+      email: user.email,
+      balanceCredits: nextBalance,
+      creditsGranted: credits,
+    }
+  },
+})
+
 export const grantCreditsFromPolarOrder = mutation({
   args: {
     userId: v.string(),
@@ -666,9 +937,16 @@ export const consumeCredits = mutation({
     }
 
     const quantity = Math.max(1, Math.round(args.quantity ?? 1))
-    const creditsToCharge = resolvedRule.creditsCost * quantity
-    const internalCostCents = resolvedRule.internalCostCents * quantity
-    const userChargeCents = resolvedRule.userChargeCents * quantity
+    const billableUnits = getBillableUnits(args.actionKey, quantity)
+    const effectiveCreditsCost = getEffectiveCreditsCost({
+      actionKey: resolvedRule.actionKey,
+      creditsCost: resolvedRule.creditsCost,
+      internalCostCents: resolvedRule.internalCostCents,
+      markupMultiplier: resolvedRule.markupMultiplier,
+    })
+    const creditsToCharge = effectiveCreditsCost * billableUnits
+    const internalCostCents = resolvedRule.internalCostCents * billableUnits
+    const userChargeCents = resolvedRule.userChargeCents * billableUnits
 
     const account = await getOrCreateCreditAccount(ctx, args.userId)
     if (!account) {
