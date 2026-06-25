@@ -65,6 +65,13 @@ export const DEFAULT_USAGE_PRICING: BillingActionDefinition[] = [
     internalCostCents: 2,
     markupMultiplier: DEFAULT_BILLING_MARKUP,
   },
+  {
+    actionKey: "generate_context",
+    label: "Context Generator",
+    creditsCost: 1,
+    internalCostCents: 2,
+    markupMultiplier: DEFAULT_BILLING_MARKUP,
+  },
 ]
 
 export function calculateSalePriceCents(internalCostCents: number, markupMultiplier: number) {
@@ -100,6 +107,7 @@ function applyActionCreditCap(actionKey: string | undefined, creditsCost: number
     run_column_read_file: 1,
     create_table_local_search: 1,
     create_table_google_search: 1,
+    generate_context: 1,
   }
 
   const cap = actionKey ? caps[actionKey] : undefined
