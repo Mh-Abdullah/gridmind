@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
 import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
+import { BrandLogo } from "@/components/brand-assets"
 
 interface AppSidebarProps {
   className?: string
@@ -62,12 +63,7 @@ export function AppSidebar({ className }: AppSidebarProps) {
     >
       {/* Brand */}
       <div className="flex h-16 shrink-0 items-center gap-2 border-b border-sidebar-border px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <span className="text-lg font-bold text-primary-foreground">G</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-base font-semibold text-sidebar-foreground">GridMind</span>
-        </div>
+        <BrandLogo className="h-9" priority />
       </div>
 
       {/* Start New Button */}
@@ -163,9 +159,6 @@ export function AppSidebar({ className }: AppSidebarProps) {
               <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <Link href="/dashboard/account">Account Settings</Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href="/dashboard/preferences">Preferences</Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => logout()}>

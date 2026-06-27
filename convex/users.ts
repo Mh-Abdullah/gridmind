@@ -116,10 +116,101 @@ export const updateUser = mutation({
   },
 });
 
+export const updateProfile = mutation({
+  args: {
+    userId: v.id("users"),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.userId, {
+      name: args.name,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
+export const updatePassword = mutation({
+  args: {
+    userId: v.id("users"),
+    password: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.userId, {
+      password: args.password,
+      updatedAt: Date.now(),
+    });
+  },
+});
+
 // Delete user
 export const deleteUser = mutation({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
+    await ctx.db.delete(args.userId);
+  },
+});
+
+export const deleteAccountCascade = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
+    const userId = args.userId as string;
+
+    const spreadsheets = await ctx.db
+      .query("spreadsheets")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+
+    for (const spreadsheet of spreadsheets) {
+      const [cells, formatting, widths, heights, columnNames] = await Promise.all([
+        ctx.db.query("cells").withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheet._id)).collect(),
+        ctx.db
+          .query("cellFormatting")
+          .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheet._id))
+          .collect(),
+        ctx.db.query("columnWidths").withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheet._id)).collect(),
+        ctx.db.query("rowHeights").withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheet._id)).collect(),
+        ctx.db.query("columnNames").withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheet._id)).collect(),
+      ]);
+
+      for (const record of [...cells, ...formatting, ...widths, ...heights, ...columnNames]) {
+        await ctx.db.delete(record._id);
+      }
+
+      await ctx.db.delete(spreadsheet._id);
+    }
+
+    const contexts = await ctx.db
+      .query("contexts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    for (const context of contexts) {
+      await ctx.db.delete(context._id);
+    }
+
+    const creditAccounts = await ctx.db
+      .query("creditAccounts")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    for (const account of creditAccounts) {
+      await ctx.db.delete(account._id);
+    }
+
+    const packageAssignments = await ctx.db
+      .query("packageAssignments")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    for (const assignment of packageAssignments) {
+      await ctx.db.delete(assignment._id);
+    }
+
+    const creditTransactions = await ctx.db
+      .query("creditTransactions")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    for (const transaction of creditTransactions) {
+      await ctx.db.delete(transaction._id);
+    }
+
     await ctx.db.delete(args.userId);
   },
 });

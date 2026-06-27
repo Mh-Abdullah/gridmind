@@ -26,6 +26,7 @@ function getPolarClient() {
 
 function buildProductPayload(pkg: BillingPackageForPolar) {
   const parsed = parsePackageDescription(pkg.description)
+  const visibility: "public" | "private" = pkg.isActive ? "public" : "private"
   const metadata: Record<string, string | number | boolean> = {
     localPackageId: pkg.id,
     localPackageSlug: pkg.slug,
@@ -41,7 +42,7 @@ function buildProductPayload(pkg: BillingPackageForPolar) {
     description:
       parsed.description ||
       `${pkg.credits} credits package for GridMind, valid for ${formatPackagePeriod(parsed.periodMonths).toLowerCase()}`,
-    visibility: pkg.isActive ? "public" : "private",
+    visibility,
     recurringInterval: null,
     recurringIntervalCount: null,
     prices: [

@@ -11,6 +11,7 @@ import { CSVExport } from "@/components/csv-export"
 import { CSVImport } from "@/components/csv-import"
 import { TextFormattingToolbar } from "@/components/text-formatting-toolbar"
 import { AIChatPanel } from "@/components/ai-chat-panel"
+import { BrandIcon } from "@/components/brand-assets"
 import { useAuth } from "@/lib/auth-context"
 import { useSpreadsheetSync } from "@/lib/use-spreadsheet-sync"
 import {
@@ -22,7 +23,6 @@ import {
   Search,
   Plus,
   Trash2,
-  Sparkles,
   Upload,
   Loader2,
   Cloud,
@@ -1579,13 +1579,14 @@ export default function TableEditorPage() {
           Share
         </Button>
         <Button
-          variant={showAIChat ? "secondary" : "default"}
+          variant="ghost"
           size="sm"
-          className="gap-2"
+          className="h-11 w-11 rounded-full p-0 hover:bg-transparent"
           onClick={() => setShowAIChat(!showAIChat)}
+          aria-label="Open AI panel"
+          title="Open AI panel"
         >
-          <Sparkles className="h-4 w-4" />
-          AI Agent
+          <BrandIcon className="h-7 w-7 rounded-none" />
         </Button>
         </div>
       </div>
@@ -2065,7 +2066,7 @@ export default function TableEditorPage() {
                               <>
                                 <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">AI</div>
                                 {[
-                                  { label: "AI Generation", icon: <Sparkles className="h-4 w-4" />, type: "AI Agent", desc: "Fill rows using AI" },
+                                  { label: "AI Generation", icon: <BrandIcon className="h-4 w-4 rounded-md" />, type: "AI Agent", desc: "Fill rows using AI" },
                                   { label: "AI with Web Access", icon: <Globe className="h-4 w-4" />, type: "AI Web", desc: "AI with live web search" },
                                 ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
                                   <button key={item.label} onClick={() => confirmAddColumn(item.type)}

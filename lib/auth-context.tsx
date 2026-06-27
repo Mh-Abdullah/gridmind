@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
 
 export interface User {
   id: string;
@@ -14,6 +14,8 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<User | null>;
+  updateUser: (nextUser: User | null) => void;
   isAdmin: boolean;
 }
 
@@ -22,6 +24,28 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const updateUser = useCallback((nextUser: User | null) => {
+    if (nextUser) {
+      localStorage.setItem("user", JSON.stringify(nextUser));
+    } else {
+      localStorage.removeItem("user");
+    }
+    setUser(nextUser);
+  }, []);
+
+  const refreshUser = useCallback(async (): Promise<User | null> => {
+    const response = await fetch("/api/auth/me");
+
+    if (!response.ok) {
+      updateUser(null);
+      return null;
+    }
+
+    const data = await response.json();
+    updateUser(data.user);
+    return data.user;
+  }, [updateUser]);
 
   // Load user from localStorage and refresh from server on mount
   useEffect(() => {
@@ -33,13 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         // Fetch fresh user data from server
         try {
-          const response = await fetch("/api/auth/me");
-          if (response.ok) {
-            const data = await response.json();
-            // Update with fresh data from database
-            localStorage.setItem("user", JSON.stringify(data.user));
-            setUser(data.user);
-          }
+          await refreshUser();
         } catch (error) {
           console.error("Failed to refresh user data:", error);
         }
@@ -48,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
     
     initAuth();
-  }, []);
+  }, [refreshUser]);
 
   const login = async (email: string, password: string) => {
     const response = await fetch("/api/auth/login", {
@@ -64,25 +82,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const data = await response.json();
     console.log("Login response data:", data);
-    localStorage.setItem("user", JSON.stringify(data.user));
     localStorage.setItem("token", data.token);
     console.log("Setting user state:", data.user);
-    setUser(data.user);
+    updateUser(data.user);
     // Don't redirect here - let the caller handle the redirect based on role
   };
 
   const logout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
-    localStorage.removeItem("user");
     localStorage.removeItem("token");
-    setUser(null);
+    updateUser(null);
     window.location.href = "/";
   };
 
   const isAdmin = user?.role === "admin";
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, isAdmin }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser, updateUser, isAdmin }}>
       {children}
     </AuthContext.Provider>
   );

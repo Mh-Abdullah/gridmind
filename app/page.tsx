@@ -20,6 +20,7 @@ import {
 import * as XLSX from "xlsx"
 
 import { AppFooter } from "@/components/app-footer"
+import { BrandIcon, BrandLogo } from "@/components/brand-assets"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -264,10 +265,7 @@ export default function LandingPage() {
             href="/"
             className="flex min-h-11 items-center gap-2 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-sm font-bold text-primary-foreground">
-              G
-            </div>
-            <span className="font-semibold text-foreground">GridMind</span>
+            <BrandLogo className="h-8" priority />
           </Link>
 
           <nav className="hidden items-center gap-1 text-sm text-muted-foreground md:flex">
@@ -401,7 +399,7 @@ export default function LandingPage() {
                   <div className="mt-4 space-y-3">
                     {[
                       { icon: Globe2, label: "Scraper found 18 sources" },
-                      { icon: MailCheck, label: "Contacts verified" },
+                      { icon: BrandIcon, label: "AI agent reviewed rows" },
                       { icon: DatabaseZap, label: "Rows enriched" },
                     ].map((item) => {
                       const Icon = item.icon
@@ -430,7 +428,7 @@ export default function LandingPage() {
             <span className="text-xs font-semibold uppercase text-primary">Quick Start</span>
             <h2 className="mt-2 text-3xl font-bold md:text-4xl">From file to insights in seconds</h2>
             <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-              Drop your CSV or Excel file, name the sheet, and let GridMind agents prepare it for enrichment.
+              Drop your CSV or Excel file, name the sheet, and let the built-in agents prepare it for enrichment.
             </p>
           </div>
 

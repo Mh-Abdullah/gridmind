@@ -480,7 +480,7 @@ function AddContextModal({
                     Back
                   </button>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    Give GridMind more context about your company and goals. The website generator can draft a reusable context document.
+                    Give the workspace more context about your company and goals. The website generator can draft a reusable context document.
                   </p>
                   <div className="space-y-1.5">
                     <label className="text-sm font-semibold">Website URL</label>

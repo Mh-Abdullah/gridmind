@@ -356,13 +356,13 @@ export default function TablesPage() {
         <main className="flex-1 overflow-auto px-4 md:px-8 py-6 md:py-10">
 
           {/* ── Hero ── */}
-          <div className="relative mb-8 md:mb-14 overflow-hidden rounded-2xl border border-border bg-card">
+          <div className="relative mb-8 overflow-hidden rounded-[32px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.94))] text-white shadow-[0_35px_90px_-45px_rgba(15,118,110,0.45)] md:mb-14">
             {/* Ambient layers */}
             <div className="absolute inset-0 pointer-events-none">
-              <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_70%_-10%,hsl(var(--primary)/0.07),transparent)]" />
-              <div className="absolute inset-0 opacity-[0.025]" style={{ backgroundImage: "radial-gradient(circle,var(--foreground) 1px,transparent 1px)", backgroundSize: "22px 22px" }} />
-              <div className="absolute -top-12 right-10 h-52 w-52 rounded-full bg-primary/9 blur-3xl animate-[gm-float_7s_ease-in-out_infinite]" />
-              <div className="absolute top-8 right-56 h-28 w-28 rounded-full bg-accent/[0.07] blur-2xl animate-[gm-float_9s_ease-in-out_infinite_2s]" />
+              <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_70%_-10%,rgba(45,212,191,0.18),transparent)]" />
+              <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: "radial-gradient(circle,rgba(255,255,255,0.9) 1px,transparent 1px)", backgroundSize: "22px 22px" }} />
+              <div className="absolute -top-12 right-10 h-52 w-52 rounded-full bg-emerald-300/10 blur-3xl animate-[gm-float_7s_ease-in-out_infinite]" />
+              <div className="absolute top-8 right-56 h-28 w-28 rounded-full bg-teal-200/10 blur-2xl animate-[gm-float_9s_ease-in-out_infinite_2s]" />
             </div>
 
             <div className="relative px-4 md:px-8 py-6 md:py-10">
@@ -371,26 +371,26 @@ export default function TablesPage() {
                 {/* Left */}
                 <div>
                   {/* Live date pill */}
-                  <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/60 backdrop-blur-sm px-3 py-1 mb-6">
+                  <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-emerald-50/90 backdrop-blur-sm">
                     <span className="relative flex h-1.5 w-1.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-60" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-primary" />
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-300 opacity-60" />
+                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-200" />
                     </span>
-                    <span className="text-[11px] font-medium text-muted-foreground tracking-wide">
+                    <span className="text-[11px] font-medium tracking-wide">
                       {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
                     </span>
                   </div>
 
-                  <h2 className="text-3xl md:text-[2.6rem] font-bold tracking-tight leading-[1.08] text-foreground">
+                  <h2 className="text-3xl font-bold tracking-tight leading-[1.08] text-white md:text-[2.6rem]">
                     Good{" "}
                     {new Date().getHours() < 12 ? "morning" : new Date().getHours() < 18 ? "afternoon" : "evening"},
                     <br />
-                    <span className="text-foreground">
+                    <span className="text-white">
                       {user?.name}.
                     </span>
                   </h2>
 
-                  <p className="mt-4 text-sm text-muted-foreground max-w-sm leading-relaxed">
+                  <p className="mt-4 max-w-sm text-sm leading-relaxed text-emerald-50/80">
                     {spreadsheets === undefined
                       ? "Loading your workspace…"
                       : spreadsheets.length === 0
@@ -400,22 +400,25 @@ export default function TablesPage() {
                 </div>
 
                 {/* Right: stat strip */}
-                <div className="flex items-stretch gap-px rounded-xl border border-border overflow-hidden bg-border shrink-0 self-start lg:self-end">
+                <div className="grid shrink-0 self-start overflow-hidden rounded-[26px] border border-white/12 bg-white/10 backdrop-blur-sm sm:grid-cols-2 lg:self-end">
                   {[
                     { value: spreadsheets?.length ?? "—", label: "Tables" },
                     { value: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }), label: "Today" },
                   ].map((s) => (
-                    <div key={s.label} className="flex flex-col items-center justify-center px-7 py-4 bg-card hover:bg-muted/50 transition-colors">
-                      <span className="text-2xl font-bold text-foreground tabular-nums">{s.value}</span>
-                      <span className="text-[11px] text-muted-foreground mt-0.5 tracking-wide">{s.label}</span>
+                    <div
+                      key={s.label}
+                      className="flex min-w-[140px] flex-col items-center justify-center border-b border-white/12 px-7 py-5 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0"
+                    >
+                      <span className="text-2xl font-bold tabular-nums text-white">{s.value}</span>
+                      <span className="mt-0.5 text-[11px] tracking-wide text-emerald-50/75">{s.label}</span>
                     </div>
                   ))}
                 </div>
               </div>
 
               {/* Animated shimmer rule */}
-              <div className="mt-8 h-px w-full bg-border overflow-hidden rounded-full">
-                <div className="h-full w-2/5 bg-linear-to-r from-transparent via-primary/50 to-transparent animate-[gm-shimmer_3.5s_ease-in-out_infinite]" />
+              <div className="mt-8 h-px w-full overflow-hidden rounded-full bg-white/10">
+                <div className="h-full w-2/5 animate-[gm-shimmer_3.5s_ease-in-out_infinite] bg-linear-to-r from-transparent via-emerald-200/60 to-transparent" />
               </div>
             </div>
           </div>

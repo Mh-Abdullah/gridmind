@@ -23,6 +23,7 @@ import {
 import Link from "next/link"
 import { cn } from "@/lib/utils"
 import { useAuth } from "@/lib/auth-context"
+import { BrandLogo } from "@/components/brand-assets"
 
 interface AdminSidebarProps {
   className?: string
@@ -48,12 +49,7 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
       )}
     >
       <div className="flex h-16 shrink-0 items-center gap-2 border-b border-sidebar-border px-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
-          <span className="text-lg font-bold text-primary-foreground">G</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-base font-semibold text-sidebar-foreground">GridMind</span>
-        </div>
+        <BrandLogo className="h-9" priority />
       </div>
 
       <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-4">
@@ -96,9 +92,6 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild>
               <Link href="/dashboard-admin/account">Account Settings</Link>
-            </DropdownMenuItem>
-            <DropdownMenuItem asChild>
-              <Link href="/dashboard-admin/preferences">Preferences</Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => logout()}>

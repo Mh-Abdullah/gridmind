@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 
 import type React from "react"
 import { useState, useRef, useEffect, useCallback } from "react"
@@ -8,13 +8,10 @@ import { useAuth } from "@/lib/auth-context"
 import { useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { BrandIcon, BrandLogo } from "@/components/brand-assets"
 import {
   X,
   Send,
-  Sparkles,
-  User,
-  Bot,
-  BrainCircuit,
   Copy,
   Check,
   RotateCcw,
@@ -180,7 +177,7 @@ interface AIChatPanelProps {
   onUndoChanges?: () => void
 }
 
-// Collapsible step-by-step thinking box — like GitHub Copilot's "Thinking..." panel
+// Collapsible step-by-step thinking box similar to GitHub Copilot's "Thinking..." panel
 function ThinkingBox({
   steps,
   activeStep,
@@ -272,7 +269,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   const welcomeMessage: Message = {
     id: "welcome",
     role: "assistant",
-    content: "Hi! I'm your AI assistant for GridMind. I can help you with:\n\n• **Analyzing data** in your spreadsheet\n• **Generating formulas** and calculations\n• **Suggesting improvements** to your data\n• **Answering questions** about your content\n\nHow can I help you today?",
+    content: "Hi! I'm your AI assistant for this workspace. I can help you with:\n\n- **Analyzing data** in your spreadsheet\n- **Generating formulas** and calculations\n- **Suggesting improvements** to your data\n- **Answering questions** about your content\n\nHow can I help you today?",
     timestamp: new Date(),
   }
 
@@ -560,7 +557,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         if (!result.success) {
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
-              ? { ...m, content: `❌ **${mode === "generate" ? "Generation" : "Scraping"} failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
+              ? { ...m, content: `[Error] **${mode === "generate" ? "Generation" : "Scraping"} failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
               : m
           ))
           return
@@ -571,7 +568,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
           const { headers, rows } = result.table
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
-              ? { ...m, content: `✅ **Table generated!**\n\n${result.summary || ""}\n\n**Created:** ${rows.length} rows × ${headers.length} columns\n\n**Columns:** ${headers.join(", ")}\n\n*${result.steps} AI steps*`, isStreaming: false }
+              ? { ...m, content: `[Done] **Table generated!**\n\n${result.summary || ""}\n\n**Created:** ${rows.length} rows x ${headers.length} columns\n\n**Columns:** ${headers.join(", ")}\n\n*${result.steps} AI steps*`, isStreaming: false }
               : m
           ))
         } else if (result.mode === "enrich" && result.columns && result.columns.length > 0 && onAddColumns) {
@@ -579,13 +576,13 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
           const columnNames = result.columns.map((c: ScrapedColumn) => c.header).join(", ")
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
-              ? { ...m, content: `✅ **Scraping complete!**\n\n${result.summary || ""}\n\n**Added columns:** ${columnNames}\n\n*${result.steps} AI steps*`, isStreaming: false }
+              ? { ...m, content: `[Done] **Scraping complete!**\n\n${result.summary || ""}\n\n**Added columns:** ${columnNames}\n\n*${result.steps} AI steps*`, isStreaming: false }
               : m
           ))
         } else {
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
-              ? { ...m, content: `⚠️ **No data found**\n\nI couldn't find the requested information. Try being more specific.\n\n${result.summary || ""}`, isStreaming: false }
+              ? { ...m, content: `[Info] **No data found**\n\nI couldn't find the requested information. Try being more specific.\n\n${result.summary || ""}`, isStreaming: false }
               : m
           ))
         }
@@ -594,7 +591,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       console.error("Scraper error:", error)
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
-          ? { ...m, content: `❌ **Error**\n\nFailed to run the scraper agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
+          ? { ...m, content: `[Error] **Error**\n\nFailed to run the scraper agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
           : m
       ))
     }
@@ -605,7 +602,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     if (!tableContext) {
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
-          ? { ...m, content: "⚠️ **No spreadsheet open**\n\nPlease open a spreadsheet table first.", isStreaming: false }
+          ? { ...m, content: "[Info] **No spreadsheet open**\n\nPlease open a spreadsheet table first.", isStreaming: false }
           : m
       ))
       return
@@ -660,7 +657,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         if (!result.success) {
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
-              ? { ...m, content: `❌ **Agent failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
+              ? { ...m, content: `[Error] **Agent failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
               : m
           ))
           return
@@ -673,7 +670,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         if (hasFormatChanges && onApplyFormatting) onApplyFormatting(result.formatting!)
 
         if (hasValueChanges || hasFormatChanges) {
-          const parts: string[] = [`✅ **Done!**\n\n${result.summary}`]
+          const parts: string[] = [`[Done] **Done!**\n\n${result.summary}`]
           if (hasValueChanges) parts.push(`**Cell edits:** ${result.changes.length}`)
           if (hasFormatChanges) parts.push(`**Formatting changes:** ${result.formatting!.length}`)
           setMessages(prev => prev.map(m =>
@@ -682,7 +679,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         } else {
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
-              ? { ...m, content: `ℹ️ **No changes needed**\n\n${result.summary}`, isStreaming: false }
+              ? { ...m, content: `[Info] **No changes needed**\n\n${result.summary}`, isStreaming: false }
               : m
           ))
         }
@@ -691,13 +688,13 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       console.error("Agent error:", error)
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
-          ? { ...m, content: `❌ **Error**\n\nFailed to run the agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
+          ? { ...m, content: `[Error] **Error**\n\nFailed to run the agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
           : m
       ))
     }
   }
 
-  // Shared SSE stream reader for agent/scraper — drives ThinkingBox state,
+  // Shared SSE stream reader for agent/scraper that drives ThinkingBox state.
   // then calls onResult with the final data payload.
   const readThinkingStream = async (
     response: Response,
@@ -747,7 +744,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
               if (currentActive) completedSteps.push(currentActive)
               setMessages(prev => prev.map(m =>
                 m.id === assistantMessageId
-                  ? { ...m, content: `❌ **Error**\n\n${event.content}`, isStreaming: false, thinkingSteps: [...completedSteps], activeStep: undefined, isThinkingDone: true }
+                  ? { ...m, content: `[Error] **Error**\n\n${event.content}`, isStreaming: false, thinkingSteps: [...completedSteps], activeStep: undefined, isThinkingDone: true }
                   : m
               ))
             }
@@ -828,9 +825,9 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}))
         const errorMessage = errorData.code === "quota_exceeded" 
-          ? "⚠️ OpenAI quota exceeded. The AI service needs billing setup. Contact your admin or try again later."
+          ? "[Error] OpenAI quota exceeded. The AI service needs billing setup. Contact your admin or try again later."
           : errorData.code === "invalid_key"
-          ? "⚠️ Invalid API key configuration. Please contact your admin."
+          ? "[Error] Invalid API key configuration. Please contact your admin."
           : "Sorry, the AI service is temporarily unavailable. Please try again."
         throw new Error(errorMessage)
       }
@@ -952,7 +949,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       // Inline code
       line = line.replace(/`(.*?)`/g, '<code class="bg-muted px-1 py-0.5 rounded text-xs">$1</code>')
       // Bullet points
-      if (line.startsWith('• ') || line.startsWith('- ')) {
+      if (line.startsWith('- ') || line.startsWith('* ')) {
         return (
           <li key={index} className="ml-4 list-disc" dangerouslySetInnerHTML={{ __html: line.slice(2) }} />
         )
@@ -987,12 +984,9 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
               <ChevronLeft className="h-4 w-4" />
             </Button>
           ) : (
-            <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-linear-to-br from-primary to-accent">
-              <Sparkles className="h-4 w-4 text-white" />
-            </div>
+            <BrandIcon className="h-8 w-8 rounded-lg" priority />
           )}
           <div>
-            <h2 className="text-sm font-semibold">{showHistory ? 'Chat History' : 'GridMind AI'}</h2>
             <p className="text-xs text-muted-foreground">
               {showHistory ? `${chatSessions.length} conversations` : 'Your data assistant'}
             </p>
@@ -1114,7 +1108,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
             <span>
               Context: <span className="font-medium text-foreground">{tableContext.projectName}</span>
               {" • "}
-              {tableContext.numRows} rows × {tableContext.numCols} cols
+              {tableContext.numRows} rows x {tableContext.numCols} cols
               {tableContext.selectedCells && tableContext.selectedCells.size > 0 && (
                 <span className="text-primary"> • {tableContext.selectedCells.size} selected</span>
               )}
@@ -1142,8 +1136,8 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                 </AvatarFallback>
               </Avatar>
             ) : (
-              <div className="shrink-0 h-8 w-8 rounded-full flex items-center justify-center bg-foreground shadow-md">
-                <BrainCircuit className="h-4 w-4 text-white" />
+              <div className="shrink-0 flex h-8 w-8 items-center justify-center">
+                <BrandIcon className="h-7 w-7 rounded-none" />
               </div>
             )}
 
@@ -1403,7 +1397,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                                 {isSelected && <Check className="h-2.5 w-2.5 text-primary-foreground" />}
                               </div>
                               <span className="text-base leading-none shrink-0">
-                                {c.icon && !c.icon.startsWith("http") ? c.icon : "📄"}
+                                {c.icon && !c.icon.startsWith("http") ? c.icon : "DOC"}
                               </span>
                               <span className="text-sm truncate">{c.title}</span>
                             </button>
@@ -1502,3 +1496,4 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     </div>
   )
 }
+

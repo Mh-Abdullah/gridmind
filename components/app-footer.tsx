@@ -1,5 +1,7 @@
 import Link from "next/link"
 
+import { BrandLogo } from "@/components/brand-assets"
+
 export function AppFooter() {
   return (
     <footer className=" border-border bg-background">
@@ -8,7 +10,11 @@ export function AppFooter() {
 
         {/* Bottom Bar */}
         <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-border pt-8 md:flex-row">
-          <p className="text-sm text-muted-foreground">© {new Date().getFullYear()} GridMind. All rights reserved.</p>
+          
+          <div className="flex flex-col items-center gap-2 md:flex-row">
+            <BrandLogo className="h-8" />
+            <p className="text-sm text-muted-foreground">(c) {new Date().getFullYear()} All rights reserved.</p>
+          </div>
           <div className="flex gap-4">
             <Link
               href="https://twitter.com"
@@ -39,3 +45,5 @@ export function AppFooter() {
     </footer>
   )
 }
+
+

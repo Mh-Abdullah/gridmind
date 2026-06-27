@@ -361,9 +361,9 @@ export default function TemplatesPage() {
               </div>
             </section>
 
-            {/* ── GridMind Templates ────────────────────────────────── */}
+            {/* ── Templates ─────────────────────────────────────────── */}
             <section>
-              <h2 className="text-lg font-bold text-foreground mb-5">GridMind Templates</h2>
+              <h2 className="mb-5 text-lg font-bold text-foreground">Templates</h2>
 
               {/* Category filter */}
               <div className="flex items-center gap-1.5 flex-wrap mb-6">

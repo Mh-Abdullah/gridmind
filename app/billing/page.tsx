@@ -207,18 +207,18 @@ export default function BillingPage() {
             </div>
           )}
 
-          <section className="overflow-hidden rounded-[32px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(29,78,216,0.95))] p-6 text-white shadow-[0_35px_90px_-45px_rgba(37,99,235,0.5)] md:p-8">
+          <section className="overflow-hidden rounded-[32px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.94))] p-6 text-white shadow-[0_35px_90px_-45px_rgba(15,118,110,0.45)] md:p-8">
             <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-50/90">
+                <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-50/90">
                   <ShieldCheck className="h-3.5 w-3.5" />
                   Secure checkout via Polar
                 </div>
                 <h2 className="mt-5 max-w-2xl text-3xl font-semibold tracking-[-0.04em] text-white md:text-4xl">
                   Buy credits from the available packages in one place.
                 </h2>
-                <p className="mt-4 max-w-2xl text-sm leading-7 text-blue-100/85 md:text-base">
-                  Credits power GridMind actions. Choose an available package, complete checkout in Polar, and track
+                <p className="mt-4 max-w-2xl text-sm leading-7 text-emerald-50/80 md:text-base">
+                  Credits power your workspace actions. Choose an available package, complete checkout in Polar, and track
                   wallet activity from the Usage workspace.
                 </p>
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row">
@@ -243,24 +243,24 @@ export default function BillingPage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="rounded-[26px] border border-white/12 bg-white/10 p-5 backdrop-blur-sm">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm text-blue-100/80">Available credits</p>
-                    <WalletCards className="h-4 w-4 text-blue-100/80" />
+                    <p className="text-sm text-emerald-50/75">Available credits</p>
+                    <WalletCards className="h-4 w-4 text-emerald-50/75" />
                   </div>
                   <p className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">
                     {formatCredits(summary?.balanceCredits ?? 0)}
                   </p>
-                  <p className="mt-2 text-sm text-blue-100/75">Spend these across chat, agents, enrichment, and scraping.</p>
+                  <p className="mt-2 text-sm text-emerald-50/80">Spend these across chat, agents, enrichment, and scraping.</p>
                 </div>
 
                 <div className="rounded-[26px] border border-white/12 bg-white/10 p-5 backdrop-blur-sm">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-sm text-blue-100/80">Credits purchased</p>
-                    <Sparkles className="h-4 w-4 text-blue-100/80" />
+                    <p className="text-sm text-emerald-50/75">Credits purchased</p>
+                    <Sparkles className="h-4 w-4 text-emerald-50/75" />
                   </div>
                   <p className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">
                     {formatCredits(summary?.totalPurchasedCredits ?? 0)}
                   </p>
-                  <p className="mt-2 text-sm text-blue-100/75">
+                  <p className="mt-2 text-sm text-emerald-50/80">
                     {latestPurchasedAllocation
                       ? `Latest package: ${latestPurchasedAllocation.packageName} (+${formatCredits(latestPurchasedAllocation.creditsGranted)})`
                       : "Manual admin grants are tracked separately below."}

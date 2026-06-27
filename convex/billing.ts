@@ -421,7 +421,7 @@ export const updateBillingSettings = mutation({
     ])
     const now = Date.now()
 
-    const userById = new Map(users.map((user) => [user._id, user]))
+    const userById = new Map<string, (typeof users)[number]>(users.map((user) => [user._id, user]))
 
     for (const account of accounts) {
       const user = userById.get(account.userId)
