@@ -1,5 +1,5 @@
 ﻿import { NextRequest } from "next/server"
-import { generateText, tool, stepCountIs } from "ai"
+import { Output, ToolLoopAgent, tool, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 
@@ -35,6 +35,57 @@ interface GeneratedTable {
   headers: string[]
   rows: string[][] // Each row is an array of cell values
 }
+
+const GeneratedTableSchema = z.object({
+  headers: z.array(z.string()),
+  rows: z.array(z.array(z.string())),
+})
+
+const GenerateAgentResultSchema = z.object({
+  table: GeneratedTableSchema,
+  summary: z.string().optional(),
+})
+
+const ScrapedColumnSchema = z.object({
+  header: z.string(),
+  values: z.array(z.object({
+    rowIndex: z.number(),
+    value: z.string(),
+  })),
+})
+
+const EnrichAgentResultSchema = z.object({
+  columns: z.array(ScrapedColumnSchema),
+  summary: z.string().optional(),
+})
+
+const ScraperAgentResultSchema = z.union([
+  GenerateAgentResultSchema,
+  EnrichAgentResultSchema,
+])
+
+const ScraperAgentCallOptionsSchema = z.object({
+  mode: z.enum(["generate", "enrich"]),
+  prompt: z.string(),
+  tableInfo: z.object({
+    tableId: z.string(),
+    projectName: z.string(),
+    numRows: z.number(),
+    numCols: z.number(),
+  }),
+  chatHistory: z.array(z.object({
+    role: z.enum(["user", "assistant", "system"]),
+    content: z.string(),
+  })).optional(),
+  selectedRows: z.array(z.object({
+    rowIndex: z.number(),
+    cells: z.record(z.string(), z.string()),
+  })).optional(),
+  existingColumns: z.array(z.string()).optional(),
+  businessContext: z.string().optional(),
+})
+
+type ScraperAgentCallOptions = z.infer<typeof ScraperAgentCallOptionsSchema>
 
 // Rotating User-Agent pool — reduces bot detection
 const USER_AGENTS = [
@@ -749,6 +800,36 @@ const searchGoogleSerper = tool({
   },
 })
 
+const SCRAPER_TOOLS = {
+  scrapeWebPage,
+  searchWeb,
+  searchBraveWeb,
+  searchGoogleSerper,
+  searchWikipedia,
+  searchOpenStreetMap,
+  searchCompaniesHouse,
+  searchOpenCorporates,
+  extractFromRowData,
+}
+
+const SCRAPER_MODEL = openai(process.env.OPENAI_MODEL || "gpt-4o")
+
+const GENERATE_ACTIVE_TOOLS: Array<keyof typeof SCRAPER_TOOLS> = [
+  "scrapeWebPage",
+  "searchWeb",
+  "searchBraveWeb",
+  "searchGoogleSerper",
+  "searchWikipedia",
+  "searchOpenStreetMap",
+  "searchCompaniesHouse",
+  "searchOpenCorporates",
+]
+
+const ENRICH_ACTIVE_TOOLS: Array<keyof typeof SCRAPER_TOOLS> = [
+  ...GENERATE_ACTIVE_TOOLS,
+  "extractFromRowData",
+]
+
 // Helper function to extract text from HTML
 function extractTextFromHTML(html: string): string {
   const sections: string[] = []
@@ -847,6 +928,7 @@ const SCRAPER_ENRICH_PROMPT = `You are GridMind Scraper — a universal data enr
 
 ━━━ RULES ━━━
 - NEVER invent or hallucinate data. Use only what tools return.
+- Do NOT print fake tool calls like searchOpenStreetMap(...) in the response text. If a tool is needed, call the actual tool.
 - N/A is a LAST RESORT — before writing N/A for Phone, Website, Email, Address, Hours, or Price you MUST first:
   1. If the entry has a website URL → scrapeWebPage(url) — phone/hours/price are usually in JSON-LD structured data on the page
   2. If no website → searchWeb("{name} {city} contact phone website opening hours") → scrapeWebPage the top result
@@ -908,6 +990,7 @@ const SCRAPER_GENERATE_PROMPT = `You are GridMind Scraper — a universal data r
 
 ━━━ RULES ━━━
 - Only use REAL data from tool results — never fabricate rows, names, or addresses
+- Do NOT print fake tool calls like searchOpenStreetMap(...) in the response text. If a tool is needed, call the actual tool.
 - N/A is a LAST RESORT — for Phone, Website, Email, Address, Hours, or Price always attempt a follow-up web search before accepting N/A. Only write N/A if that search also fails.
 - TARGET: less than 20% N/A across all cells. Too many N/A values means you stopped searching too early.
 - Deduplicate results — each place/company appears only once
@@ -930,6 +1013,96 @@ FINAL RESPONSE — output ONLY this JSON (no prose before or after):
 }
 \`\`\`
 Headers and row values must be in the same order.\``
+
+const scraperAgent = new ToolLoopAgent<
+  ScraperAgentCallOptions,
+  typeof SCRAPER_TOOLS,
+  ReturnType<typeof Output.object>
+>({
+  id: "gridmind-scraper",
+  model: SCRAPER_MODEL,
+  tools: SCRAPER_TOOLS,
+  stopWhen: stepCountIs(40),
+  output: Output.object({
+    schema: ScraperAgentResultSchema,
+    name: "scraper_result",
+    description: "Structured JSON result for either table generation or row enrichment.",
+  }),
+  prepareStep: async ({ stepNumber }) => {
+    // Force the first model turn to make a real tool call instead of
+    // narrating a plan or printing pseudo-tool syntax in text.
+    if (stepNumber === 0) {
+      return { toolChoice: "required" }
+    }
+
+    return { toolChoice: "auto" }
+  },
+  callOptionsSchema: ScraperAgentCallOptionsSchema,
+  prepareCall: async ({ options }) => {
+    const {
+      mode,
+      prompt,
+      tableInfo,
+      chatHistory,
+      selectedRows = [],
+      existingColumns = [],
+      businessContext,
+    } = options
+
+    if (mode === "generate") {
+      return {
+        model: SCRAPER_MODEL,
+        instructions: SCRAPER_GENERATE_PROMPT,
+        activeTools: GENERATE_ACTIVE_TOOLS,
+        prompt: `User request: ${prompt}
+
+Context:
+- Project name: ${tableInfo.projectName}
+- This is a NEW data generation request - the user wants you to search the web and create table data
+${businessContext ? `\nBusiness context (about this user's company/ICP — tailor results to their target market):\n${businessContext}\n` : ""}
+Recent chat context:
+${formatChatHistory(chatHistory)}
+
+Instructions:
+1. Analyze what specific data the user is asking for
+2. Search the web to find this information
+3. Structure the data as a table with appropriate columns
+4. Return real, scraped data - do not make up information
+
+Please search, scrape, and return the data in the required JSON format.`,
+      }
+    }
+
+    let rowContext = "Selected rows data:\n"
+    for (const row of selectedRows) {
+      rowContext += `\nRow ${row.rowIndex + 1}:\n`
+      for (const [colIndex, value] of Object.entries(row.cells)) {
+        const colNumber = parseInt(colIndex, 10)
+        const colLabel = existingColumns[colNumber] || `Column ${colNumber + 1}`
+        rowContext += `  ${colLabel}: "${value}"\n`
+      }
+    }
+
+    return {
+      model: SCRAPER_MODEL,
+      instructions: SCRAPER_ENRICH_PROMPT,
+      activeTools: ENRICH_ACTIVE_TOOLS,
+      prompt: `User request: ${prompt}
+
+Spreadsheet context:
+- Project: ${tableInfo.projectName}
+- Dimensions: ${tableInfo.numRows} rows × ${tableInfo.numCols} columns
+- Existing columns: ${existingColumns.join(", ")}
+${businessContext ? `\nBusiness context (about this user's company/ICP — use to enrich more relevantly):\n${businessContext}\n` : ""}
+Recent chat context:
+${formatChatHistory(chatHistory)}
+
+${rowContext}
+
+Please scrape the requested data and return it in the required JSON format.`,
+    }
+  },
+})
 
 export async function POST(request: NextRequest) {
   const body: ScraperRequest = await request.json()
@@ -973,6 +1146,390 @@ export async function POST(request: NextRequest) {
   })
 }
 
+function sendStepUpdates(
+  send: (obj: object) => void,
+  toolCalls?: Array<{ toolName: string; input?: Record<string, string>; args?: Record<string, string> }>,
+  toolResults?: Array<{ toolName: string; result?: Record<string, unknown>; output?: Record<string, unknown> }>
+) {
+  for (const tc of toolCalls || []) {
+    const args = (tc.args ?? tc.input ?? {}) as Record<string, string>
+    if (tc.toolName === "searchWeb") {
+      send({ type: "thinking", content: `🔍 Searching web: "${args.query || "..."}"` })
+    } else if (tc.toolName === "scrapeWebPage") {
+      const short = (args.url || "").replace(/^https?:\/\//, "").slice(0, 70)
+      send({ type: "thinking", content: `📄 Scraping: ${short}` })
+    } else if (tc.toolName === "searchOpenStreetMap") {
+      send({ type: "thinking", content: `🗺️ OpenStreetMap: "${args.placeType || ""}" in ${args.location || "..."}` })
+    } else if (tc.toolName === "searchCompaniesHouse") {
+      send({ type: "thinking", content: `🏢 Companies House: searching "${args.query || "..."}"` })
+    } else if (tc.toolName === "searchOpenCorporates") {
+      const cc = args.countryCode ? ` (${args.countryCode.toUpperCase()})` : " (worldwide)"
+      send({ type: "thinking", content: `🌍 OpenCorporates: "${args.query || ""}\"${cc}` })
+    }
+  }
+
+  for (const tr of toolResults || []) {
+    const res = (tr.result ?? tr.output ?? {}) as Record<string, unknown>
+    if (tr.toolName === "searchWeb" && Array.isArray(res.results) && res.results.length > 0) {
+      const hits = res.results as { title: string; url: string }[]
+      const preview = hits.slice(0, 3).map(r => `  • ${r.title?.slice(0, 55) || r.url}`).join("\n")
+      send({ type: "thinking", content: `✅ Web: ${hits.length} sources found\n${preview}` })
+    } else if (tr.toolName === "scrapeWebPage") {
+      const result = res as { success?: boolean; error?: string }
+      send({ type: "thinking", content: result.success ? "✅ Scraped page successfully" : `⚠️ Scrape failed: ${result.error || "unknown"}` })
+    } else if (tr.toolName === "searchOpenStreetMap" && Array.isArray(res.results)) {
+      const places = res.results as { name: string; address: string }[]
+      const preview = places.slice(0, 4).map(p => `  • ${p.name}${p.address !== "N/A" ? " — " + p.address.slice(0, 40) : ""}`).join("\n")
+      send({ type: "thinking", content: `✅ OpenStreetMap: ${places.length} places found\n${preview}${places.length > 4 ? `\n  ...+${places.length - 4} more` : ""}` })
+    } else if (tr.toolName === "searchCompaniesHouse" && Array.isArray(res.results)) {
+      const companies = res.results as { name: string; address: string }[]
+      const preview = companies.slice(0, 4).map(c => `  • ${c.name}${c.address !== "N/A" ? " — " + c.address.slice(0, 35) : ""}`).join("\n")
+      send({ type: "thinking", content: `✅ Companies House: ${companies.length} companies found\n${preview}${companies.length > 4 ? `\n  ...+${companies.length - 4} more` : ""}` })
+    } else if (tr.toolName === "searchOpenCorporates" && Array.isArray(res.results)) {
+      const companies = res.results as { name: string; country: string }[]
+      const preview = companies.slice(0, 4).map(c => `  • ${c.name} (${c.country})`).join("\n")
+      send({ type: "thinking", content: `✅ OpenCorporates: ${companies.length} companies found\n${preview}${companies.length > 4 ? `\n  ...+${companies.length - 4} more` : ""}` })
+    }
+  }
+}
+
+function previewValue(value: unknown, maxLength = 1200): string {
+  try {
+    const text = typeof value === "string" ? value : JSON.stringify(value, null, 2)
+    return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+  } catch {
+    return String(value)
+  }
+}
+
+function coerceToObject(value: unknown): unknown {
+  if (typeof value === "string") {
+    const trimmed = value.trim()
+    const codeBlock = trimmed.match(/```json\s*([\s\S]*?)```/i)
+    const candidate = codeBlock ? codeBlock[1].trim() : trimmed
+    try {
+      return JSON.parse(candidate)
+    } catch {
+      return value
+    }
+  }
+
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>
+    if ("result" in record) return coerceToObject(record.result)
+    if ("output" in record) return coerceToObject(record.output)
+    if ("data" in record) return coerceToObject(record.data)
+  }
+
+  return value
+}
+
+const COUNT_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  fifteen: 15,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+}
+
+function extractRequestedCount(prompt: string): number {
+  const numericMatch = prompt.match(/\b(\d{1,3})\b/)
+  if (numericMatch) return Math.max(1, Math.min(parseInt(numericMatch[1], 10), 50))
+
+  const lower = prompt.toLowerCase()
+  for (const [word, count] of Object.entries(COUNT_WORDS)) {
+    if (lower.includes(` ${word} `) || lower.startsWith(`${word} `) || lower.endsWith(` ${word}`)) {
+      return count
+    }
+  }
+
+  return 10
+}
+
+function inferPlaceType(prompt: string): string | null {
+  const lower = prompt.toLowerCase()
+  const types = [
+    "school",
+    "college",
+    "university",
+    "restaurant",
+    "hotel",
+    "hospital",
+    "mosque",
+    "gym",
+    "cinema",
+    "park",
+    "museum",
+    "library",
+    "pharmacy",
+    "supermarket",
+    "bakery",
+    "stadium",
+    "swimming pool",
+    "sports centre",
+    "tourist attraction",
+  ]
+
+  return types.find((type) => lower.includes(type)) || null
+}
+
+function inferLocation(prompt: string): string | null {
+  const lower = prompt.toLowerCase()
+  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60})$/i)
+  if (inMatch) {
+    return inMatch[1]
+      .replace(/\b(with|for|from)\b.*$/i, "")
+      .trim()
+      .replace(/\s+/g, " ")
+  }
+
+  return null
+}
+
+async function runOpenStreetMapFallback(placeType: string, location: string, maxResults: number) {
+  const osmTool = searchOpenStreetMap as unknown as {
+    execute: (input: { placeType: string; location: string; maxResults?: number }) => Promise<{
+      results?: Array<Record<string, string>>
+      error?: string
+    }>
+  }
+
+  return osmTool.execute({ placeType, location, maxResults })
+}
+
+async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => void): Promise<{ table: GeneratedTable; summary: string } | null> {
+  const placeType = inferPlaceType(prompt)
+  const location = inferLocation(prompt)
+
+  if (!placeType || !location) return null
+
+  const requestedCount = extractRequestedCount(prompt)
+  send({ type: "thinking", content: `🛟 Fallback: directly searching ${placeType} in ${location}` })
+
+  const result = await runOpenStreetMapFallback(placeType, location, Math.min(Math.max(requestedCount * 2, requestedCount), 40))
+  const rows = (result.results || []).slice(0, requestedCount)
+
+  if (rows.length === 0) return null
+
+  const headers = ["Name", "Address", "Phone", "Website", "Opening Hours"]
+  return {
+    table: {
+      headers,
+      rows: rows.map((row) => [
+        row.name || "N/A",
+        row.address || "N/A",
+        row.phone || "N/A",
+        row.website || "N/A",
+        row.openingHours || "N/A",
+      ]),
+    },
+    summary: `Found ${Math.min(rows.length, requestedCount)} ${placeType}${rows.length === 1 ? "" : "s"} in ${location} using OpenStreetMap fallback.`,
+  }
+}
+
+function normalizeWebsite(value: string): string | null {
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(trimmed)) return `https://${trimmed}`
+  return null
+}
+
+function extractBestRowField(
+  row: NonNullable<ScraperRequest["selectedRows"]>[number],
+  existingColumns: string[],
+  matchers: RegExp[]
+): string | null {
+  for (const [colIndex, value] of Object.entries(row.cells)) {
+    const header = (existingColumns[parseInt(colIndex, 10)] || "").toLowerCase()
+    if (matchers.some((matcher) => matcher.test(header)) && value.trim()) {
+      return value.trim()
+    }
+  }
+  return null
+}
+
+function extractFallbackWebsite(
+  row: NonNullable<ScraperRequest["selectedRows"]>[number],
+  existingColumns: string[]
+): string | null {
+  const websiteField = extractBestRowField(row, existingColumns, [/website/, /\burl\b/, /domain/])
+  if (websiteField) return normalizeWebsite(websiteField)
+
+  for (const value of Object.values(row.cells)) {
+    const normalized = normalizeWebsite(value)
+    if (normalized) return normalized
+  }
+
+  return null
+}
+
+function extractFallbackName(
+  row: NonNullable<ScraperRequest["selectedRows"]>[number],
+  existingColumns: string[]
+): string {
+  const namedField = extractBestRowField(row, existingColumns, [/\bname\b/, /hotel/, /title/, /company/, /business/])
+  if (namedField) return namedField
+
+  return Object.values(row.cells).find(value => value.trim().length > 0) || `Row ${row.rowIndex + 1}`
+}
+
+function extractFallbackLocation(
+  row: NonNullable<ScraperRequest["selectedRows"]>[number],
+  existingColumns: string[]
+): string {
+  return extractBestRowField(row, existingColumns, [/city/, /location/, /address/, /country/, /region/]) || ""
+}
+
+function extractLabeledValue(content: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  const match = content.match(new RegExp(`${escaped}:\\s*([^\\n]+)`, "i"))
+  return match?.[1]?.trim() || "N/A"
+}
+
+function parseScrapedDetails(content: string, fallbackWebsite: string): Record<string, string> {
+  return {
+    Website: extractLabeledValue(content, "Website") !== "N/A" ? extractLabeledValue(content, "Website") : fallbackWebsite,
+    Phone: extractLabeledValue(content, "Phone"),
+    Email: extractLabeledValue(content, "Email"),
+    Address: extractLabeledValue(content, "Address"),
+    "Opening Hours": extractLabeledValue(content, "Opening Hours"),
+  }
+}
+
+async function findWebsiteForRow(
+  row: NonNullable<ScraperRequest["selectedRows"]>[number],
+  existingColumns: string[]
+): Promise<string | null> {
+  const existingWebsite = extractFallbackWebsite(row, existingColumns)
+  if (existingWebsite) return existingWebsite
+
+  const searchTool = searchWeb as unknown as {
+    execute: (input: { query: string; context?: string }) => Promise<{
+      results?: Array<{ url: string }>
+    }>
+  }
+
+  const name = extractFallbackName(row, existingColumns)
+  const location = extractFallbackLocation(row, existingColumns)
+  const searchResult = await searchTool.execute({
+    query: `${name} ${location} official website`,
+    context: "Find the official website for this business or place",
+  })
+
+  return normalizeWebsite(searchResult.results?.[0]?.url || "")
+}
+
+async function tryDirectEnrichFallback(
+  prompt: string,
+  selectedRows: NonNullable<ScraperRequest["selectedRows"]>,
+  existingColumns: string[],
+  send: (obj: object) => void
+): Promise<{ columns: ScrapedColumn[]; summary: string } | null> {
+  const scrapeTool = scrapeWebPage as unknown as {
+    execute: (input: { url: string; extractionHint?: string }) => Promise<{
+      content?: string | null
+      success?: boolean
+    }>
+  }
+
+  send({ type: "thinking", content: "🛟 Fallback: enriching directly from selected row websites" })
+
+  const columnsMap = new Map<string, { rowIndex: number; value: string }[]>()
+  const headers = ["Website", "Phone", "Email", "Address", "Opening Hours"]
+  for (const header of headers) columnsMap.set(header, [])
+
+  let enrichedCount = 0
+
+  for (const row of selectedRows) {
+    const website = await findWebsiteForRow(row, existingColumns)
+    if (!website) {
+      for (const header of headers) columnsMap.get(header)!.push({ rowIndex: row.rowIndex, value: "N/A" })
+      continue
+    }
+
+    const scraped = await scrapeTool.execute({
+      url: website,
+      extractionHint: `${prompt}. Focus on phone, email, address, opening hours, and official website.`,
+    })
+
+    const details = parseScrapedDetails(scraped.content || "", website)
+    for (const header of headers) {
+      columnsMap.get(header)!.push({ rowIndex: row.rowIndex, value: details[header] || "N/A" })
+    }
+    enrichedCount += 1
+  }
+
+  return {
+    columns: headers.map((header) => ({ header, values: columnsMap.get(header)! })),
+    summary: `Enriched ${enrichedCount} row(s) using direct website scraping fallback.`,
+  }
+}
+
+function parseGenerateResult(responseText: string): { table: GeneratedTable; summary: string } | null {
+  try {
+    const codeBlock = responseText.match(/```json\s*([\s\S]*?)```/)
+    if (codeBlock) return JSON.parse(codeBlock[1].trim())
+
+    const jsonMatch = responseText.match(/\{[\s\S]*"table"\s*:[\s\S]*"headers"[\s\S]*"rows"[\s\S]*\}/)
+    if (jsonMatch) return JSON.parse(jsonMatch[0])
+
+    const parsed = JSON.parse(responseText)
+    if (parsed.table?.headers && parsed.table?.rows) return parsed
+  } catch (e) {
+    console.error("[Scraper] JSON parse error:", e)
+  }
+
+  return null
+}
+
+function parseGenerateOutput(outputValue: unknown): { table: GeneratedTable; summary: string } | null {
+  const parsed = GenerateAgentResultSchema.safeParse(coerceToObject(outputValue))
+  if (!parsed.success) return null
+  return {
+    table: parsed.data.table,
+    summary: parsed.data.summary || "Data generated successfully",
+  }
+}
+
+function parseEnrichResult(responseText: string): { columns: ScrapedColumn[]; summary: string } | null {
+  try {
+    const codeBlock = responseText.match(/```json\s*([\s\S]*?)```/)
+    if (codeBlock) return JSON.parse(codeBlock[1].trim())
+
+    const jsonMatch = responseText.match(/\{[\s\S]*"columns"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+    if (jsonMatch) return JSON.parse(jsonMatch[0])
+
+    const parsed = JSON.parse(responseText)
+    if (parsed.columns && Array.isArray(parsed.columns)) return parsed
+  } catch (e) {
+    console.error("[Scraper] JSON parse error:", e)
+  }
+
+  return null
+}
+
+function parseEnrichOutput(outputValue: unknown): { columns: ScrapedColumn[]; summary: string } | null {
+  const parsed = EnrichAgentResultSchema.safeParse(coerceToObject(outputValue))
+  if (!parsed.success) return null
+  return {
+    columns: parsed.data.columns,
+    summary: parsed.data.summary || "Data enrichment complete",
+  }
+}
+
 // GENERATE mode — streams thinking events then emits final result
 async function streamGenerateMode(
   prompt: string,
@@ -984,97 +1541,51 @@ async function streamGenerateMode(
   console.log("[Scraper] Starting GENERATE mode with prompt:", prompt)
   send({ type: "thinking", content: "🔍 Analyzing your request..." })
 
-  const result = await generateText({
-    model: openai(process.env.OPENAI_MODEL || "gpt-4o"),
-    system: SCRAPER_GENERATE_PROMPT,
-    prompt: `User request: ${prompt}
-
-Context:
-- Project name: ${tableInfo.projectName}
-- This is a NEW data generation request - the user wants you to search the web and create table data
-${businessContext ? `\nBusiness context (about this user's company/ICP — tailor results to their target market):\n${businessContext}\n` : ""}
-Recent chat context:
-${formatChatHistory(chatHistory)}
-
-Instructions:
-1. Analyze what specific data the user is asking for
-2. Search the web to find this information
-3. Structure the data as a table with appropriate columns
-4. Return real, scraped data - do not make up information
-
-Please search, scrape, and return the data in the required JSON format.`,
-    tools: { scrapeWebPage, searchWeb, searchBraveWeb, searchGoogleSerper, searchWikipedia, searchOpenStreetMap, searchCompaniesHouse, searchOpenCorporates },
-    stopWhen: stepCountIs(40),
+  const result = await scraperAgent.generate({
+    prompt,
+    options: {
+      mode: "generate",
+      prompt,
+      tableInfo,
+      chatHistory,
+      businessContext,
+    },
     onStepFinish: ({ toolCalls, toolResults }) => {
-      for (const tc of toolCalls || []) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const tcAny = tc as any
-        const args = (tcAny.args ?? tcAny.input ?? {}) as Record<string, string>
-        if (tc.toolName === "searchWeb") {
-          send({ type: "thinking", content: `🔍 Searching web: "${args.query || "..."}"` })
-        } else if (tc.toolName === "scrapeWebPage") {
-          const short = (args.url || "").replace(/^https?:\/\//, "").slice(0, 70)
-          send({ type: "thinking", content: `📄 Scraping: ${short}` })
-        } else if (tc.toolName === "searchOpenStreetMap") {
-          send({ type: "thinking", content: `🗺️ OpenStreetMap: "${args.placeType || ""}" in ${args.location || "..."}` })
-        } else if (tc.toolName === "searchCompaniesHouse") {
-          send({ type: "thinking", content: `🏢 Companies House: searching "${args.query || "..."}"` })
-        } else if (tc.toolName === "searchOpenCorporates") {
-          const cc = args.countryCode ? ` (${args.countryCode.toUpperCase()})` : " (worldwide)"
-          send({ type: "thinking", content: `🌍 OpenCorporates: "${args.query || ""}\"${cc}` })
-        }
-      }
-      for (const tr of toolResults || []) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const trAny = tr as any
-        const res = (trAny.result ?? trAny.output ?? {}) as Record<string, unknown>
-        if (tr.toolName === "searchWeb" && Array.isArray(res.results) && res.results.length > 0) {
-          const hits = res.results as { title: string; url: string }[]
-          const preview = hits.slice(0, 3).map(r => `  • ${r.title?.slice(0, 55) || r.url}`).join("\n")
-          send({ type: "thinking", content: `✅ Web: ${hits.length} sources found\n${preview}` })
-        } else if (tr.toolName === "scrapeWebPage") {
-          const r = res as { success?: boolean; error?: string }
-          send({ type: "thinking", content: r.success ? `✅ Scraped page successfully` : `⚠️ Scrape failed: ${r.error || "unknown"}` })
-        } else if (tr.toolName === "searchOpenStreetMap" && Array.isArray(res.results)) {
-          const places = res.results as { name: string; address: string }[]
-          const preview = places.slice(0, 4).map(p => `  • ${p.name}${p.address !== "N/A" ? " — " + p.address.slice(0, 40) : ""}`).join("\n")
-          send({ type: "thinking", content: `✅ OpenStreetMap: ${places.length} places found\n${preview}${places.length > 4 ? `\n  ...+${places.length - 4} more` : ""}` })
-        } else if (tr.toolName === "searchCompaniesHouse" && Array.isArray(res.results)) {
-          const companies = res.results as { name: string; address: string }[]
-          const preview = companies.slice(0, 4).map(c => `  • ${c.name}${c.address !== "N/A" ? " — " + c.address.slice(0, 35) : ""}`).join("\n")
-          send({ type: "thinking", content: `✅ Companies House: ${companies.length} companies found\n${preview}${companies.length > 4 ? `\n  ...+${companies.length - 4} more` : ""}` })
-        } else if (tr.toolName === "searchOpenCorporates" && Array.isArray(res.results)) {
-          const companies = res.results as { name: string; country: string }[]
-          const preview = companies.slice(0, 4).map(c => `  • ${c.name} (${c.country})`).join("\n")
-          send({ type: "thinking", content: `✅ OpenCorporates: ${companies.length} companies found\n${preview}${companies.length > 4 ? `\n  ...+${companies.length - 4} more` : ""}` })
-        }
-      }
+      sendStepUpdates(
+        send,
+        toolCalls as Array<{ toolName: string; input?: Record<string, string>; args?: Record<string, string> }> | undefined,
+        toolResults as Array<{ toolName: string; result?: Record<string, unknown>; output?: Record<string, unknown> }> | undefined
+      )
     },
   })
 
   console.log("[Scraper] Generate steps:", result.steps.length)
   send({ type: "thinking", content: "📊 Processing and structuring data..." })
 
-  const responseText = result.text
-  let generatedData: { table: GeneratedTable; summary: string } | null = null
-
-  try {
-    const codeBlock = responseText.match(/```json\s*([\s\S]*?)```/)
-    if (codeBlock) generatedData = JSON.parse(codeBlock[1].trim())
-    if (!generatedData) {
-      const jsonMatch = responseText.match(/\{[\s\S]*"table"\s*:[\s\S]*"headers"[\s\S]*"rows"[\s\S]*\}/)
-      if (jsonMatch) generatedData = JSON.parse(jsonMatch[0])
-    }
-    if (!generatedData) {
-      const parsed = JSON.parse(responseText)
-      if (parsed.table?.headers && parsed.table?.rows) generatedData = parsed
-    }
-  } catch (e) {
-    console.error("[Scraper] JSON parse error:", e)
-  }
+  const generatedData = parseGenerateOutput(result.output) ?? parseGenerateResult(result.text)
 
   if (!generatedData?.table) {
-    send({ type: "error", content: "Failed to parse structured data from agent response." })
+    console.error("[Scraper] Generate parse failed", {
+      outputPreview: previewValue(result.output),
+      textPreview: previewValue(result.text),
+    })
+
+    const fallbackData = await tryDirectGenerateFallback(prompt, send)
+    if (!fallbackData?.table) {
+      send({ type: "error", content: "Failed to parse structured data from agent response." })
+      return
+    }
+
+    send({
+      type: "result",
+      data: {
+        success: true,
+        mode: "generate",
+        table: fallbackData.table,
+        summary: fallbackData.summary,
+        steps: result.steps.length,
+      },
+    })
     return
   }
 
@@ -1103,103 +1614,53 @@ async function streamEnrichMode(
   console.log("[Scraper] Starting ENRICH mode with prompt:", prompt)
   send({ type: "thinking", content: `🔍 Enriching ${selectedRows!.length} row(s)...` })
 
-  let rowContext = "Selected rows data:\n"
-  for (const row of selectedRows!) {
-    rowContext += `\nRow ${row.rowIndex + 1}:\n`
-    for (const [colIndex, value] of Object.entries(row.cells)) {
-      const colLabel = existingColumns[parseInt(colIndex)] || `Column ${parseInt(colIndex) + 1}`
-      rowContext += `  ${colLabel}: "${value}"\n`
-    }
-  }
-
-  const result = await generateText({
-    model: openai(process.env.OPENAI_MODEL || "gpt-4o"),
-    system: SCRAPER_ENRICH_PROMPT,
-    prompt: `User request: ${prompt}
-
-Spreadsheet context:
-- Project: ${tableInfo.projectName}
-- Dimensions: ${tableInfo.numRows} rows × ${tableInfo.numCols} columns
-- Existing columns: ${existingColumns.join(", ")}
-${businessContext ? `\nBusiness context (about this user's company/ICP — use to enrich more relevantly):\n${businessContext}\n` : ""}
-Recent chat context:
-${formatChatHistory(chatHistory)}
-
-${rowContext}
-
-Please scrape the requested data and return it in the required JSON format.`,
-    tools: { scrapeWebPage, searchWeb, searchBraveWeb, searchGoogleSerper, searchWikipedia, searchOpenStreetMap, searchCompaniesHouse, searchOpenCorporates, extractFromRowData },
-    stopWhen: stepCountIs(40),
+  const result = await scraperAgent.generate({
+    prompt,
+    options: {
+      mode: "enrich",
+      prompt,
+      selectedRows,
+      existingColumns,
+      tableInfo,
+      chatHistory,
+      businessContext,
+    },
     onStepFinish: ({ toolCalls, toolResults }) => {
-      for (const tc of toolCalls || []) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const tcAny = tc as any
-        const args = (tcAny.args ?? tcAny.input ?? {}) as Record<string, string>
-        if (tc.toolName === "searchWeb") {
-          send({ type: "thinking", content: `🔍 Searching web: "${args.query || "..."}"` })
-        } else if (tc.toolName === "scrapeWebPage") {
-          const short = (args.url || "").replace(/^https?:\/\//, "").slice(0, 70)
-          send({ type: "thinking", content: `📄 Scraping: ${short}` })
-        } else if (tc.toolName === "searchOpenStreetMap") {
-          send({ type: "thinking", content: `🗺️ OpenStreetMap: "${args.placeType || ""}" in ${args.location || "..."}` })
-        } else if (tc.toolName === "searchCompaniesHouse") {
-          send({ type: "thinking", content: `🏢 Companies House: searching "${args.query || "..."}"` })
-        } else if (tc.toolName === "searchOpenCorporates") {
-          const cc = args.countryCode ? ` (${args.countryCode.toUpperCase()})` : " (worldwide)"
-          send({ type: "thinking", content: `🌍 OpenCorporates: "${args.query || ""}\"${cc}` })
-        }
-      }
-      for (const tr of toolResults || []) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const trAny = tr as any
-        const res = (trAny.result ?? trAny.output ?? {}) as Record<string, unknown>
-        if (tr.toolName === "searchWeb" && Array.isArray(res.results) && res.results.length > 0) {
-          const hits = res.results as { title: string; url: string }[]
-          const preview = hits.slice(0, 3).map(r => `  • ${r.title?.slice(0, 55) || r.url}`).join("\n")
-          send({ type: "thinking", content: `✅ Web: ${hits.length} sources found\n${preview}` })
-        } else if (tr.toolName === "scrapeWebPage") {
-          const r = res as { success?: boolean; error?: string }
-          send({ type: "thinking", content: r.success ? `✅ Scraped page successfully` : `⚠️ Scrape failed: ${r.error || "unknown"}` })
-        } else if (tr.toolName === "searchOpenStreetMap" && Array.isArray(res.results)) {
-          const places = res.results as { name: string; address: string }[]
-          const preview = places.slice(0, 4).map(p => `  • ${p.name}${p.address !== "N/A" ? " — " + p.address.slice(0, 40) : ""}`).join("\n")
-          send({ type: "thinking", content: `✅ OpenStreetMap: ${places.length} places found\n${preview}${places.length > 4 ? `\n  ...+${places.length - 4} more` : ""}` })
-        } else if (tr.toolName === "searchCompaniesHouse" && Array.isArray(res.results)) {
-          const companies = res.results as { name: string; address: string }[]
-          const preview = companies.slice(0, 4).map(c => `  • ${c.name}${c.address !== "N/A" ? " — " + c.address.slice(0, 35) : ""}`).join("\n")
-          send({ type: "thinking", content: `✅ Companies House: ${companies.length} companies found\n${preview}${companies.length > 4 ? `\n  ...+${companies.length - 4} more` : ""}` })
-        } else if (tr.toolName === "searchOpenCorporates" && Array.isArray(res.results)) {
-          const companies = res.results as { name: string; country: string }[]
-          const preview = companies.slice(0, 4).map(c => `  • ${c.name} (${c.country})`).join("\n")
-          send({ type: "thinking", content: `✅ OpenCorporates: ${companies.length} companies found\n${preview}${companies.length > 4 ? `\n  ...+${companies.length - 4} more` : ""}` })
-        }
-      }
+      sendStepUpdates(
+        send,
+        toolCalls as Array<{ toolName: string; input?: Record<string, string>; args?: Record<string, string> }> | undefined,
+        toolResults as Array<{ toolName: string; result?: Record<string, unknown>; output?: Record<string, unknown> }> | undefined
+      )
     },
   })
 
   console.log("[Scraper] Enrich steps:", result.steps.length)
   send({ type: "thinking", content: "📋 Building column data..." })
 
-  const responseText = result.text
-  let scrapedData: { columns: ScrapedColumn[]; summary: string } | null = null
-
-  try {
-    const codeBlock = responseText.match(/```json\s*([\s\S]*?)```/)
-    if (codeBlock) scrapedData = JSON.parse(codeBlock[1].trim())
-    if (!scrapedData) {
-      const jsonMatch = responseText.match(/\{[\s\S]*"columns"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
-      if (jsonMatch) scrapedData = JSON.parse(jsonMatch[0])
-    }
-    if (!scrapedData) {
-      const parsed = JSON.parse(responseText)
-      if (parsed.columns && Array.isArray(parsed.columns)) scrapedData = parsed
-    }
-  } catch (e) {
-    console.error("[Scraper] JSON parse error:", e)
-  }
+  const scrapedData = parseEnrichOutput(result.output) ?? parseEnrichResult(result.text)
 
   if (!scrapedData?.columns?.length) {
-    send({ type: "error", content: "Failed to parse structured data from agent response." })
+    console.error("[Scraper] Enrich parse failed", {
+      outputPreview: previewValue(result.output),
+      textPreview: previewValue(result.text),
+    })
+
+    const fallbackData = await tryDirectEnrichFallback(prompt, selectedRows!, existingColumns, send)
+    if (!fallbackData?.columns?.length) {
+      send({ type: "error", content: "Failed to parse structured data from agent response." })
+      return
+    }
+
+    send({
+      type: "result",
+      data: {
+        success: true,
+        mode: "enrich",
+        columns: fallbackData.columns,
+        summary: fallbackData.summary,
+        steps: result.steps.length,
+      },
+    })
     return
   }
 
