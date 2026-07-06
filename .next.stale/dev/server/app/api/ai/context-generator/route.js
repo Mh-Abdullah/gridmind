@@ -1,0 +1,12 @@
+var R=require("../../../../chunks/[turbopack]_runtime.js")("server/app/api/ai/context-generator/route.js")
+R.c("server/chunks/node_modules_@vercel_oidc_dist_cee25e73._.js")
+R.c("server/chunks/node_modules_next_2da942f4._.js")
+R.c("server/chunks/node_modules_@opentelemetry_api_build_esm_7e8f41ca._.js")
+R.c("server/chunks/node_modules_zod_557212a4._.js")
+R.c("server/chunks/node_modules_ai_dist_index_mjs_b0116780._.js")
+R.c("server/chunks/node_modules_@ai-sdk_openai_dist_index_mjs_19cd50d6._.js")
+R.c("server/chunks/node_modules_0e30b118._.js")
+R.c("server/chunks/[root-of-the-server]__158a0df2._.js")
+R.c("server/chunks/_next-internal_server_app_api_ai_context-generator_route_actions_7708a0b0.js")
+R.m("[project]/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/app/api/ai/context-generator/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)")
+module.exports=R.m("[project]/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/app/api/ai/context-generator/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)").exports

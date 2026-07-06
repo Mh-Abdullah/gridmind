@@ -1,0 +1,12 @@
+var R=require("../../../../chunks/[turbopack]_runtime.js")("server/app/api/ai/scraper/route.js")
+R.c("server/chunks/node_modules_@vercel_oidc_dist_6f187e52._.js")
+R.c("server/chunks/node_modules_next_dist_a90298e6._.js")
+R.c("server/chunks/node_modules_@opentelemetry_api_build_esm_7e8f41ca._.js")
+R.c("server/chunks/node_modules_zod_35beed9b._.js")
+R.c("server/chunks/node_modules_ai_dist_index_mjs_b0116780._.js")
+R.c("server/chunks/node_modules_@ai-sdk_openai_dist_index_mjs_19cd50d6._.js")
+R.c("server/chunks/node_modules_0e30b118._.js")
+R.c("server/chunks/[root-of-the-server]__759c10bb._.js")
+R.c("server/chunks/_next-internal_server_app_api_ai_scraper_route_actions_e765b309.js")
+R.m("[project]/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/app/api/ai/scraper/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)")
+module.exports=R.m("[project]/node_modules/next/dist/esm/build/templates/app-route.js { INNER_APP_ROUTE => \"[project]/app/api/ai/scraper/route.ts [app-route] (ecmascript)\" } [app-route] (ecmascript)").exports

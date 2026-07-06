@@ -1,13 +1,16 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Geist, Geist_Mono } from "next/font/google"
+import { Inter } from "next/font/google"
 import { AuthProvider } from "@/lib/auth-context"
 import { ThemeProvider } from "@/lib/theme-provider"
 import { ConvexClientProvider } from "@/lib/convex-provider"
 import "./globals.css"
 
-const geistSans = Geist({ subsets: ["latin"], variable: "--font-geist-sans" })
-const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono" })
+const inter = Inter({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter",
+})
 
 export const metadata: Metadata = {
   title: "GridMind - AI-Powered Data Enrichment Platform",
@@ -37,8 +40,8 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} font-sans antialiased`}>
+    <html lang="en" className={inter.variable}>
+      <body className="font-sans antialiased">
         <ConvexClientProvider>
           <ThemeProvider>
             <AuthProvider>

@@ -1,5 +1,5 @@
 ﻿import { NextRequest } from "next/server"
-import { Output, ToolLoopAgent, tool, stepCountIs } from "ai"
+import { Output, ToolLoopAgent, generateText, tool, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 
@@ -885,7 +885,7 @@ function extractTextFromHTML(html: string): string {
   if (metaDesc) sections.push(`Description: ${metaDesc[1].slice(0, 200)}`)
 
   // ── 3. Plain text body ──
-  let text = html
+  const text = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
     .replace(/<[^>]+>/g, " ")
@@ -1029,9 +1029,10 @@ const scraperAgent = new ToolLoopAgent<
     description: "Structured JSON result for either table generation or row enrichment.",
   }),
   prepareStep: async ({ stepNumber }) => {
-    // Force the first model turn to make a real tool call instead of
-    // narrating a plan or printing pseudo-tool syntax in text.
-    if (stepNumber === 0) {
+    // Some providers count the first step as 1 rather than 0.
+    // Require a real tool call for the opening turn either way so the
+    // agent cannot stop after returning a prose plan.
+    if (stepNumber <= 1) {
       return { toolChoice: "required" }
     }
 
@@ -1172,11 +1173,22 @@ function sendStepUpdates(
     const res = (tr.result ?? tr.output ?? {}) as Record<string, unknown>
     if (tr.toolName === "searchWeb" && Array.isArray(res.results) && res.results.length > 0) {
       const hits = res.results as { title: string; url: string }[]
-      const preview = hits.slice(0, 3).map(r => `  • ${r.title?.slice(0, 55) || r.url}`).join("\n")
-      send({ type: "thinking", content: `✅ Web: ${hits.length} sources found\n${preview}` })
+      const preview = hits
+        .slice(0, 3)
+        .map((r, index) => `  ${index + 1}. ${(r.title?.slice(0, 50) || r.url)}\n     ${r.url}`)
+        .join("\n")
+      send({ type: "thinking", content: `✅ Web search found ${hits.length} result${hits.length === 1 ? "" : "s"}\n${preview}` })
+    } else if (tr.toolName === "searchWeb" && Array.isArray(res.results) && res.results.length === 0) {
+      send({ type: "thinking", content: "⚠️ Web search returned 0 results. Trying another route..." })
     } else if (tr.toolName === "scrapeWebPage") {
-      const result = res as { success?: boolean; error?: string }
-      send({ type: "thinking", content: result.success ? "✅ Scraped page successfully" : `⚠️ Scrape failed: ${result.error || "unknown"}` })
+      const result = res as { success?: boolean; error?: string; url?: string; content?: string | null }
+      const short = (result.url || "").replace(/^https?:\/\//, "").slice(0, 70)
+      send({
+        type: "thinking",
+        content: result.success
+          ? `✅ Scraped ${short || "page"}${result.content ? ` and extracted ${Math.min(result.content.length, 8000)} chars` : ""}`
+          : `⚠️ Scrape failed for ${short || "page"}: ${result.error || "unknown"}`,
+      })
     } else if (tr.toolName === "searchOpenStreetMap" && Array.isArray(res.results)) {
       const places = res.results as { name: string; address: string }[]
       const preview = places.slice(0, 4).map(p => `  • ${p.name}${p.address !== "N/A" ? " — " + p.address.slice(0, 40) : ""}`).join("\n")
@@ -1287,7 +1299,7 @@ function inferPlaceType(prompt: string): string | null {
 
 function inferLocation(prompt: string): string | null {
   const lower = prompt.toLowerCase()
-  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60})$/i)
+  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60}?)(?=\s+(?:according to|based on|by|with|for|from|using|on)\b|[,.]|$)/i)
   if (inMatch) {
     return inMatch[1]
       .replace(/\b(with|for|from)\b.*$/i, "")
@@ -1307,6 +1319,103 @@ async function runOpenStreetMapFallback(placeType: string, location: string, max
   }
 
   return osmTool.execute({ placeType, location, maxResults })
+}
+
+function buildSearchFallbackQueries(prompt: string): string[] {
+  const placeType = inferPlaceType(prompt)
+  const location = inferLocation(prompt)
+  const queries = [prompt.trim()]
+
+  if (placeType && location) {
+    queries.push(`best ${placeType}s in ${location} google rating`)
+    queries.push(`${placeType}s in ${location} official websites`)
+    queries.push(`${placeType}s in ${location}`)
+  }
+
+  return Array.from(new Set(queries.filter(Boolean))).slice(0, 4)
+}
+
+async function trySearchBackedGenerateFallback(
+  prompt: string,
+  send: (obj: object) => void
+): Promise<{ table: GeneratedTable; summary: string } | null> {
+  const requestedCount = extractRequestedCount(prompt)
+  const searchTool = searchWeb as unknown as {
+    execute: (input: { query: string; context?: string }) => Promise<{
+      results?: Array<{ title: string; snippet: string; url: string }>
+    }>
+  }
+  const scrapeTool = scrapeWebPage as unknown as {
+    execute: (input: { url: string; extractionHint?: string }) => Promise<{
+      content?: string | null
+      success?: boolean
+    }>
+  }
+
+  const searchQueries = buildSearchFallbackQueries(prompt)
+  const aggregatedResults: Array<{ title: string; snippet: string; url: string }> = []
+  const seenUrls = new Set<string>()
+
+  send({ type: "thinking", content: "🛟 Fallback: searching and structuring results directly" })
+
+  for (const query of searchQueries) {
+    const searchResult = await searchTool.execute({
+      query,
+      context: "Find trustworthy sources that help answer this table-generation request",
+    })
+
+    for (const result of searchResult.results || []) {
+      if (!result.url || seenUrls.has(result.url)) continue
+      seenUrls.add(result.url)
+      aggregatedResults.push(result)
+    }
+
+    if (aggregatedResults.length >= Math.max(5, requestedCount)) break
+  }
+
+  if (aggregatedResults.length === 0) return null
+
+  const contextChunks: string[] = []
+  for (const result of aggregatedResults.slice(0, 5)) {
+    contextChunks.push(`Source: ${result.title}\nURL: ${result.url}\nSnippet: ${result.snippet || "N/A"}`)
+    const scraped = await scrapeTool.execute({
+      url: result.url,
+      extractionHint: prompt,
+    })
+
+    if (scraped.success && scraped.content) {
+      contextChunks.push(`Page content:\n${scraped.content.slice(0, 3000)}`)
+    }
+  }
+
+  const { text } = await generateText({
+    model: SCRAPER_MODEL,
+    system: [
+      "You are a data structuring tool.",
+      "Use ONLY the supplied search snippets and scraped page text.",
+      "Return ONLY valid JSON matching the requested schema.",
+      "Do not include prose, markdown, or explanations.",
+      "If a field is not available in the evidence, use N/A.",
+      `Return at most ${requestedCount} rows.`,
+    ].join(" "),
+    prompt: `User request: ${prompt}
+
+Evidence:
+${contextChunks.join("\n\n---\n\n")}
+
+Return JSON in exactly this shape:
+{
+  "table": {
+    "headers": ["Name", "Address", "Rating", "Website"],
+    "rows": [
+      ["Example", "Address or N/A", "4.5/5 or N/A", "https://example.com or N/A"]
+    ]
+  },
+  "summary": "Short summary"
+}`,
+  })
+
+  return parseGenerateResult(text)
 }
 
 async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => void): Promise<{ table: GeneratedTable; summary: string } | null> {
@@ -1479,14 +1588,17 @@ async function tryDirectEnrichFallback(
 }
 
 function parseGenerateResult(responseText: string): { table: GeneratedTable; summary: string } | null {
+  const trimmed = responseText.trim()
+  if (!trimmed || !trimmed.includes("{")) return null
+
   try {
-    const codeBlock = responseText.match(/```json\s*([\s\S]*?)```/)
+    const codeBlock = trimmed.match(/```json\s*([\s\S]*?)```/i)
     if (codeBlock) return JSON.parse(codeBlock[1].trim())
 
-    const jsonMatch = responseText.match(/\{[\s\S]*"table"\s*:[\s\S]*"headers"[\s\S]*"rows"[\s\S]*\}/)
+    const jsonMatch = trimmed.match(/\{[\s\S]*"table"\s*:[\s\S]*"headers"[\s\S]*"rows"[\s\S]*\}/)
     if (jsonMatch) return JSON.parse(jsonMatch[0])
 
-    const parsed = JSON.parse(responseText)
+    const parsed = JSON.parse(trimmed)
     if (parsed.table?.headers && parsed.table?.rows) return parsed
   } catch (e) {
     console.error("[Scraper] JSON parse error:", e)
@@ -1505,14 +1617,17 @@ function parseGenerateOutput(outputValue: unknown): { table: GeneratedTable; sum
 }
 
 function parseEnrichResult(responseText: string): { columns: ScrapedColumn[]; summary: string } | null {
+  const trimmed = responseText.trim()
+  if (!trimmed || !trimmed.includes("{")) return null
+
   try {
-    const codeBlock = responseText.match(/```json\s*([\s\S]*?)```/)
+    const codeBlock = trimmed.match(/```json\s*([\s\S]*?)```/i)
     if (codeBlock) return JSON.parse(codeBlock[1].trim())
 
-    const jsonMatch = responseText.match(/\{[\s\S]*"columns"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
+    const jsonMatch = trimmed.match(/\{[\s\S]*"columns"\s*:\s*\[[\s\S]*\][\s\S]*\}/)
     if (jsonMatch) return JSON.parse(jsonMatch[0])
 
-    const parsed = JSON.parse(responseText)
+    const parsed = JSON.parse(trimmed)
     if (parsed.columns && Array.isArray(parsed.columns)) return parsed
   } catch (e) {
     console.error("[Scraper] JSON parse error:", e)
@@ -1570,7 +1685,8 @@ async function streamGenerateMode(
       textPreview: previewValue(result.text),
     })
 
-    const fallbackData = await tryDirectGenerateFallback(prompt, send)
+    const fallbackData = await trySearchBackedGenerateFallback(prompt, send)
+      ?? await tryDirectGenerateFallback(prompt, send)
     if (!fallbackData?.table) {
       send({ type: "error", content: "Failed to parse structured data from agent response." })
       return
@@ -1588,6 +1704,11 @@ async function streamGenerateMode(
     })
     return
   }
+
+  send({
+    type: "thinking",
+    content: `📝 Writing ${generatedData.table.rows.length} row${generatedData.table.rows.length === 1 ? "" : "s"} and ${generatedData.table.headers.length} column${generatedData.table.headers.length === 1 ? "" : "s"} to the sheet...`,
+  })
 
   send({
     type: "result",
@@ -1663,6 +1784,11 @@ async function streamEnrichMode(
     })
     return
   }
+
+  send({
+    type: "thinking",
+    content: `📝 Writing ${scrapedData.columns.length} new column${scrapedData.columns.length === 1 ? "" : "s"} into the sheet...`,
+  })
 
   send({
     type: "result",

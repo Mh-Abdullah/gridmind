@@ -189,6 +189,7 @@ function ThinkingBox({
 }) {
   const [expanded, setExpanded] = useState(true)
   const didAutoCollapse = useRef(false)
+  const liveStep = isDone ? undefined : activeStep
 
   useEffect(() => {
     if (isDone && !didAutoCollapse.current && steps.length > 0) {
@@ -199,41 +200,60 @@ function ThinkingBox({
   }, [isDone, steps.length])
 
   const headerText = isDone
-    ? `Used ${steps.length} step${steps.length !== 1 ? 's' : ''}`
-    : activeStep || 'Working...'
+    ? `Completed ${steps.length} step${steps.length !== 1 ? 's' : ''}`
+    : liveStep || 'Working...'
 
   return (
-    <div className="mb-2 rounded border border-border/50 bg-muted/30 text-xs overflow-hidden w-full">
+    <div className="mb-2 w-full overflow-hidden rounded-xl border border-border/60 bg-background/70 text-xs shadow-sm backdrop-blur">
       <button
         onClick={() => setExpanded(v => !v)}
-        className="flex items-center gap-2 w-full px-3 py-1.5 text-left hover:bg-muted/50 transition-colors"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/40"
       >
         {isDone ? (
           <Check className="h-3 w-3 text-foreground shrink-0" />
         ) : (
           <Loader2 className="h-3 w-3 animate-spin text-primary shrink-0" />
         )}
-        <span className={`font-medium truncate flex-1 ${isDone ? 'text-muted-foreground' : 'text-foreground'}`}>
-          {headerText}
-        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className={`truncate font-medium ${isDone ? 'text-muted-foreground' : 'text-foreground'}`}>
+              {headerText}
+            </span>
+            {!isDone && (
+              <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                Live
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground">
+            {isDone ? "Agent activity" : `Completed ${steps.length} step${steps.length !== 1 ? "s" : ""}`}
+          </div>
+        </div>
         {expanded ? (
           <ChevronUp className="h-3 w-3 text-muted-foreground shrink-0" />
         ) : (
           <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" />
         )}
       </button>
-      {expanded && (steps.length > 0 || activeStep) && (
-        <div className="px-3 pb-2 pt-1 border-t border-border/40 space-y-1.5 max-h-72 overflow-y-auto">
+      {expanded && (steps.length > 0 || liveStep) && (
+        <div className="max-h-72 space-y-2 overflow-y-auto border-t border-border/50 px-3 pb-3 pt-2">
           {steps.map((step, i) => (
-            <div key={i} className="flex items-start gap-2 text-muted-foreground min-w-0">
-              <Check className="h-3 w-3 mt-0.5 text-foreground shrink-0" />
-              <span className="whitespace-pre-line wrap-break-word min-w-0 flex-1">{step}</span>
+            <div key={i} className="flex min-w-0 items-start gap-2 text-muted-foreground">
+              <div className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold">
+                {i + 1}
+              </div>
+              <span className="min-w-0 flex-1 whitespace-pre-line break-words">{step}</span>
             </div>
           ))}
-          {activeStep && (
-            <div className="flex items-start gap-2 text-foreground min-w-0">
-              <Loader2 className="h-3 w-3 mt-0.5 animate-spin text-primary shrink-0" />
-              <span className="whitespace-pre-line wrap-break-word min-w-0 flex-1">{activeStep}</span>
+          {liveStep && (
+            <div className="flex min-w-0 items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 px-2 py-2 text-foreground">
+              <Loader2 className="mt-0.5 h-3 w-3 shrink-0 animate-spin text-primary" />
+              <div className="min-w-0 flex-1">
+                <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                  Working now
+                </div>
+                <span className="min-w-0 whitespace-pre-line break-words">{liveStep}</span>
+              </div>
             </div>
           )}
         </div>
@@ -494,6 +514,46 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   }
 
   // Handle Web Scraper agent
+  const showAssistantProgressStep = async (assistantMessageId: string, content: string, delayMs = 120) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== assistantMessageId) return m
+      const steps = [...(m.thinkingSteps || [])]
+      const active = m.activeStep?.trim()
+      if (active && active !== content) steps.push(active)
+      return {
+        ...m,
+        thinkingSteps: steps,
+        activeStep: content,
+        isThinkingDone: false,
+        isStreaming: true,
+      }
+    }))
+
+    await new Promise(resolve => setTimeout(resolve, delayMs))
+  }
+
+  const finalizeAssistantProgress = (assistantMessageId: string, content: string) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== assistantMessageId) return m
+      const steps = [...(m.thinkingSteps || [])]
+      const active = m.activeStep?.trim()
+      if (active && steps[steps.length - 1] !== active) {
+        steps.push(active)
+      }
+
+      return {
+        ...m,
+        content,
+        thinkingSteps: steps,
+        activeStep: undefined,
+        isThinkingDone: true,
+        isStreaming: false,
+      }
+    }))
+    setIsLoading(false)
+  }
+
+  // Handle Web Scraper agent
   const handleScraperAgent = async (prompt: string, assistantMessageId: string, chatHistory: APIMessage[]) => {
     const hasSelection = tableContext?.selectedCells && tableContext.selectedCells.size > 0
     const mode = hasSelection ? "enrich" : "generate"
@@ -552,9 +612,10 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         body: JSON.stringify(requestBody),
       })
 
-      await readThinkingStream(response, assistantMessageId, (resultData) => {
+      await readThinkingStream(response, assistantMessageId, async (resultData) => {
         const result = resultData as { success: boolean; mode: string; table?: GeneratedTable; columns?: ScrapedColumn[]; summary?: string; steps?: number; error?: string }
         if (!result.success) {
+          setIsLoading(false)
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
               ? { ...m, content: `[Error] **${mode === "generate" ? "Generation" : "Scraping"} failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
@@ -564,31 +625,37 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         }
 
         if (result.mode === "generate" && result.table && onGenerateTable) {
+          await showAssistantProgressStep(
+            assistantMessageId,
+            `Writing ${result.table.rows.length} row${result.table.rows.length === 1 ? "" : "s"} into the sheet...`
+          )
           onGenerateTable(result.table)
           const { headers, rows } = result.table
-          setMessages(prev => prev.map(m =>
-            m.id === assistantMessageId
-              ? { ...m, content: `[Done] **Table generated!**\n\n${result.summary || ""}\n\n**Created:** ${rows.length} rows x ${headers.length} columns\n\n**Columns:** ${headers.join(", ")}\n\n*${result.steps} AI steps*`, isStreaming: false }
-              : m
-          ))
+          finalizeAssistantProgress(
+            assistantMessageId,
+            `[Done] **Table generated!**\n\n${result.summary || ""}\n\n**Created:** ${rows.length} rows x ${headers.length} columns\n\n**Columns:** ${headers.join(", ")}\n\n*${result.steps} AI steps*`
+          )
         } else if (result.mode === "enrich" && result.columns && result.columns.length > 0 && onAddColumns) {
+          await showAssistantProgressStep(
+            assistantMessageId,
+            `Writing ${result.columns.length} scraped column${result.columns.length === 1 ? "" : "s"} into the sheet...`
+          )
           onAddColumns(result.columns)
           const columnNames = result.columns.map((c: ScrapedColumn) => c.header).join(", ")
-          setMessages(prev => prev.map(m =>
-            m.id === assistantMessageId
-              ? { ...m, content: `[Done] **Scraping complete!**\n\n${result.summary || ""}\n\n**Added columns:** ${columnNames}\n\n*${result.steps} AI steps*`, isStreaming: false }
-              : m
-          ))
+          finalizeAssistantProgress(
+            assistantMessageId,
+            `[Done] **Scraping complete!**\n\n${result.summary || ""}\n\n**Added columns:** ${columnNames}\n\n*${result.steps} AI steps*`
+          )
         } else {
-          setMessages(prev => prev.map(m =>
-            m.id === assistantMessageId
-              ? { ...m, content: `[Info] **No data found**\n\nI couldn't find the requested information. Try being more specific.\n\n${result.summary || ""}`, isStreaming: false }
-              : m
-          ))
+          finalizeAssistantProgress(
+            assistantMessageId,
+            `[Info] **No data found**\n\nI couldn't find the requested information. Try being more specific.\n\n${result.summary || ""}`
+          )
         }
       })
     } catch (error) {
       console.error("Scraper error:", error)
+      setIsLoading(false)
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? { ...m, content: `[Error] **Error**\n\nFailed to run the scraper agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
@@ -600,6 +667,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   // Handle general-purpose spreadsheet Agent
   const handleAgentTask = async (prompt: string, assistantMessageId: string, chatHistory: APIMessage[]) => {
     if (!tableContext) {
+      setIsLoading(false)
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? { ...m, content: "[Info] **No spreadsheet open**\n\nPlease open a spreadsheet table first.", isStreaming: false }
@@ -644,7 +712,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         }),
       })
 
-      await readThinkingStream(response, assistantMessageId, (resultData) => {
+      await readThinkingStream(response, assistantMessageId, async (resultData) => {
         const result = resultData as {
           success: boolean; error?: string
           changes: { row: number; col: number; value: string }[]
@@ -655,6 +723,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         }
 
         if (!result.success) {
+          setIsLoading(false)
           setMessages(prev => prev.map(m =>
             m.id === assistantMessageId
               ? { ...m, content: `[Error] **Agent failed**\n\n${result.error || "Unknown error"}`, isStreaming: false }
@@ -666,6 +735,13 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         const hasValueChanges = result.changes && result.changes.length > 0
         const hasFormatChanges = result.formatting && result.formatting.length > 0
 
+        if (hasValueChanges || hasFormatChanges) {
+          await showAssistantProgressStep(
+            assistantMessageId,
+            `Writing ${result.changes.length} cell edit${result.changes.length === 1 ? "" : "s"}${hasFormatChanges ? ` and ${result.formatting!.length} formatting change${result.formatting!.length === 1 ? "" : "s"}` : ""} to the sheet...`
+          )
+        }
+
         if (hasValueChanges && onApplyChanges) onApplyChanges(result.changes, result.newNumRows, result.newNumCols)
         if (hasFormatChanges && onApplyFormatting) onApplyFormatting(result.formatting!)
 
@@ -673,19 +749,17 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
           const parts: string[] = [`[Done] **Done!**\n\n${result.summary}`]
           if (hasValueChanges) parts.push(`**Cell edits:** ${result.changes.length}`)
           if (hasFormatChanges) parts.push(`**Formatting changes:** ${result.formatting!.length}`)
-          setMessages(prev => prev.map(m =>
-            m.id === assistantMessageId ? { ...m, content: parts.join('\n'), isStreaming: false } : m
-          ))
+          finalizeAssistantProgress(assistantMessageId, parts.join('\n'))
         } else {
-          setMessages(prev => prev.map(m =>
-            m.id === assistantMessageId
-              ? { ...m, content: `[Info] **No changes needed**\n\n${result.summary}`, isStreaming: false }
-              : m
-          ))
+          finalizeAssistantProgress(
+            assistantMessageId,
+            `[Info] **No changes needed**\n\n${result.summary}`
+          )
         }
       })
     } catch (error) {
       console.error("Agent error:", error)
+      setIsLoading(false)
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? { ...m, content: `[Error] **Error**\n\nFailed to run the agent. ${error instanceof Error ? error.message : "Please try again."}`, isStreaming: false }
@@ -699,7 +773,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   const readThinkingStream = async (
     response: Response,
     assistantMessageId: string,
-    onResult: (data: unknown) => void
+    onResult: (data: unknown) => void | Promise<void>
   ) => {
     const reader = response.body?.getReader()
     if (!reader) return
@@ -707,10 +781,16 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     const decoder = new TextDecoder()
     const completedSteps: string[] = []
     let currentActive: string | undefined
+    let buffer = ""
+    let shouldStop = false
 
     const pushStep = (content: string) => {
+      const nextStep = content.trim()
+      if (!nextStep) return
+      if (nextStep === currentActive) return
+      if (completedSteps[completedSteps.length - 1] === nextStep) return
       if (currentActive) completedSteps.push(currentActive)
-      currentActive = content
+      currentActive = nextStep
       setMessages(prev => prev.map(m =>
         m.id === assistantMessageId
           ? { ...m, thinkingSteps: [...completedSteps], activeStep: currentActive, isThinkingDone: false, isStreaming: true }
@@ -719,14 +799,27 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     }
 
     try {
-      while (true) {
+      while (!shouldStop) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value)
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6).trim()
-          if (data === '[DONE]') break
+
+        buffer += decoder.decode(value, { stream: true })
+        const events = buffer.split("\n\n")
+        buffer = events.pop() || ""
+
+        for (const rawEvent of events) {
+          const dataLines = rawEvent
+            .split("\n")
+            .filter(line => line.startsWith("data: "))
+            .map(line => line.slice(6))
+
+          if (dataLines.length === 0) continue
+          const data = dataLines.join("\n").trim()
+          if (data === "[DONE]") {
+            shouldStop = true
+            break
+          }
+
           try {
             const event = JSON.parse(data)
             if (event.type === 'thinking') {
@@ -739,7 +832,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                   ? { ...m, thinkingSteps: [...completedSteps], activeStep: undefined, isThinkingDone: true }
                   : m
               ))
-              onResult(event.data)
+              await onResult(event.data)
             } else if (event.type === 'error') {
               if (currentActive) completedSteps.push(currentActive)
               setMessages(prev => prev.map(m =>
@@ -747,6 +840,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                   ? { ...m, content: `[Error] **Error**\n\n${event.content}`, isStreaming: false, thinkingSteps: [...completedSteps], activeStep: undefined, isThinkingDone: true }
                   : m
               ))
+              shouldStop = true
             }
           } catch {
             // skip malformed lines
@@ -1128,6 +1222,15 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
             key={message.id}
             className={`flex gap-3 animate-message-appear ${message.role === "user" ? "flex-row-reverse" : ""}`}
           >
+            {(() => {
+              const hasFinalStatus =
+                typeof message.content === "string" &&
+                (/^\[(Done|Info|Error)\]/.test(message.content.trim()) || message.isThinkingDone)
+              const visibleActiveStep = hasFinalStatus ? undefined : message.activeStep
+              const showThinkingBox = message.thinkingSteps !== undefined || !!visibleActiveStep
+
+              return (
+                <>
             {/* Avatar */}
             {message.role === "user" ? (
               <Avatar className="shrink-0 h-8 w-8">
@@ -1152,15 +1255,15 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
               >
                 <div className={`prose prose-sm max-w-none ${message.role === "user" ? "text-primary-foreground" : ""}`}>
                   {/* Copilot-style thinking box for agent/scraper */}
-                  {(message.thinkingSteps !== undefined || message.activeStep) && (
+                  {showThinkingBox && (
                     <ThinkingBox
                       steps={message.thinkingSteps || []}
-                      activeStep={message.activeStep}
-                      isDone={message.isThinkingDone || false}
+                      activeStep={visibleActiveStep}
+                      isDone={hasFinalStatus || message.isThinkingDone || false}
                     />
                   )}
                   {/* Initial spinner before any steps or content arrive */}
-                  {!message.content && !message.thinkingSteps && !message.activeStep && message.isStreaming ? (
+                  {!message.content && !message.thinkingSteps && !visibleActiveStep && message.isStreaming ? (
                     <span className="flex items-center gap-2 text-muted-foreground italic text-sm">
                       <Loader2 className="h-3 w-3 animate-spin" />
                       Thinking...
@@ -1210,6 +1313,9 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                 </div>
               )}
             </div>
+                </>
+              )
+            })()}
           </div>
         ))}
         

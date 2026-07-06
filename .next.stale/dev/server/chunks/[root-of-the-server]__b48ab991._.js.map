@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 40, "column": 0}, "map": {"version":3,"sources":["file:///D:/gridmind/app/api/auth/logout/route.ts"],"sourcesContent":["import { NextResponse } from \"next/server\";\r\n\r\nexport async function POST() {\r\n  const response = NextResponse.json(\r\n    { message: \"Logout successful\" },\r\n    { status: 200 }\r\n  );\r\n\r\n  response.cookies.set(\"auth_token\", \"\", {\r\n    httpOnly: true,\r\n    maxAge: 0,\r\n  });\r\n\r\n  return response;\r\n}\r\n"],"names":[],"mappings":";;;;AAAA;;AAEO,eAAe;IACpB,MAAM,WAAW,gJAAY,CAAC,IAAI,CAChC;QAAE,SAAS;IAAoB,GAC/B;QAAE,QAAQ;IAAI;IAGhB,SAAS,OAAO,CAAC,GAAG,CAAC,cAAc,IAAI;QACrC,UAAU;QACV,QAAQ;IACV;IAEA,OAAO;AACT"}}]
+}

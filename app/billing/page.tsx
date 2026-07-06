@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useSearchParams } from "next/navigation"
-import { useEffect, useState } from "react"
+import { Suspense, useEffect, useState } from "react"
 import { useQuery } from "convex/react"
 import {
   ArrowUpRight,
@@ -42,7 +42,7 @@ function formatLockDate(timestamp?: number) {
   })
 }
 
-export default function BillingPage() {
+function BillingPageContent() {
   const { user, loading } = useAuth()
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -366,5 +366,22 @@ export default function BillingPage() {
         </main>
       </div>
     </div>
+  )
+}
+
+export default function BillingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-background">
+          <div className="flex items-center gap-3 rounded-2xl border border-border bg-card px-5 py-4 text-sm text-muted-foreground shadow-[0_20px_50px_-35px_rgba(15,23,42,0.4)]">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Loading billing workspace...
+          </div>
+        </div>
+      }
+    >
+      <BillingPageContent />
+    </Suspense>
   )
 }

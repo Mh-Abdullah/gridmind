@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react"
 import type React from "react"
 import Link from "next/link"
+import { Playfair_Display } from "next/font/google"
 import { useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import {
@@ -13,20 +14,31 @@ import {
   FileSpreadsheet,
   Globe2,
   MailCheck,
+  Menu,
   MessageSquareText,
   Sparkles,
   UploadCloud,
+  X,
 } from "lucide-react"
 import * as XLSX from "xlsx"
 
 import { AppFooter } from "@/components/app-footer"
 import { BrandIcon, BrandLogo } from "@/components/brand-assets"
+import { Card_2 } from "@/components/card-2"
+import { LandingWorkflowSection } from "@/components/landing-workflow-section"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api } from "@/convex/_generated/api"
 import { useAuth } from "@/lib/auth-context"
+import { cn } from "@/lib/utils"
+
+const playfairDisplay = Playfair_Display({
+  subsets: ["latin"],
+  weight: ["600", "700"],
+  style: ["normal", "italic"],
+})
 
 interface ParsedCSV {
   headers: string[]
@@ -39,6 +51,7 @@ interface Agent {
   description: string
   capabilities: string[]
   icon: React.ComponentType<{ className?: string }>
+  featured?: boolean
 }
 
 const AGENTS: Agent[] = [
@@ -81,6 +94,7 @@ const AGENTS: Agent[] = [
       "Read one instruction and choose the right sequence of sheet edits, enrichments, scraping tasks, and follow-up actions.",
     capabilities: ["Multi-step execution", "Agent routing", "Sheet automation"],
     icon: Bot,
+    featured: true,
   },
 ]
 
@@ -91,11 +105,29 @@ const SAMPLE_ROWS = [
   ["Brightline CRM", "brightline.io", "founder@", "Verified"],
 ]
 
+const RIBBON_ITEMS = [
+  "CSV & Excel",
+  "LinkedIn profiles",
+  "Google Maps",
+  "Bulk enrichment",
+  "Credit-based billing",
+  "Website scraping",
+  "AI-powered enrichment",
+  "Lead intelligence",
+]
+
+const NAV_LINKS = [
+  { label: "Import", href: "#import", onClick: true },
+  { label: "How it works", href: "#workflow" },
+  { label: "Agents", href: "#agents" },
+  { label: "Pricing", href: "#pricing" },
+]
+
 function parseFile(file: File): Promise<ParsedCSV> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
 
-    if (file.name.endsWith(".csv") || file.name.endsWith(".txt")) {
+    if (file.name.endsWith(".csv")) {
       reader.onload = (event) => {
         try {
           const text = (event.target?.result as string) || ""
@@ -139,30 +171,215 @@ function parseFile(file: File): Promise<ParsedCSV> {
   })
 }
 
-function AgentCard({ agent }: { agent: Agent }) {
+function SectionHeading({
+  label,
+  title,
+  description,
+  align = "center",
+}: {
+  label: string
+  title: string
+  description: string
+  align?: "center" | "left"
+}) {
+  return (
+    <div className={cn("max-w-3xl", align === "center" ? "mx-auto text-center" : "text-left")}>
+      <span className="inline-flex items-center gap-2 rounded-full border border-border/80 bg-muted/40 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+        {label}
+      </span>
+      <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] text-foreground md:text-4xl lg:text-[2.75rem] lg:leading-[1.08]">
+        {title}
+      </h2>
+      <p className="mt-4 text-pretty text-base leading-7 text-muted-foreground md:text-lg">{description}</p>
+    </div>
+  )
+}
+
+function AgentCard({ agent, className }: { agent: Agent; className?: string }) {
   const Icon = agent.icon
 
   return (
-    <div className="group relative flex flex-col rounded-lg border border-border bg-card p-6 transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg hover:shadow-primary/5">
+    <div
+      className={cn(
+        "group relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-6 transition-all duration-300 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-[0_24px_60px_-30px_color-mix(in_oklab,var(--foreground)_25%,transparent)]",
+        agent.featured && "border-foreground/15 hover:border-foreground/30",
+        className
+      )}
+    >
+      <div
+        className={cn(
+          "pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100",
+          agent.featured && "via-foreground/30"
+        )}
+      />
       <div className="mb-5 flex items-start justify-between gap-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-muted text-foreground transition-colors duration-200 group-hover:border-primary/30 group-hover:bg-primary/10 group-hover:text-primary">
+        <div
+          className={cn(
+            "flex h-11 w-11 items-center justify-center rounded-xl border transition-colors duration-300",
+            agent.featured
+              ? "border-border bg-muted/60 text-foreground group-hover:border-foreground/15 group-hover:bg-muted"
+              : "border-border bg-muted/60 text-foreground group-hover:border-foreground/15 group-hover:bg-muted"
+          )}
+        >
           <Icon className="h-5 w-5" />
         </div>
-        <span className="rounded-md border border-border/60 bg-muted/50 px-2 py-0.5 text-[11px] font-medium uppercase text-muted-foreground">
+        <span
+          className={cn(
+            "rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
+            agent.featured
+              ? "border border-border/70 bg-muted/50 text-muted-foreground"
+              : "border border-border/70 bg-muted/50 text-muted-foreground"
+          )}
+        >
           {agent.badge}
         </span>
       </div>
-      <h3 className="mb-2 text-base font-semibold leading-snug text-foreground">{agent.title}</h3>
-      <p className="flex-1 text-sm leading-relaxed text-muted-foreground">{agent.description}</p>
+      <h3 className={cn("mb-2 text-lg font-semibold leading-snug", agent.featured ? "text-foreground" : "text-foreground")}>
+        {agent.title}
+      </h3>
+      <p className={cn("flex-1 text-sm leading-relaxed", agent.featured ? "text-muted-foreground" : "text-muted-foreground")}>
+        {agent.description}
+      </p>
       <div className="mt-5 flex flex-wrap gap-1.5">
         {agent.capabilities.map((capability) => (
           <span
             key={capability}
-            className="rounded-md border border-border/50 bg-muted/60 px-2 py-0.5 text-[11px] text-muted-foreground"
+            className={cn(
+              "rounded-full px-2.5 py-1 text-[11px]",
+              agent.featured
+                ? "border border-border/60 bg-muted/50 text-muted-foreground"
+                : "border border-border/60 bg-muted/50 text-muted-foreground"
+            )}
           >
             {capability}
           </span>
         ))}
+      </div>
+    </div>
+  )
+}
+
+function HeroPreview() {
+  return (
+    <div className="landing-float relative">
+      <div className="absolute -inset-4 -z-10 rounded-[2rem] bg-foreground/[0.04] blur-2xl" />
+      <div className="overflow-hidden rounded-[1.75rem] border border-border/80 bg-card/95 shadow-[0_32px_80px_-40px_color-mix(in_oklab,var(--foreground)_35%,transparent)] backdrop-blur">
+        <div className="flex items-center justify-between gap-4 border-b border-border/70 bg-muted/30 px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="hidden items-center gap-1.5 sm:flex">
+              <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
+              <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
+            </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border/70 bg-background">
+              <FileSpreadsheet className="h-4 w-4 text-foreground" />
+            </div>
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-foreground">Lead enrichment.csv</p>
+              <p className="text-xs text-muted-foreground">4 rows · 4 agents active</p>
+            </div>
+          </div>
+          <span className="landing-pulse-ring shrink-0 rounded-full border border-foreground/10 bg-foreground/5 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground">
+            Live
+          </span>
+        </div>
+
+        <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_220px]">
+          <div className="overflow-x-auto">
+            <table className="min-w-[520px] text-sm">
+              <thead className="bg-muted/50 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
+                <tr>
+                  {["Company", "Website", "Contact", "Status"].map((header) => (
+                    <th
+                      key={header}
+                      className="border-r border-border/70 px-4 py-3 text-left font-medium last:border-r-0"
+                    >
+                      {header}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {SAMPLE_ROWS.map((row) => (
+                  <tr key={row[0]} className="border-t border-border/70 bg-background/80">
+                    {row.map((cell, index) => (
+                      <td
+                        key={`${row[0]}-${index}`}
+                        className="border-r border-border/50 px-4 py-3 text-foreground last:border-r-0"
+                      >
+                        {index === 3 ? (
+                          <span
+                            className={cn(
+                              "rounded-full px-2.5 py-1 text-xs font-medium",
+                              cell === "Enriching"
+                                ? "bg-foreground/10 text-foreground"
+                                : cell === "Verified"
+                                  ? "bg-foreground text-background"
+                                  : "border border-border bg-muted/50 text-muted-foreground"
+                            )}
+                          >
+                            {cell}
+                          </span>
+                        ) : (
+                          cell
+                        )}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border-t border-border/70 bg-muted/20 p-4 lg:border-l lg:border-t-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Agent run</p>
+            <div className="mt-4 space-y-3">
+              {[
+                { icon: Globe2, label: "Scraper found 18 sources" },
+                { icon: BrandIcon, label: "AI agent reviewed rows" },
+                { icon: DatabaseZap, label: "Rows enriched" },
+              ].map((item) => {
+                const Icon = item.icon
+                return (
+                  <div
+                    key={item.label}
+                    className="flex items-center gap-3 rounded-xl border border-border/70 bg-background/80 px-3 py-3"
+                  >
+                    <Icon className="h-4 w-4 text-foreground" />
+                    <span className="text-xs text-muted-foreground">{item.label}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="mt-5 rounded-xl bg-foreground px-4 py-4 text-background shadow-lg">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-background/60">Next action</p>
+              <p className="mt-2 text-sm leading-relaxed">Generate personalized outreach for verified contacts.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HeroRibbon() {
+  const items = [...RIBBON_ITEMS, ...RIBBON_ITEMS]
+
+  return (
+    <div className="landing-ribbon-wrap border-t border-border/60 bg-muted/20">
+      <div className="landing-ribbon-mask">
+        <div className="landing-ribbon-track" aria-hidden="true">
+          {items.map((item, index) => (
+            <div key={`${item}-${index}`} className="landing-ribbon-item">
+              <span className="landing-ribbon-text">{item}</span>
+              <span className="landing-ribbon-dot" />
+            </div>
+          ))}
+        </div>
+
+        <div className="sr-only" aria-label="Platform capabilities">
+          {RIBBON_ITEMS.join(", ")}
+        </div>
       </div>
     </div>
   )
@@ -185,12 +402,13 @@ export default function LandingPage() {
   const [sheetName, setSheetName] = useState("")
   const [isDragging, setIsDragging] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
   const handleFile = useCallback(async (file: File) => {
     if (!file) return
 
     setFileName(file.name)
-    setSheetName(file.name.replace(/\.(csv|xlsx|xls|txt)$/i, ""))
+    setSheetName(file.name.replace(/\.(csv|xlsx|xls)$/i, ""))
 
     try {
       setCsvData(await parseFile(file))
@@ -254,12 +472,13 @@ export default function LandingPage() {
   }
 
   const scrollToImport = () => {
+    setMobileNavOpen(false)
     importSectionRef.current?.scrollIntoView({ behavior: "smooth" })
   }
 
   return (
     <div className="flex min-h-screen flex-col overflow-x-hidden bg-background text-foreground">
-      <header className="sticky top-0 z-50 border-b border-border/70 bg-background/90 backdrop-blur-md">
+      <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link
             href="/"
@@ -269,394 +488,491 @@ export default function LandingPage() {
           </Link>
 
           <nav className="hidden items-center gap-1 text-sm text-muted-foreground md:flex">
-            <button
-              onClick={scrollToImport}
-              className="min-h-11 rounded-md px-3 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Import
-            </button>
-            <a
-              href="#agents"
-              className="flex min-h-11 items-center rounded-md px-3 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Agents
-            </a>
-            <a
-              href="#pricing"
-              className="flex min-h-11 items-center rounded-md px-3 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              Pricing
-            </a>
+            {NAV_LINKS.map((link) =>
+              link.onClick ? (
+                <button
+                  key={link.label}
+                  onClick={scrollToImport}
+                  className="min-h-11 rounded-full px-4 transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {link.label}
+                </button>
+              ) : (
+                <a
+                  key={link.label}
+                  href={link.href}
+                  className="flex min-h-11 items-center rounded-full px-4 transition-colors hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  {link.label}
+                </a>
+              )
+            )}
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
             <ThemeToggle />
-            <Button variant="ghost" size="sm" asChild>
+            <Button variant="ghost" size="sm" className="hidden sm:inline-flex" asChild>
               <Link href="/login">Login</Link>
             </Button>
             <Button size="sm" asChild>
               <Link href="/register">Get Started</Link>
             </Button>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              className="md:hidden"
+              aria-label={mobileNavOpen ? "Close menu" : "Open menu"}
+              onClick={() => setMobileNavOpen((open) => !open)}
+            >
+              {mobileNavOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </Button>
           </div>
         </div>
+
+        {mobileNavOpen && (
+          <div className="border-t border-border/60 bg-background/95 px-4 py-4 md:hidden">
+            <nav className="flex flex-col gap-1">
+              {NAV_LINKS.map((link) =>
+                link.onClick ? (
+                  <button
+                    key={link.label}
+                    onClick={scrollToImport}
+                    className="rounded-xl px-4 py-3 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    {link.label}
+                  </button>
+                ) : (
+                  <a
+                    key={link.label}
+                    href={link.href}
+                    onClick={() => setMobileNavOpen(false)}
+                    className="rounded-xl px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+                  >
+                    {link.label}
+                  </a>
+                )
+              )}
+              <Link
+                href="/login"
+                onClick={() => setMobileNavOpen(false)}
+                className="rounded-xl px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+              >
+                Login
+              </Link>
+            </nav>
+          </div>
+        )}
       </header>
 
-      <section className="relative overflow-hidden border-b border-border/70">
-        <div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_90%_60%_at_50%_-10%,hsl(var(--primary)/0.12),transparent_60%)]" />
-        <div
-          className="absolute inset-0 -z-10 opacity-[0.035]"
-          style={{
-            backgroundImage:
-              "linear-gradient(var(--foreground) 1px,transparent 1px),linear-gradient(90deg,var(--foreground) 1px,transparent 1px)",
-            backgroundSize: "56px 56px",
-          }}
-        />
+      <main>
+        <section className="relative min-h-[calc(100dvh-4rem)] overflow-hidden border-b border-border/70">
+          <div className="landing-hero-glow absolute inset-0 -z-10" />
+          <div className="landing-grid-bg absolute inset-0 -z-10 opacity-[0.35]" />
 
-        <div className="mx-auto grid min-h-[calc(100dvh-4rem)] max-w-7xl items-center gap-10 px-4 py-14 sm:px-6 md:py-20 lg:grid-cols-[0.95fr_1.05fr] lg:px-8">
-          <div className="max-w-2xl">
-            <div className="mb-6 inline-flex items-center gap-2 rounded-md border border-primary/25 bg-primary/10 px-3 py-1.5 text-sm font-medium text-primary">
-              <Sparkles className="h-4 w-4" />
-              AI spreadsheet workspace for enrichment teams
-            </div>
-            <h1 className="text-4xl font-bold leading-tight text-foreground sm:text-5xl lg:text-6xl">
-              Turn messy spreadsheets into verified business intelligence.
-            </h1>
-            <p className="mt-6 max-w-xl text-base leading-7 text-muted-foreground sm:text-lg">
-              Import a CSV or Excel file, run specialized AI agents, and enrich every row with scraped data, contact
-              checks, summaries, and next-step automation.
-            </p>
+          <div className="mx-auto flex min-h-[calc(100dvh-4rem-76px)] max-w-7xl items-center px-4 py-12 sm:px-6 md:py-16 lg:px-8 lg:py-20">
+            <Card_2>
+              <div className="grid min-h-[min(760px,calc(100dvh-11rem))] items-center gap-10 xl:grid-cols-[minmax(0,1.02fr)_minmax(360px,0.98fr)] xl:gap-16">
+                <div className="max-w-2xl px-2 py-4 sm:px-4 lg:px-8">
+                  <div className="landing-fade-up mb-6 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 px-4 py-2 text-sm font-medium text-foreground shadow-sm backdrop-blur">
+                    <Sparkles className="h-4 w-4" />
+                    AI spreadsheet workspace for enrichment teams
+                  </div>
 
-            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button size="lg" className="h-12 px-6 text-base" onClick={scrollToImport}>
-                Import and enrich
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-              <Button size="lg" variant="outline" className="h-12 px-6 text-base" asChild>
-                <Link href="/login">Open dashboard</Link>
-              </Button>
-            </div>
+                  <h1 className="landing-fade-up landing-fade-up-delay-1 max-w-none text-[1.7rem] font-semibold leading-[1.06] tracking-[-0.038em] text-foreground sm:text-[2.1rem] lg:text-[2.75rem]">
+                    <span className="block whitespace-nowrap">
+                      Turn messy{" "}
+                      <span className={`${playfairDisplay.className} italic font-semibold tracking-[-0.03em]`}>
+                        spreadsheets
+                      </span>{" "}
+                      into
+                    </span>
+                    <span className="block whitespace-nowrap">verified business intelligence.</span>
+                  </h1>
 
-            <div className="mt-10 grid max-w-xl grid-cols-3 gap-3 text-sm">
-              {[
-                { value: "10K+", label: "Sheets created" },
-                { value: "5", label: "AI agents" },
-                { value: "<2s", label: "Avg enrich" },
-              ].map((stat) => (
-                <div key={stat.label} className="rounded-lg border border-border bg-card/70 p-4">
-                  <p className="text-2xl font-semibold tabular-nums text-foreground">{stat.value}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">{stat.label}</p>
+                  <p className="landing-fade-up landing-fade-up-delay-2 mt-6 max-w-lg text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
+                    Enrich leads without leaving your sheet.
+                  </p>
+
+                  <div className="landing-fade-up landing-fade-up-delay-3 mt-8 flex flex-col gap-3 sm:flex-row">
+                    <Button size="lg" className="h-12 rounded-full px-7 text-base shadow-lg shadow-foreground/10" onClick={scrollToImport}>
+                      Import and enrich
+                      <ArrowRight className="h-4 w-4" />
+                    </Button>
+                    <Button size="lg" variant="outline" className="h-12 rounded-full px-7 text-base" asChild>
+                      <Link href={user?.id ? "/dashboard/tables" : "/register"}>
+                        {user?.id ? "Open dashboard" : "Create free account"}
+                      </Link>
+                    </Button>
+                  </div>
+
+                  <div className="landing-fade-up landing-fade-up-delay-3 mt-10 grid gap-3 sm:grid-cols-3">
+                    {[
+                      { value: "10K+", label: "Sheets created" },
+                      { value: "5", label: "AI agents" },
+                      { value: "<2s", label: "Avg enrich" },
+                    ].map((stat) => (
+                      <div
+                        key={stat.label}
+                        className="rounded-[1.35rem] border border-border/70 bg-background/80 p-4 shadow-sm backdrop-blur"
+                      >
+                        <p className="text-2xl font-semibold tabular-nums tracking-[-0.03em] text-foreground">{stat.value}</p>
+                        <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                          {stat.label}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+
+                <div className="relative px-2 py-4 sm:px-4 lg:px-6">
+                  <HeroPreview />
+                </div>
+              </div>
+            </Card_2>
+          </div>
+
+          <HeroRibbon />
+        </section>
+
+        <section ref={importSectionRef} id="import" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
+          <div className="quickstart-orb quickstart-orb-left absolute inset-x-0 top-16 -z-10 mx-auto h-72 max-w-6xl rounded-full bg-foreground/[0.04] blur-3xl" />
+          <div className="quickstart-orb quickstart-orb-right absolute right-8 bottom-20 -z-10 h-48 w-48 rounded-full bg-foreground/[0.05] blur-3xl" />
+          <div className="mx-auto max-w-6xl">
+            <div className="quickstart-shell-reveal rounded-[2rem] border border-border/70 bg-card/65 p-5 shadow-[0_40px_120px_-60px_color-mix(in_oklab,var(--foreground)_18%,transparent)] backdrop-blur sm:p-8 lg:p-10">
+              <div className="space-y-8">
+                <div className="flex flex-col justify-between">
+                  <div>
+                    <div className="landing-fade-up">
+                      <SectionHeading
+                        label="Quick start"
+                        title="From file to insights in seconds"
+                        description="Import your sheet, preview the structure, and launch enrichment without leaving the workspace."
+                        align="center"
+                      />
+                    </div>
+
+                    <div className="mt-8 grid gap-3 md:grid-cols-3">
+                      {[
+                        {
+                          step: "01",
+                          title: "Drop a CSV or Excel file",
+                          text: "Bring raw lead lists, exports, and internal spreadsheets into GridMind in one step.",
+                        },
+                        {
+                          step: "02",
+                          title: "Preview the structure",
+                          text: "Check headers and rows before enrichment starts so your table stays clean.",
+                        },
+                        {
+                          step: "03",
+                          title: "Launch AI enrichment",
+                          text: "Name the sheet and let the agents prepare contacts, context, and next actions.",
+                        },
+                      ].map((item) => (
+                        <div
+                          key={item.step}
+                          className={cn(
+                            "quickstart-step-reveal rounded-[1.4rem] border border-border/70 bg-background/80 p-4 shadow-sm transition-transform duration-300 hover:-translate-y-1",
+                            item.step === "01" && "quickstart-step-delay-1",
+                            item.step === "02" && "quickstart-step-delay-2",
+                            item.step === "03" && "quickstart-step-delay-3"
+                          )}
+                        >
+                          <div className="flex items-center gap-3">
+                            <span className="flex h-10 w-10 items-center justify-center rounded-full border border-border/70 bg-muted/50 text-[11px] font-semibold tracking-[0.18em] text-muted-foreground">
+                              {item.step}
+                            </span>
+                            <div>
+                              <p className="text-sm font-semibold text-foreground">{item.title}</p>
+                              <p className="mt-1 text-sm leading-6 text-muted-foreground">{item.text}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="landing-fade-up landing-fade-up-delay-2 mt-8 flex flex-wrap justify-center gap-3">
+                    {[
+                      { value: "CSV, XLSX, XLS", label: "Supported formats" },
+                      { value: "5-row instant preview", label: "Before import" },
+                    ].map((item) => (
+                      <div
+                        key={item.label}
+                        className="rounded-full border border-border/70 bg-background/80 px-4 py-2 text-sm text-muted-foreground"
+                      >
+                        <span className="font-medium text-foreground">{item.value}</span> · {item.label}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="quickstart-workspace-reveal rounded-[1.8rem] border border-border/70 bg-background/85 p-4 shadow-[0_32px_90px_-54px_color-mix(in_oklab,var(--foreground)_20%,transparent)] sm:p-5">
+                  <div className="mb-4 flex items-center justify-between gap-4 rounded-[1.25rem] border border-border/70 bg-muted/30 px-4 py-3">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/70 bg-background shadow-sm">
+                        <FileSpreadsheet className="h-5 w-5 text-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-foreground">Import workspace</p>
+                        <p className="truncate text-xs text-muted-foreground">Upload, inspect, and enrich in one flow</p>
+                      </div>
+                    </div>
+                    <span className="rounded-full border border-border/70 bg-background px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Ready
+                    </span>
+                  </div>
+
+                  <div
+                    onDragOver={(event) => {
+                      event.preventDefault()
+                      setIsDragging(true)
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") fileInputRef.current?.click()
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    className={cn(
+                      "quickstart-dropzone relative overflow-hidden rounded-[1.6rem] border-2 border-dashed px-6 py-14 text-center transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      isDragging
+                        ? "scale-[1.01] border-foreground bg-foreground/[0.04] shadow-[0_24px_60px_-30px_color-mix(in_oklab,var(--foreground)_20%,transparent)]"
+                        : csvData
+                          ? "border-border bg-muted/20"
+                          : "border-border/80 bg-card/50 hover:border-foreground/25 hover:bg-muted/30"
+                    )}
+                  >
+                    <div className="absolute inset-x-10 top-0 h-24 bg-gradient-to-b from-foreground/[0.05] to-transparent blur-2xl" />
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                  accept=".csv,.xlsx,.xls"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        if (file) handleFile(file)
+                      }}
+                    />
+                    {csvData ? (
+                      <div className="relative flex flex-col items-center gap-4">
+                        <div className="quickstart-icon-pop flex h-16 w-16 items-center justify-center rounded-[1.4rem] bg-foreground text-background shadow-lg shadow-foreground/15">
+                          <Check className="h-8 w-8" />
+                        </div>
+                        <div>
+                          <p className="text-xl font-semibold tracking-[-0.02em] text-foreground">{fileName}</p>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            {csvData.headers.length} columns, {csvData.rows.length} rows. Click to replace.
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="relative flex flex-col items-center gap-4">
+                        <div className="quickstart-icon-pop flex h-16 w-16 items-center justify-center rounded-[1.4rem] border border-border/70 bg-background text-foreground shadow-lg shadow-foreground/5">
+                          <UploadCloud className="h-8 w-8" />
+                        </div>
+                        <div>
+                          <p className="text-xl font-semibold tracking-[-0.02em] text-foreground">
+                            Drop your CSV or Excel file here
+                          </p>
+                        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                            Click to browse or drag and drop. CSV, XLSX, and XLS are supported.
+                        </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {csvData && (
+                    <div className="quickstart-preview-reveal mt-5 overflow-hidden rounded-[1.35rem] border border-border/80 bg-card shadow-sm">
+                      <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <FileSpreadsheet className="h-4 w-4 text-foreground" />
+                          <span className="truncate text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                            {fileName} preview
+                          </span>
+                        </div>
+                        <span className="rounded-full bg-muted px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          First 5 rows
+                        </span>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full text-sm">
+                          <thead className="bg-muted/40">
+                            <tr>
+                              {csvData.headers.map((header, index) => (
+                                <th
+                                  key={`${header}-${index}`}
+                                  className="whitespace-nowrap border-r border-border px-4 py-2.5 text-left text-xs font-semibold text-muted-foreground last:border-r-0"
+                                >
+                                  {header || `Column ${index + 1}`}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {csvData.rows.slice(0, 5).map((row, rowIndex) => (
+                              <tr key={rowIndex} className="border-t border-border/50 transition-colors hover:bg-muted/20">
+                                {csvData.headers.map((_, colIndex) => (
+                                  <td
+                                    key={`${rowIndex}-${colIndex}`}
+                                    className="max-w-50 truncate whitespace-nowrap border-r border-border/30 px-4 py-2.5 text-foreground last:border-r-0"
+                                  >
+                                    {row[colIndex] ?? ""}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {csvData.rows.length > 5 && (
+                        <div className="border-t border-border bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground">
+                          Showing 5 of {csvData.rows.length} rows
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {csvData && (
+                    <div className="landing-fade-up landing-fade-up-delay-3 mt-5 flex flex-col gap-3 sm:flex-row sm:items-center">
+                      <Input
+                        className="h-12 flex-1 rounded-xl border-border/80 bg-background text-base"
+                        placeholder="Name your spreadsheet"
+                        value={sheetName}
+                        onChange={(event) => setSheetName(event.target.value)}
+                      />
+                      <Button
+                        size="lg"
+                        className="h-12 shrink-0 rounded-xl px-8 text-base shadow-lg shadow-foreground/10"
+                        disabled={isCreating || !sheetName.trim()}
+                        onClick={handleStartEnrich}
+                      >
+                        {isCreating ? "Creating..." : "Start enrich"}
+                        {!isCreating && <ArrowRight className="h-4 w-4" />}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <LandingWorkflowSection />
+
+        <section id="agents" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
+          <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-muted/30 to-transparent" />
+          <div className="mx-auto max-w-6xl">
+            <SectionHeading
+              label="AI agents"
+              title="Five agents. Every data workflow covered."
+              description="Each agent is purpose-built for a business data task. Chain them together or let the Orchestrator decide."
+            />
+
+            <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-6">
+              {AGENTS.slice(0, 3).map((agent) => (
+                <AgentCard key={agent.title} agent={agent} className="md:col-span-2" />
+              ))}
+              {AGENTS.slice(3, 4).map((agent) => (
+                <AgentCard key={agent.title} agent={agent} className="md:col-span-3" />
+              ))}
+              {AGENTS.slice(4).map((agent) => (
+                <AgentCard key={agent.title} agent={agent} className="md:col-span-3" />
               ))}
             </div>
           </div>
+        </section>
 
-          <div className="relative">
-            <div className="rounded-lg border border-border bg-card shadow-2xl shadow-primary/10">
-              <div className="flex items-center justify-between gap-4 border-b border-border px-4 py-3">
-                <div className="flex min-w-0 items-center gap-2">
-                  <FileSpreadsheet className="h-4 w-4 shrink-0 text-primary" />
-                  <span className="truncate text-sm font-medium text-foreground">Lead enrichment.csv</span>
-                </div>
-                <span className="shrink-0 rounded-md border border-border bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">
-                  Live agents
-                </span>
-              </div>
-
-              <div className="grid grid-cols-[1fr_220px] overflow-hidden max-lg:grid-cols-1">
-                <div className="overflow-x-auto">
-                  <table className="min-w-[560px] text-sm">
-                    <thead className="bg-muted/70 text-xs text-muted-foreground">
-                      <tr>
-                        {["Company", "Website", "Contact", "Status"].map((header) => (
-                          <th key={header} className="border-r border-border px-4 py-3 text-left font-medium last:border-r-0">
-                            {header}
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {SAMPLE_ROWS.map((row) => (
-                        <tr key={row[0]} className="border-t border-border/70">
-                          {row.map((cell, index) => (
-                            <td key={`${row[0]}-${cell}`} className="border-r border-border/50 px-4 py-3 text-foreground last:border-r-0">
-                              {index === 3 ? (
-                                <span className="rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary">
-                                  {cell}
-                                </span>
-                              ) : (
-                                cell
-                              )}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="border-l border-border bg-background/60 p-4 max-lg:border-l-0 max-lg:border-t">
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">Agent run</p>
-                  <div className="mt-4 space-y-3">
-                    {[
-                      { icon: Globe2, label: "Scraper found 18 sources" },
-                      { icon: BrandIcon, label: "AI agent reviewed rows" },
-                      { icon: DatabaseZap, label: "Rows enriched" },
-                    ].map((item) => {
-                      const Icon = item.icon
-                      return (
-                        <div key={item.label} className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2">
-                          <Icon className="h-4 w-4 text-primary" />
-                          <span className="text-xs text-muted-foreground">{item.label}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <div className="mt-5 rounded-lg bg-primary px-3 py-3 text-primary-foreground">
-                    <p className="text-xs font-medium">Next action</p>
-                    <p className="mt-1 text-sm">Generate personalized outreach for verified contacts.</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section ref={importSectionRef} id="import" className="relative bg-secondary/20 px-4 py-16 sm:px-6 md:py-24">
-        <div className="mx-auto max-w-4xl">
-          <div className="mb-12 text-center">
-            <span className="text-xs font-semibold uppercase text-primary">Quick Start</span>
-            <h2 className="mt-2 text-3xl font-bold md:text-4xl">From file to insights in seconds</h2>
-            <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-              Drop your CSV or Excel file, name the sheet, and let the built-in agents prepare it for enrichment.
-            </p>
-          </div>
-
-          <div
-            onDragOver={(event) => {
-              event.preventDefault()
-              setIsDragging(true)
-            }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") fileInputRef.current?.click()
-            }}
-            role="button"
-            tabIndex={0}
-            className={`relative flex cursor-pointer flex-col items-center justify-center gap-3 rounded-lg border-2 border-dashed px-6 py-12 text-center transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              isDragging
-                ? "scale-[1.01] border-primary bg-primary/10"
-                : csvData
-                  ? "border-border bg-muted/30"
-                  : "border-border hover:border-primary/50 hover:bg-primary/5"
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls,.txt"
-              className="hidden"
-              onChange={(event) => {
-                const file = event.target.files?.[0]
-                if (file) handleFile(file)
-              }}
+        <section id="pricing" className="border-t border-border/70 bg-muted/15 px-4 py-20 sm:px-6 md:py-28">
+          <div className="mx-auto max-w-5xl">
+            <SectionHeading
+              label="Pricing"
+              title="Simple, transparent pricing"
+              description="Start for free. Upgrade when your data workflows need more power."
             />
-            {csvData ? (
-              <>
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-muted text-foreground">
-                  <Check className="h-6 w-6" />
-                </div>
-                <p className="font-medium text-foreground">{fileName}</p>
-                <p className="text-sm text-muted-foreground">
-                  {csvData.headers.length} columns, {csvData.rows.length} rows. Click to replace.
-                </p>
-              </>
-            ) : (
-              <>
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <UploadCloud className="h-6 w-6" />
-                </div>
-                <p className="font-medium text-foreground">Drop your CSV or Excel file here</p>
-                <p className="text-sm text-muted-foreground">or click to browse. CSV, XLSX, XLS, and TXT are supported.</p>
-              </>
-            )}
-          </div>
 
-          {csvData && (
-            <div className="mt-8 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
-              <div className="flex items-center gap-2 border-b border-border px-4 py-2.5">
-                <FileSpreadsheet className="h-4 w-4 text-primary" />
-                <span className="ml-1 truncate text-xs text-muted-foreground">{fileName} preview</span>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-muted/50">
-                    <tr>
-                      {csvData.headers.map((header, index) => (
-                        <th
-                          key={`${header}-${index}`}
-                          className="whitespace-nowrap border-r border-border px-4 py-2 text-left text-xs font-semibold text-muted-foreground last:border-r-0"
-                        >
-                          {header || `Column ${index + 1}`}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {csvData.rows.slice(0, 5).map((row, rowIndex) => (
-                      <tr key={rowIndex} className="border-t border-border/50 transition-colors hover:bg-muted/20">
-                        {csvData.headers.map((_, colIndex) => (
-                          <td
-                            key={`${rowIndex}-${colIndex}`}
-                            className="max-w-50 truncate whitespace-nowrap border-r border-border/30 px-4 py-2 text-foreground last:border-r-0"
-                          >
-                            {row[colIndex] ?? ""}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {csvData.rows.length > 5 && (
-                <div className="border-t border-border bg-muted/20 px-4 py-2 text-xs text-muted-foreground">
-                  Showing 5 of {csvData.rows.length} rows
-                </div>
-              )}
-            </div>
-          )}
-
-          {csvData && (
-            <div className="mt-6 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center">
-              <Input
-                className="h-11 flex-1 text-base"
-                placeholder="Name your spreadsheet"
-                value={sheetName}
-                onChange={(event) => setSheetName(event.target.value)}
-              />
-              <Button
-                size="lg"
-                className="h-11 shrink-0 px-8 text-base shadow-lg shadow-primary/20"
-                disabled={isCreating || !sheetName.trim()}
-                onClick={handleStartEnrich}
-              >
-                {isCreating ? "Creating..." : "Start enrich"}
-                {!isCreating && <ArrowRight className="h-4 w-4" />}
-              </Button>
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section id="agents" className="relative overflow-hidden px-4 py-16 sm:px-6 md:py-24">
-        <div className="mx-auto max-w-6xl">
-          <div className="mb-16 text-center">
-            <span className="text-xs font-semibold uppercase text-primary">AI Agents</span>
-            <h2 className="mt-2 text-3xl font-bold md:text-4xl">Five agents. Every data workflow covered.</h2>
-            <p className="mx-auto mt-3 max-w-xl text-muted-foreground">
-              Each agent is purpose-built for a business data task. Chain them together or let the Orchestrator decide.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {AGENTS.slice(0, 3).map((agent) => (
-              <AgentCard key={agent.title} agent={agent} />
-            ))}
-          </div>
-          <div className="mt-4 grid grid-cols-1 gap-4 md:mx-auto md:max-w-2xl md:grid-cols-2">
-            {AGENTS.slice(3).map((agent) => (
-              <AgentCard key={agent.title} agent={agent} />
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="pricing" className="relative bg-secondary/20 px-4 py-16 sm:px-6 md:py-24">
-        <div className="mx-auto max-w-5xl">
-          <div className="mb-16 text-center">
-            <span className="text-xs font-semibold uppercase text-primary">Pricing</span>
-            <h2 className="mt-2 text-3xl font-bold md:text-4xl">Simple, transparent pricing</h2>
-            <p className="mt-3 text-muted-foreground">Start for free. Upgrade when your data workflows need more power.</p>
-          </div>
-
-          <div className="grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">
-            {publicPackages.map((plan) => (
-              (() => {
+            <div className="mt-14 grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">
+              {publicPackages.map((plan) => {
                 const parsed = parsePackageDescription(plan.description)
                 return (
-              <div
-                key={plan.id}
-                className={`relative flex flex-col rounded-lg border p-7 transition-all duration-200 ${
-                  plan.isFeatured
-                    ? "z-10 border-primary bg-primary/5 shadow-2xl shadow-primary/15 md:-translate-y-2"
-                    : "border-border bg-card hover:border-primary/40 hover:shadow-lg"
-                }`}
-              >
-                {plan.isFeatured && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-                    <span className="inline-block rounded-md bg-primary px-3 py-1 text-xs font-semibold text-primary-foreground shadow-lg shadow-primary/30">
-                      Featured
-                    </span>
+                  <div
+                    key={plan.id}
+                    className={cn(
+                      "relative flex flex-col rounded-[1.5rem] border p-7 transition-all duration-300",
+                      plan.isFeatured
+                        ? "z-10 border-foreground/20 bg-background shadow-[0_28px_70px_-36px_color-mix(in_oklab,var(--foreground)_30%,transparent)] md:-translate-y-2"
+                        : "border-border/80 bg-background/80 hover:border-foreground/15 hover:shadow-lg"
+                    )}
+                  >
+                    {plan.isFeatured && (
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                        <span className="inline-flex rounded-full bg-foreground px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-background">
+                          Featured
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="mb-6">
+                      <h3 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">{plan.name}</h3>
+                      <div className="mt-3 flex items-baseline gap-1">
+                        <span className="text-4xl font-semibold tracking-[-0.04em] text-foreground">
+                          ${(plan.salePriceCents / 100).toFixed(2)}
+                        </span>
+                        <span className="text-sm text-muted-foreground">one-time</span>
+                      </div>
+                      <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                        {parsed.description || "Credits package created by your admin team."}
+                      </p>
+                    </div>
+
+                    <Button
+                      className={cn("mb-6 h-11 w-full rounded-xl", plan.isFeatured && "shadow-lg shadow-foreground/10")}
+                      variant={plan.isFeatured ? "default" : "outline"}
+                      asChild
+                    >
+                      <Link href={user?.id && plan.polarProductId ? `/api/billing/checkout?packageId=${plan.id}` : "/register"}>
+                        {user?.id && plan.polarProductId ? "Buy credits" : "Get started"}
+                      </Link>
+                    </Button>
+
+                    <ul className="flex-1 space-y-3">
+                      <li className="flex items-start gap-2.5 text-sm text-foreground">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+                        {plan.credits.toLocaleString()} credits included
+                      </li>
+                      <li className="flex items-start gap-2.5 text-sm text-foreground">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+                        Valid for {formatPackagePeriod(parsed.periodMonths).toLowerCase()}
+                      </li>
+                      <li className="flex items-start gap-2.5 text-sm text-foreground">
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
+                        {plan.polarProductId ? "Polar checkout connected" : "Awaiting Polar product link"}
+                      </li>
+                    </ul>
                   </div>
-                )}
-
-                <div className="mb-6">
-                  <h3 className="text-sm font-semibold uppercase text-muted-foreground">{plan.name}</h3>
-                  <div className="mt-2 flex items-baseline gap-1">
-                    <span className="text-4xl font-bold text-foreground">${(plan.salePriceCents / 100).toFixed(2)}</span>
-                    <span className="text-sm text-muted-foreground">one-time</span>
-                  </div>
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    {parsed.description || "Credits package created by your admin team."}
-                  </p>
-                </div>
-
-                <Button
-                  className={`mb-6 w-full ${plan.isFeatured ? "shadow-lg shadow-primary/25" : ""}`}
-                  variant={plan.isFeatured ? "default" : "outline"}
-                  asChild
-                >
-                  <Link href={user?.id && plan.polarProductId ? `/api/billing/checkout?packageId=${plan.id}` : "/register"}>
-                    {user?.id && plan.polarProductId ? "Buy credits" : "Get started"}
-                  </Link>
-                </Button>
-
-                <ul className="flex-1 space-y-2.5">
-                  <li className="flex items-start gap-2.5 text-sm text-foreground">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
-                    {plan.credits.toLocaleString()} credits included
-                  </li>
-                  <li className="flex items-start gap-2.5 text-sm text-foreground">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
-                    Valid for {formatPackagePeriod(parsed.periodMonths).toLowerCase()}
-                  </li>
-                  <li className="flex items-start gap-2.5 text-sm text-foreground">
-                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-foreground" />
-                    {plan.polarProductId ? "Polar checkout connected" : "Awaiting Polar product link"}
-                  </li>
-                </ul>
-              </div>
                 )
-              })()
-            ))}
-          </div>
-
-          {publicPackages.length === 0 && (
-            <div className="rounded-lg border border-dashed border-border bg-card/60 p-8 text-center text-sm text-muted-foreground">
-              No live packages yet. An admin can create them from the billing dashboard.
+              })}
             </div>
-          )}
 
-          <p className="mt-10 text-center text-sm text-muted-foreground">
-            Packages are loaded from the admin billing dashboard, so pricing and credits stay dynamic.{" "}
-            <Link href="/register" className="text-primary underline underline-offset-4 hover:text-primary/80">
-              Create an account
-            </Link>
-          </p>
-        </div>
-      </section>
+            {publicPackages.length === 0 && (
+              <div className="mt-14 rounded-[1.5rem] border border-dashed border-border bg-background/70 p-10 text-center text-sm text-muted-foreground">
+                No live packages yet. An admin can create them from the billing dashboard.
+              </div>
+            )}
+
+            <p className="mt-10 text-center text-sm text-muted-foreground">
+              Packages are loaded from the admin billing dashboard, so pricing and credits stay dynamic.{" "}
+              <Link href="/register" className="font-medium text-foreground underline underline-offset-4 hover:text-foreground/80">
+                Create an account
+              </Link>
+            </p>
+          </div>
+        </section>
+
+      </main>
 
       <AppFooter />
     </div>

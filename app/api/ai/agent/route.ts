@@ -208,7 +208,13 @@ export async function POST(request: NextRequest) {
         if (changeCount > 0) parts.push(`${changeCount} cell edit${changeCount !== 1 ? "s" : ""}`)
         if (formattingCount > 0) parts.push(`${formattingCount} formatting change${formattingCount !== 1 ? "s" : ""}`)
         if (parts.length > 0) {
-          send({ type: "thinking", content: `Prepared: ${parts.join(" Â· ")}` })
+          send({ type: "thinking", content: `Prepared: ${parts.join(" | ")}` })
+        }
+        if (changeCount > 0 || formattingCount > 0) {
+          send({
+            type: "thinking",
+            content: `📝 Writing ${changeCount} cell edit${changeCount === 1 ? "" : "s"}${formattingCount > 0 ? ` and ${formattingCount} formatting change${formattingCount === 1 ? "" : "s"}` : ""} to the sheet...`,
+          })
         }
 
         send({
@@ -523,9 +529,24 @@ function sendStepUpdates(
     if (result.toolName === "findCells" && Array.isArray(output.matches)) {
       send({ type: "thinking", content: `Found ${output.matches.length} matching cell${output.matches.length === 1 ? "" : "s"}.` })
     } else if (result.toolName === "searchWeb" && Array.isArray(output.results)) {
-      send({ type: "thinking", content: `Search returned ${output.results.length} result${output.results.length === 1 ? "" : "s"}.` })
+      const hits = output.results as Array<{ title?: string; url?: string }>
+      if (hits.length === 0) {
+        send({ type: "thinking", content: "Search returned 0 results. Trying another search..." })
+      } else {
+        const preview = hits
+          .slice(0, 3)
+          .map((hit, index) => `  ${index + 1}. ${(hit.title || hit.url || "").slice(0, 55)}\n     ${hit.url || ""}`)
+          .join("\n")
+        send({ type: "thinking", content: `Search returned ${hits.length} result${hits.length === 1 ? "" : "s"}.\n${preview}` })
+      }
     } else if (result.toolName === "scrapeWebPage") {
-      send({ type: "thinking", content: output.success ? "Page scraped successfully." : "Page scrape failed or returned limited data." })
+      const short = String(output.url || "").replace(/^https?:\/\//, "").slice(0, 70)
+      send({
+        type: "thinking",
+        content: output.success
+          ? `Scraped ${short || "page"} successfully${output.content ? ` and extracted ${Math.min(String(output.content).length, 8000)} chars` : ""}.`
+          : `Page scrape failed or returned limited data${short ? ` for ${short}` : ""}.`,
+      })
     }
   }
 }

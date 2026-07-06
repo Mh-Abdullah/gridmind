@@ -1,0 +1,11 @@
+var R=require("../../../../../chunks/[turbopack]_runtime.js")("server/app/api/admin/billing/sync-product/route.js")
+R.c("server/chunks/[root-of-the-server]__e83f603f._.js")
+R.c("server/chunks/node_modules_zod_v4_core_6af585dd._.js")
+R.c("server/chunks/node_modules_next_1402a1da._.js")
+R.c("server/chunks/[root-of-the-server]__07081fb9._.js")
+R.c("server/chunks/node_modules_@polar-sh_sdk_dist_esm_index_414a4f40.js")
+R.c("server/chunks/[root-of-the-server]__8893af36._.js")
+R.c("server/chunks/_f8d3f86c._.js")
+R.c("server/chunks/_next-internal_server_app_api_admin_billing_sync-product_route_actions_7a0584b8.js")
+R.m(97072)
+module.exports=R.m(97072).exports
