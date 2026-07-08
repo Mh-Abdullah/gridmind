@@ -6,6 +6,7 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { BackToTablesButton } from "@/components/back-to-tables-button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { CSVExport } from "@/components/csv-export"
 import { CSVImport } from "@/components/csv-import"
@@ -1463,7 +1464,7 @@ export default function TableEditorPage() {
   }
 
   return (
-    <div className="flex h-screen bg-background">
+    <div data-spreadsheet-page="true" className="flex h-screen bg-background">
       {/* Persistent hidden file input for "User Input - File" cells */}
       <input
         ref={cellFileInputRef}
@@ -1487,10 +1488,8 @@ export default function TableEditorPage() {
       {/* Main content area */}
       <div className="flex flex-col flex-1 min-w-0 transition-all duration-300">
       {/* Top Header */}
-      <div data-top-nav="true" className="flex items-center gap-2 border-b border-border px-4 py-3">
-        <Button variant="ghost" size="icon" className="shrink-0" onClick={() => router.push("/dashboard/tables")}>
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-        </Button>
+      <div data-top-nav="true" className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center gap-3 shrink-0">
+        <BackToTablesButton />
         <Input
           value={projectName}
           onChange={(e) => setProjectName(e.target.value)}

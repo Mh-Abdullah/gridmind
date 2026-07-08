@@ -7,6 +7,7 @@ import { useQuery, useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Id } from "@/convex/_generated/dataModel"
 import { AppSidebar } from "@/components/app-sidebar"
+import { BackToTablesButton } from "@/components/back-to-tables-button"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -731,15 +732,19 @@ export default function ContextsPage() {
       {/* Main content */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
-        <header className="flex items-center justify-between border-b border-border px-6 h-14 shrink-0">
+        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <button
-              className="md:hidden rounded-md p-1.5 hover:bg-muted"
+              className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
               onClick={() => setSidebarOpen(!sidebarOpen)}
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="text-base font-semibold">Contexts</span>
+            <BackToTablesButton />
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Workspace</p>
+              <h1 className="text-lg font-semibold text-foreground">Contexts</h1>
+            </div>
           </div>
           <div className="flex items-center gap-3">
             <ThemeToggle />

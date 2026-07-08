@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { BackToTablesButton } from "@/components/back-to-tables-button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { api } from "@/convex/_generated/api"
@@ -171,19 +172,20 @@ function BillingPageContent() {
           <div className="absolute right-[-8%] top-[16rem] h-[18rem] w-[18rem] rounded-full bg-[radial-gradient(circle,_rgba(14,165,233,0.14),_transparent_60%)] blur-3xl" />
         </div>
 
-        <header className="sticky top-0 z-30 border-b border-border/70 bg-background/82 px-4 py-4 backdrop-blur-xl md:px-6">
-          <div className="flex items-center justify-between gap-4">
+        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
+          <div className="flex w-full items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="flex h-10 w-10 items-center justify-center rounded-2xl border border-border/70 bg-card text-muted-foreground transition-colors hover:text-foreground md:hidden"
+                className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
                 aria-label="Open navigation"
               >
                 <Menu className="h-5 w-5" />
               </button>
+              <BackToTablesButton />
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Billing</p>
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Wallet and payments</h1>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Billing</p>
+                <h1 className="text-lg font-semibold text-foreground">Wallet and payments</h1>
               </div>
             </div>
             <ThemeToggle />

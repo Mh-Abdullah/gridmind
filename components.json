@@ -19,6 +19,8 @@
     "hooks": "@/hooks"
   },
   "registries": {
-    "@cardcn": "https://cardcn.dev/r/{name}.json"
+    "@cardcn": "https://cardcn.dev/r/{name}.json",
+    "@react-bits": "https://reactbits.dev/r/{name}.json",
+    "@evilcharts": "https://evilcharts.com/r/{name}.json"
   }
 }

@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "seed": "npx tsx scripts/seed-convex.ts",
@@ -32,11 +32,14 @@
     "js-cookie": "^3.0.5",
     "jsonwebtoken": "^9.0.3",
     "leaflet": "^1.9.4",
+    "lenis": "^1.3.25",
     "lucide-react": "^0.562.0",
+    "motion": "^12.42.2",
     "next": "16.1.1",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-leaflet": "^5.0.0",
+    "recharts": "^3.9.2",
     "tailwind-merge": "^3.4.0",
     "xlsx": "^0.18.5",
     "zod": "^4.4.3"

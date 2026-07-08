@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useQuery } from "convex/react"
+import { PolarAngleAxis } from "recharts"
 import {
   Activity,
   BarChart3,
@@ -15,7 +16,26 @@ import {
 } from "lucide-react"
 
 import { AppSidebar } from "@/components/app-sidebar"
+import { BackToTablesButton } from "@/components/back-to-tables-button"
+import {
+  ActiveDot,
+  Dot,
+  EvilLineChart,
+  Grid,
+  Legend,
+  Line,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "@/components/evilcharts/charts/line-chart"
+import {
+  EvilRadialChart,
+  Legend as RadialLegend,
+  RadialBar,
+  Tooltip as RadialTooltip,
+} from "@/components/evilcharts/charts/radial-chart"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { UsageMonospaceBarChart } from "@/components/usage-monospace-bar-chart"
 import { api } from "@/convex/_generated/api"
 import { useAuth } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
@@ -24,42 +44,11 @@ function formatCredits(value: number) {
   return value.toLocaleString()
 }
 
-function formatDate(timestamp: number) {
-  return new Date(timestamp).toLocaleString([], {
-    dateStyle: "medium",
-    timeStyle: "short",
-  })
-}
-
 function formatShortDate(timestamp: number) {
   return new Date(timestamp).toLocaleDateString([], {
     month: "short",
     day: "numeric",
   })
-}
-
-function buildLinePath(values: number[], width: number, height: number) {
-  if (values.length === 0) return ""
-  if (values.length === 1) return `M 0 ${height / 2} L ${width} ${height / 2}`
-
-  const max = Math.max(...values, 1)
-  const min = Math.min(...values, 0)
-  const range = Math.max(max - min, 1)
-
-  return values
-    .map((value, index) => {
-      const x = (index / (values.length - 1)) * width
-      const y = height - ((value - min) / range) * height
-      return `${index === 0 ? "M" : "L"} ${x.toFixed(2)} ${y.toFixed(2)}`
-    })
-    .join(" ")
-}
-
-function buildAreaPath(values: number[], width: number, height: number) {
-  if (values.length === 0) return ""
-
-  const line = buildLinePath(values, width, height)
-  return `${line} L ${width} ${height} L 0 ${height} Z`
 }
 
 function SummaryCard({
@@ -150,60 +139,52 @@ function ChartShell({
   )
 }
 
-function DonutChart({
+function WalletMixRadialChart({
   segments,
-  centerLabel,
-  centerValue,
 }: {
-  segments: Array<{ label: string; value: number; color: string; chip: string }>
-  centerLabel: string
-  centerValue: string
+  segments: Array<{ key: string; label: string; value: number; color: string; chip: string }>
 }) {
   const total = segments.reduce((sum, segment) => sum + segment.value, 0)
-  let angleCursor = 0
-
-  const gradient = segments
-    .map((segment) => {
-      const start = angleCursor
-      const sweep = total > 0 ? (segment.value / total) * 360 : 0
-      angleCursor += sweep
-      return `${segment.color} ${start}deg ${angleCursor}deg`
-    })
-    .join(", ")
+  const chartData = segments.map((segment) => ({
+    name: segment.key,
+    value: total > 0 ? Math.round((segment.value / total) * 100) : 0,
+    credits: segment.value,
+  }))
+  const chartConfig = Object.fromEntries(
+    segments.map((segment) => [
+      segment.key,
+      {
+        label: segment.label,
+        colors: {
+          light: [segment.color],
+        },
+      },
+    ])
+  )
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[220px_1fr] lg:items-center">
-      <div className="mx-auto flex h-[220px] w-[220px] items-center justify-center rounded-full border border-border/70 bg-background/70">
-        <div
-          className="relative flex h-[180px] w-[180px] items-center justify-center rounded-full"
-          style={{ background: total > 0 ? `conic-gradient(${gradient})` : "var(--color-muted)" }}
-        >
-          <div className="flex h-[108px] w-[108px] flex-col items-center justify-center rounded-full border border-border/70 bg-card text-center">
-            <p className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">{centerLabel}</p>
-            <p className="mt-2 text-2xl font-semibold tracking-[-0.04em] text-foreground">{centerValue}</p>
-          </div>
-        </div>
-      </div>
-      <div className="space-y-3">
-        {segments.map((segment) => {
-          const percent = total > 0 ? Math.round((segment.value / total) * 100) : 0
-          return (
-            <div key={segment.label} className="flex items-center justify-between gap-3 rounded-2xl border border-border/60 bg-background/70 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: segment.color }} />
-                <div>
-                  <p className="text-sm font-medium text-foreground">{segment.label}</p>
-                  <p className="text-xs text-muted-foreground">{percent}% of tracked credits</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-sm font-semibold text-foreground">{formatCredits(segment.value)}</p>
-                <p className={cn("text-xs", segment.chip)}>{segment.label}</p>
-              </div>
-            </div>
-          )
-        })}
-      </div>
+    <div className="flex justify-center">
+      <EvilRadialChart
+        data={chartData}
+        config={chartConfig}
+        nameKey="name"
+        innerRadius="22%"
+        outerRadius="94%"
+        defaultSelectedDataKey={segments[0]?.key ?? null}
+        className="h-[360px] w-full max-w-[460px] [aspect-ratio:auto]"
+        chartProps={{ margin: { top: 24, right: 34, bottom: 42, left: 34 } }}
+      >
+        <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
+        <RadialTooltip variant="frosted-glass" roundness="xl" defaultIndex={0} />
+        <RadialBar
+          dataKey="value"
+          barSize={16}
+          cornerRadius={10}
+          isClickable
+          glowingBars={segments.slice(-1).map((segment) => segment.key)}
+        />
+        <RadialLegend variant="circle" align="center" verticalAlign="bottom" isClickable />
+      </EvilRadialChart>
     </div>
   )
 }
@@ -212,106 +193,79 @@ function TrendChart({
   values,
   labels,
   empty,
-  color = "var(--color-foreground)",
 }: {
   values: number[]
   labels: string[]
   empty: string
-  color?: string
 }) {
   if (values.length === 0) {
     return <div className="rounded-[22px] border border-dashed border-border/70 bg-background/70 p-4 text-sm text-muted-foreground">{empty}</div>
   }
 
-  const width = 640
-  const height = 220
-  const linePath = buildLinePath(values, width, height)
-  const areaPath = buildAreaPath(values, width, height)
+  const chartData = values.map((value, index) => {
+    const windowValues = values.slice(Math.max(index - 2, 0), index + 1)
+    const average = Math.round(windowValues.reduce((total, current) => total + current, 0) / windowValues.length)
 
-  return (
-    <div className="rounded-[24px] border border-border/65 bg-background/70 p-4">
-      <div className="overflow-x-auto">
-        <svg viewBox={`0 0 ${width} ${height + 40}`} className="min-w-[640px]">
-          <defs>
-            <linearGradient id="usage-area-fill" x1="0" x2="0" y1="0" y2="1">
-              <stop offset="0%" stopColor={color} stopOpacity="0.28" />
-              <stop offset="100%" stopColor={color} stopOpacity="0.04" />
-            </linearGradient>
-          </defs>
-
-          {[0.25, 0.5, 0.75].map((ratioLine) => (
-            <line
-              key={ratioLine}
-              x1="0"
-              x2={width}
-              y1={height * ratioLine}
-              y2={height * ratioLine}
-              stroke="currentColor"
-              className="text-border/70"
-              strokeDasharray="6 8"
-            />
-          ))}
-
-          <path d={areaPath} fill="url(#usage-area-fill)" />
-          <path d={linePath} fill="none" stroke={color} strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-
-          {values.map((value, index) => {
-            const max = Math.max(...values, 1)
-            const min = Math.min(...values, 0)
-            const range = Math.max(max - min, 1)
-            const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width
-            const y = height - ((value - min) / range) * height
-
-            return (
-              <g key={`trend-point-${index}-${labels[index] ?? "unknown"}-${value}`}>
-                <circle cx={x} cy={y} r="4.5" fill="var(--color-background)" stroke={color} strokeWidth="3" />
-                <text x={x} y={height + 24} textAnchor="middle" className="fill-[var(--color-muted-foreground)] text-[11px]">
-                  {labels[index]}
-                </text>
-              </g>
-            )
-          })}
-        </svg>
-      </div>
-    </div>
-  )
-}
-
-function VerticalBarChart({
-  rows,
-  empty,
-  tone = "bg-foreground",
-}: {
-  rows: Array<{ label: string; value: number; helper?: string }>
-  empty: string
-  tone?: string
-}) {
-  if (rows.length === 0) {
-    return <div className="rounded-[22px] border border-dashed border-border/70 bg-background/70 p-4 text-sm text-muted-foreground">{empty}</div>
+    return {
+      label: labels[index] ?? `Point ${index + 1}`,
+      balance: value,
+      average,
+    }
+  })
+  const chartConfig = {
+    balance: {
+      label: "Balance",
+      colors: {
+        light: ["#ff3b30", "#ff9500", "#f5a400", "#af52de", "#3b22ff"],
+      },
+    },
+    average: {
+      label: "Moving avg",
+      colors: {
+        light: ["#8c8c8c"],
+      },
+    },
   }
 
-  const max = Math.max(...rows.map((row) => row.value), 1)
-
   return (
-    <div className="rounded-[24px] border border-border/65 bg-background/70 p-4">
-      <div className="grid min-h-[260px] grid-cols-5 items-end gap-3 md:grid-cols-6 xl:grid-cols-8">
-        {rows.map((row, index) => (
-          <div key={`bar-${index}-${row.label}`} className="flex h-full flex-col justify-end gap-3">
-            <div className="flex min-h-[200px] items-end">
-              <div className="relative h-full w-full overflow-hidden rounded-t-2xl rounded-b-lg bg-muted/60">
-                <div
-                  className={cn("absolute inset-x-0 bottom-0 rounded-t-2xl", tone)}
-                  style={{ height: `${Math.max((row.value / max) * 100, 6)}%` }}
-                />
-              </div>
-            </div>
-            <div className="text-center">
-              <p className="text-sm font-semibold text-foreground">{formatCredits(row.value)}</p>
-              <p className="truncate text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{row.label}</p>
-              {row.helper ? <p className="mt-1 text-[11px] text-muted-foreground">{row.helper}</p> : null}
-            </div>
-          </div>
-        ))}
+    <div className="overflow-hidden rounded-[28px] border border-border/70 bg-background p-4 shadow-[0_28px_80px_-62px_var(--gm-amber)]">
+      <div>
+        <div className="mb-2 flex justify-end gap-4 text-sm text-muted-foreground">
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-[3px] bg-[var(--gm-amber)]" />
+            Balance
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <span className="h-2.5 w-2.5 rounded-[3px] bg-muted-foreground/65" />
+            Moving avg
+          </span>
+        </div>
+        <EvilLineChart
+          data={chartData}
+          config={chartConfig}
+          curveType="bump"
+          animationType="left-to-right"
+          defaultSelectedDataKey="balance"
+          showBrush
+          xDataKey="label"
+          brushHeight={54}
+          brushFormatLabel={(value) => String(value)}
+          className="h-[390px] rounded-[20px]"
+          chartProps={{ margin: { top: 22, right: 22, bottom: 14, left: 8 } }}
+        >
+          <Grid strokeOpacity={0.36} />
+          <XAxis dataKey="label" interval="preserveStartEnd" tickMargin={16} />
+          <YAxis tickFormatter={(value) => formatCredits(Number(value))} width={64} />
+          <Legend variant="rounded-square" isClickable />
+          <Tooltip variant="frosted-glass" roundness="xl" defaultIndex={chartData.length - 1} />
+          <Line dataKey="balance" animationType="left-to-right" glowing isClickable enableBufferLine>
+            <Dot variant="border" />
+            <ActiveDot variant="colored-border" />
+          </Line>
+          <Line dataKey="average" animationType="left-to-right" strokeVariant="dashed" isClickable>
+            <ActiveDot variant="default" />
+          </Line>
+        </EvilLineChart>
       </div>
     </div>
   )
@@ -361,18 +315,21 @@ export default function UsagePage() {
 
   const trackedCreditSegments = [
     {
+      key: "balance",
       label: "Current balance",
       value: summary?.balanceCredits ?? 0,
-      color: "#111111",
-      chip: "text-foreground",
+      color: "#3b82f6",
+      chip: "text-blue-600 dark:text-blue-300",
     },
     {
+      key: "purchased",
       label: "Purchased",
       value: summary?.totalPurchasedCredits ?? 0,
       color: "#10b981",
       chip: "text-emerald-600 dark:text-emerald-300",
     },
     {
+      key: "spent",
       label: "Spent",
       value: summary?.totalSpentCredits ?? 0,
       color: "#f59e0b",
@@ -417,19 +374,20 @@ export default function UsagePage() {
           <div className="absolute right-0 top-24 h-80 w-80 rounded-full bg-amber-500/8 blur-3xl" />
         </div>
 
-        <header className="sticky top-0 z-30 border-b border-border/70 bg-background/82 px-4 py-4 backdrop-blur-xl md:px-6">
-          <div className="flex items-center justify-between gap-4">
+        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
+          <div className="flex w-full items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="flex h-10 w-10 items-center justify-center rounded-2xl border border-border/70 bg-card text-muted-foreground transition-colors hover:text-foreground md:hidden"
+                className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
                 aria-label="Open navigation"
               >
                 <Menu className="h-5 w-5" />
               </button>
+              <BackToTablesButton />
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Usage</p>
-                <h1 className="text-2xl font-semibold tracking-tight text-foreground md:text-3xl">Credit analytics</h1>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Usage</p>
+                <h1 className="text-lg font-semibold text-foreground">Credit analytics</h1>
               </div>
             </div>
             <ThemeToggle />
@@ -500,7 +458,7 @@ export default function UsagePage() {
             />
           </section>
 
-          <section className="mt-6 grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+          <section className="mt-6 grid gap-6 xl:grid-cols-2">
             <ChartShell
               eyebrow="Breakdown"
               title="Spend by action"
@@ -518,15 +476,13 @@ export default function UsagePage() {
               title="Credits in context"
               icon={WalletCards}
             >
-              <DonutChart
+              <WalletMixRadialChart
                 segments={trackedCreditSegments}
-                centerLabel="Balance"
-                centerValue={formatCredits(summary?.balanceCredits ?? 0)}
               />
             </ChartShell>
           </section>
 
-          <section className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+          <section className="mt-6 grid gap-6 xl:grid-cols-2">
             <ChartShell
               eyebrow="Trend"
               title="Balance after each usage event"
@@ -537,22 +493,6 @@ export default function UsagePage() {
                 labels={balanceTrendLabels}
                 empty="No usage trend yet."
               />
-              {recentUsage.length > 0 ? (
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl border border-border/60 bg-background/70 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">First point</p>
-                    <p className="mt-2 text-lg font-semibold text-foreground">{formatDate(recentUsage[0].createdAt)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border/60 bg-background/70 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest point</p>
-                    <p className="mt-2 text-lg font-semibold text-foreground">{formatDate(recentUsage[recentUsage.length - 1].createdAt)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-border/60 bg-background/70 p-4">
-                    <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Latest balance</p>
-                    <p className="mt-2 text-lg font-semibold text-foreground">{formatCredits(recentUsage[recentUsage.length - 1].balanceAfter)}</p>
-                  </div>
-                </div>
-              ) : null}
             </ChartShell>
 
             <ChartShell
@@ -560,10 +500,9 @@ export default function UsagePage() {
               title="Recent usage size"
               icon={Clock3}
             >
-              <VerticalBarChart
+              <UsageMonospaceBarChart
                 rows={usageIntensityRows}
                 empty="No recent usage intensity to chart."
-                tone="bg-[linear-gradient(180deg,#f59e0b,#d97706)]"
               />
             </ChartShell>
           </section>

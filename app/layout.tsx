@@ -1,16 +1,9 @@
 import type React from "react"
 import type { Metadata } from "next"
-import { Inter } from "next/font/google"
 import { AuthProvider } from "@/lib/auth-context"
 import { ThemeProvider } from "@/lib/theme-provider"
 import { ConvexClientProvider } from "@/lib/convex-provider"
 import "./globals.css"
-
-const inter = Inter({
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-inter",
-})
 
 export const metadata: Metadata = {
   title: "GridMind - AI-Powered Data Enrichment Platform",
@@ -40,7 +33,7 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en">
       <body className="font-sans antialiased">
         <ConvexClientProvider>
           <ThemeProvider>

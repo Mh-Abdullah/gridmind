@@ -258,14 +258,14 @@ export function LandingWorkflowSection() {
         </div>
 
         <div className="relative mt-14">
-          <div className="pointer-events-none absolute left-[16.666%] right-[16.666%] top-[4.75rem] hidden h-px md:block">
+          <div className="pointer-events-none absolute left-[18%] right-[18%] top-[4.75rem] hidden h-px md:block">
             <div className="relative h-full overflow-hidden rounded-full bg-border/80">
               <div className={cn("workflow-pipeline-base h-full w-full", inView && "workflow-pipeline-animate")} />
               <div className={cn("workflow-pipeline-dot absolute top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-foreground", inView && "workflow-pipeline-dot-move")} />
             </div>
           </div>
 
-          <div className="grid gap-5 md:grid-cols-3">
+          <div className="grid gap-8 md:grid-cols-3 lg:gap-10">
             {WORKFLOW_STEPS.map((step, index) => (
               <WorkflowStepCard
                 key={step.step}

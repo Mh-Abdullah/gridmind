@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { AppSidebar } from "@/components/app-sidebar"
+import { BackToTablesButton } from "@/components/back-to-tables-button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -10,7 +11,7 @@ import { useAuth } from "@/lib/auth-context"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import Link from "next/link"
-import { ChevronRight, Loader2, ExternalLink, Menu, Link as LinkIcon, Type, Hash } from "lucide-react"
+import { Loader2, ExternalLink, Menu, Link as LinkIcon, Type, Hash } from "lucide-react"
 import { PREDEFINED_TEMPLATES, CATEGORY_COLORS, CATEGORY_DOT_COLORS } from "@/lib/templates-data"
 
 function getColumnIcon(colName: string) {
@@ -108,16 +109,16 @@ export default function TemplatePreviewPage() {
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Top bar */}
-        <header className="flex items-center justify-between h-14 px-6 border-b border-border shrink-0 bg-background/95 backdrop-blur">
+        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <button className="md:hidden p-1 rounded hover:bg-muted" onClick={() => setSidebarOpen(true)}>
+            <button className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors" onClick={() => setSidebarOpen(true)}>
               <Menu className="h-5 w-5" />
             </button>
-            <nav className="flex items-center gap-1 text-sm text-muted-foreground">
-              <Link href="/templates" className="hover:text-foreground transition-colors">Templates</Link>
-              <ChevronRight className="h-3.5 w-3.5" />
-              <span className="text-foreground font-medium">{template.title}</span>
-            </nav>
+            <BackToTablesButton />
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Templates</p>
+              <h1 className="text-lg font-semibold text-foreground">{template.title}</h1>
+            </div>
           </div>
           <ThemeToggle />
         </header>

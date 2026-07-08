@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { AppSidebar } from "@/components/app-sidebar"
+import { BackToTablesButton } from "@/components/back-to-tables-button"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -16,7 +17,6 @@ import {
   X,
   ArrowRight,
   Sparkles,
-  ChevronRight,
   Menu,
   ExternalLink,
 } from "lucide-react"
@@ -301,18 +301,19 @@ export default function TemplatesPage() {
       {/* Main content */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         {/* Top bar */}
-        <header className="flex items-center justify-between h-14 px-6 border-b border-border shrink-0 bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
+        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
             <button
-              className="md:hidden p-1 rounded hover:bg-muted"
+              className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
               onClick={() => setSidebarOpen(true)}
             >
               <Menu className="h-5 w-5" />
             </button>
-            <nav className="flex items-center gap-1 text-sm">
-              <span className="font-medium text-foreground">Templates</span>
-              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-            </nav>
+            <BackToTablesButton />
+            <div>
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Workspace</p>
+              <h1 className="text-lg font-semibold text-foreground">Templates</h1>
+            </div>
           </div>
           <ThemeToggle />
         </header>

@@ -3,7 +3,6 @@
 import { useCallback, useRef, useState } from "react"
 import type React from "react"
 import Link from "next/link"
-import { Playfair_Display } from "next/font/google"
 import { useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import {
@@ -24,8 +23,8 @@ import * as XLSX from "xlsx"
 
 import { AppFooter } from "@/components/app-footer"
 import { BrandIcon, BrandLogo } from "@/components/brand-assets"
-import { Card_2 } from "@/components/card-2"
 import { LandingWorkflowSection } from "@/components/landing-workflow-section"
+import ScrollStack, { ScrollStackItem } from "@/components/ScrollStack"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -33,12 +32,6 @@ import { Input } from "@/components/ui/input"
 import { api } from "@/convex/_generated/api"
 import { useAuth } from "@/lib/auth-context"
 import { cn } from "@/lib/utils"
-
-const playfairDisplay = Playfair_Display({
-  subsets: ["latin"],
-  weight: ["600", "700"],
-  style: ["normal", "italic"],
-})
 
 interface ParsedCSV {
   headers: string[]
@@ -195,65 +188,143 @@ function SectionHeading({
   )
 }
 
-function AgentCard({ agent, className }: { agent: Agent; className?: string }) {
+function AgentMiniVisual({ variant }: { variant: number }) {
+  if (variant === 0) {
+    return (
+      <div className="agent-mini-visual">
+        <div className="agent-mini-browser">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="flex gap-1.5">
+              <span className="h-2 w-2 rounded-full bg-foreground/25" />
+              <span className="h-2 w-2 rounded-full bg-foreground/15" />
+              <span className="h-2 w-2 rounded-full bg-foreground/10" />
+            </div>
+            <span className="h-2 w-16 rounded-full bg-foreground/10" />
+          </div>
+          {[0, 1, 2].map((row) => (
+            <div key={row} className={cn("agent-mini-row", `agent-mini-delay-${row + 1}`)}>
+              <span className="h-2 w-8 rounded-full bg-foreground/15" />
+              <span className="h-2 flex-1 rounded-full bg-foreground/10" />
+              <span className="h-2 w-10 rounded-full bg-foreground/20" />
+            </div>
+          ))}
+          <div className="agent-mini-scan-line" />
+        </div>
+      </div>
+    )
+  }
+
+  if (variant === 1) {
+    return (
+      <div className="agent-mini-visual">
+        <div className="grid h-full grid-cols-[0.9fr_1.1fr] gap-3">
+          <div className="space-y-2">
+            {["Ask", "Find pattern", "Answer"].map((label, index) => (
+              <div key={label} className={cn("agent-mini-bubble", `agent-mini-delay-${index + 1}`)}>
+                {label}
+              </div>
+            ))}
+          </div>
+          <div className="agent-mini-chart">
+            <svg viewBox="0 0 160 90" className="h-full w-full" aria-hidden="true">
+              <path d="M10 72 C35 54, 46 66, 68 42 S112 28, 150 14" className="agent-mini-chart-line" />
+              {[10, 68, 150].map((x, index) => (
+                <circle key={x} cx={x} cy={[72, 42, 14][index]} r="4" className="agent-mini-chart-dot" />
+              ))}
+            </svg>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (variant === 2) {
+    return (
+      <div className="agent-mini-visual">
+        <div className="agent-mini-table">
+          {["Company", "Industry", "Score"].map((header) => (
+            <span key={header} className="agent-mini-th">
+              {header}
+            </span>
+          ))}
+          {Array.from({ length: 9 }).map((_, index) => (
+            <span key={index} className={cn("agent-mini-cell", index % 3 === 2 && "agent-mini-cell-fill")} />
+          ))}
+        </div>
+        <div className="agent-mini-progress">
+          <span />
+        </div>
+      </div>
+    )
+  }
+
+  if (variant === 3) {
+    return (
+      <div className="agent-mini-visual">
+        <div className="space-y-2.5">
+          {["Email verified", "Phone matched", "Draft ready"].map((label, index) => (
+            <div key={label} className={cn("agent-mini-check-row", `agent-mini-delay-${index + 1}`)}>
+              <span>{label}</span>
+              <Check className="h-3.5 w-3.5" />
+            </div>
+          ))}
+        </div>
+        <div className="agent-mini-radar">
+          <span />
+          <span />
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="agent-mini-visual">
+      <div className="agent-mini-pipeline">
+        {["Scrape", "Clean", "Enrich", "Route"].map((label, index) => (
+          <div key={label} className="agent-mini-node">
+            <Sparkles className={cn("h-3.5 w-3.5", index === 3 && "agent-mini-spin")} />
+            <span>{label}</span>
+          </div>
+        ))}
+        <div className="agent-mini-pipeline-line" />
+        <div className="agent-mini-pipeline-dot" />
+      </div>
+    </div>
+  )
+}
+
+function AgentStackContent({ agent, index }: { agent: Agent; index: number }) {
   const Icon = agent.icon
 
   return (
-    <div
-      className={cn(
-        "group relative flex h-full flex-col overflow-hidden rounded-2xl border border-border/80 bg-card p-6 transition-all duration-300 hover:-translate-y-1 hover:border-foreground/20 hover:shadow-[0_24px_60px_-30px_color-mix(in_oklab,var(--foreground)_25%,transparent)]",
-        agent.featured && "border-foreground/15 hover:border-foreground/30",
-        className
-      )}
-    >
-      <div
-        className={cn(
-          "pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/20 to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100",
-          agent.featured && "via-foreground/30"
-        )}
-      />
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div
-          className={cn(
-            "flex h-11 w-11 items-center justify-center rounded-xl border transition-colors duration-300",
-            agent.featured
-              ? "border-border bg-muted/60 text-foreground group-hover:border-foreground/15 group-hover:bg-muted"
-              : "border-border bg-muted/60 text-foreground group-hover:border-foreground/15 group-hover:bg-muted"
-          )}
-        >
+    <div className="agent-scroll-card relative flex h-full flex-col overflow-hidden rounded-[1.75rem] border border-border/80 bg-card p-6 md:p-9">
+      <div className="agent-mini-orb agent-mini-orb-left" />
+      <div className="agent-mini-orb agent-mini-orb-right" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-foreground/20 to-transparent" />
+      <div className="relative mb-6 flex items-start justify-between gap-4">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-border bg-muted/60 text-foreground">
           <Icon className="h-5 w-5" />
         </div>
-        <span
-          className={cn(
-            "rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em]",
-            agent.featured
-              ? "border border-border/70 bg-muted/50 text-muted-foreground"
-              : "border border-border/70 bg-muted/50 text-muted-foreground"
-          )}
-        >
+        <span className="rounded-full border border-border/70 bg-muted/50 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
           {agent.badge}
         </span>
       </div>
-      <h3 className={cn("mb-2 text-lg font-semibold leading-snug", agent.featured ? "text-foreground" : "text-foreground")}>
-        {agent.title}
-      </h3>
-      <p className={cn("flex-1 text-sm leading-relaxed", agent.featured ? "text-muted-foreground" : "text-muted-foreground")}>
-        {agent.description}
-      </p>
-      <div className="mt-5 flex flex-wrap gap-1.5">
-        {agent.capabilities.map((capability) => (
-          <span
-            key={capability}
-            className={cn(
-              "rounded-full px-2.5 py-1 text-[11px]",
-              agent.featured
-                ? "border border-border/60 bg-muted/50 text-muted-foreground"
-                : "border border-border/60 bg-muted/50 text-muted-foreground"
-            )}
-          >
-            {capability}
-          </span>
-        ))}
+      <div className="relative grid flex-1 gap-5 md:grid-cols-[minmax(0,1fr)_minmax(18rem,0.72fr)] md:items-end">
+        <div className="min-w-0">
+          <h3 className="text-2xl font-semibold tracking-[-0.03em] text-foreground md:text-[2rem]">{agent.title}</h3>
+          <p className="mt-4 max-w-3xl text-sm leading-7 text-muted-foreground md:text-lg">{agent.description}</p>
+          <div className="mt-5 flex flex-wrap gap-2 max-md:hidden">
+            {agent.capabilities.map((capability) => (
+              <span
+                key={capability}
+                className="rounded-full border border-border/60 bg-muted/50 px-3 py-1.5 text-xs font-medium text-muted-foreground"
+              >
+                {capability}
+              </span>
+            ))}
+          </div>
+        </div>
+        <AgentMiniVisual variant={index} />
       </div>
     </div>
   )
@@ -477,7 +548,7 @@ export default function LandingPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col overflow-x-hidden bg-background text-foreground">
+    <div className="landing-page flex min-h-screen flex-col overflow-x-hidden bg-background text-foreground">
       <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link
@@ -511,10 +582,10 @@ export default function LandingPage() {
 
           <div className="flex items-center gap-2 sm:gap-3">
             <ThemeToggle />
-            <Button variant="ghost" size="sm" className="hidden sm:inline-flex" asChild>
+            <Button variant="ghost" size="sm" className="landing-amber-sweep hidden sm:inline-flex" asChild>
               <Link href="/login">Login</Link>
             </Button>
-            <Button size="sm" asChild>
+            <Button size="sm" className="landing-amber-sweep" asChild>
               <Link href="/register">Get Started</Link>
             </Button>
             <Button
@@ -570,65 +641,63 @@ export default function LandingPage() {
           <div className="landing-grid-bg absolute inset-0 -z-10 opacity-[0.35]" />
 
           <div className="mx-auto flex min-h-[calc(100dvh-4rem-76px)] max-w-7xl items-center px-4 py-12 sm:px-6 md:py-16 lg:px-8 lg:py-20">
-            <Card_2>
-              <div className="grid min-h-[min(760px,calc(100dvh-11rem))] items-center gap-10 xl:grid-cols-[minmax(0,1.02fr)_minmax(360px,0.98fr)] xl:gap-16">
-                <div className="max-w-2xl px-2 py-4 sm:px-4 lg:px-8">
-                  <div className="landing-fade-up mb-6 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 px-4 py-2 text-sm font-medium text-foreground shadow-sm backdrop-blur">
-                    <Sparkles className="h-4 w-4" />
-                    AI spreadsheet workspace for enrichment teams
-                  </div>
-
-                  <h1 className="landing-fade-up landing-fade-up-delay-1 max-w-none text-[1.7rem] font-semibold leading-[1.06] tracking-[-0.038em] text-foreground sm:text-[2.1rem] lg:text-[2.75rem]">
-                    <span className="block whitespace-nowrap">
-                      Turn messy{" "}
-                      <span className={`${playfairDisplay.className} italic font-semibold tracking-[-0.03em]`}>
-                        spreadsheets
-                      </span>{" "}
-                      into
-                    </span>
-                    <span className="block whitespace-nowrap">verified business intelligence.</span>
-                  </h1>
-
-                  <p className="landing-fade-up landing-fade-up-delay-2 mt-6 max-w-lg text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
-                    Enrich leads without leaving your sheet.
-                  </p>
-
-                  <div className="landing-fade-up landing-fade-up-delay-3 mt-8 flex flex-col gap-3 sm:flex-row">
-                    <Button size="lg" className="h-12 rounded-full px-7 text-base shadow-lg shadow-foreground/10" onClick={scrollToImport}>
-                      Import and enrich
-                      <ArrowRight className="h-4 w-4" />
-                    </Button>
-                    <Button size="lg" variant="outline" className="h-12 rounded-full px-7 text-base" asChild>
-                      <Link href={user?.id ? "/dashboard/tables" : "/register"}>
-                        {user?.id ? "Open dashboard" : "Create free account"}
-                      </Link>
-                    </Button>
-                  </div>
-
-                  <div className="landing-fade-up landing-fade-up-delay-3 mt-10 grid gap-3 sm:grid-cols-3">
-                    {[
-                      { value: "10K+", label: "Sheets created" },
-                      { value: "5", label: "AI agents" },
-                      { value: "<2s", label: "Avg enrich" },
-                    ].map((stat) => (
-                      <div
-                        key={stat.label}
-                        className="rounded-[1.35rem] border border-border/70 bg-background/80 p-4 shadow-sm backdrop-blur"
-                      >
-                        <p className="text-2xl font-semibold tabular-nums tracking-[-0.03em] text-foreground">{stat.value}</p>
-                        <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
-                          {stat.label}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
+            <div className="grid min-h-[min(760px,calc(100dvh-11rem))] w-full items-center gap-12 xl:grid-cols-[minmax(0,1.02fr)_minmax(360px,0.98fr)] xl:gap-24">
+              <div className="max-w-2xl px-2 py-4 sm:px-4 lg:px-8">
+                <div className="landing-fade-up landing-amber-badge mb-6 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 px-4 py-2 text-sm font-medium text-foreground shadow-sm backdrop-blur">
+                  <Sparkles className="h-4 w-4" />
+                  AI spreadsheet workspace for enrichment teams
                 </div>
 
-                <div className="relative px-2 py-4 sm:px-4 lg:px-6">
-                  <HeroPreview />
+                <h1 className="landing-fade-up landing-fade-up-delay-1 max-w-none text-[1.7rem] font-semibold leading-[1.06] tracking-[-0.038em] text-foreground sm:text-[2.1rem] lg:text-[2.75rem]">
+                  <span className="block whitespace-nowrap">
+                    Turn messy{" "}
+                    <span className="landing-amber-word font-serif italic font-semibold tracking-[-0.03em]">
+                      spreadsheets
+                    </span>{" "}
+                    into
+                  </span>
+                  <span className="block whitespace-nowrap">verified business intelligence.</span>
+                </h1>
+
+                <p className="landing-fade-up landing-fade-up-delay-2 mt-6 max-w-lg text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
+                  Enrich leads without leaving your sheet.
+                </p>
+
+                <div className="landing-fade-up landing-fade-up-delay-3 mt-8 flex flex-col gap-3 sm:flex-row">
+                  <Button size="lg" className="landing-amber-sweep h-12 rounded-full px-7 text-base shadow-lg shadow-foreground/10" onClick={scrollToImport}>
+                    Import and enrich
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
+                  <Button size="lg" variant="outline" className="landing-amber-sweep h-12 rounded-full px-7 text-base" asChild>
+                    <Link href={user?.id ? "/dashboard/tables" : "/register"}>
+                      {user?.id ? "Open dashboard" : "Create free account"}
+                    </Link>
+                  </Button>
+                </div>
+
+                <div className="landing-fade-up landing-fade-up-delay-3 mt-10 grid gap-3 sm:grid-cols-3">
+                  {[
+                    { value: "10K+", label: "Sheets created" },
+                    { value: "5", label: "AI agents" },
+                    { value: "<2s", label: "Avg enrich" },
+                  ].map((stat) => (
+                    <div
+                      key={stat.label}
+                      className="landing-stat-card rounded-[1.35rem] border border-border/70 bg-background/80 p-4 shadow-sm backdrop-blur"
+                    >
+                      <p className="text-2xl font-semibold tabular-nums tracking-[-0.03em] text-foreground">{stat.value}</p>
+                      <p className="mt-1 text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                        {stat.label}
+                      </p>
+                    </div>
+                  ))}
                 </div>
               </div>
-            </Card_2>
+
+              <div className="relative px-2 py-4 sm:px-4 lg:px-6">
+                <HeroPreview />
+              </div>
+            </div>
           </div>
 
           <HeroRibbon />
@@ -637,10 +706,10 @@ export default function LandingPage() {
         <section ref={importSectionRef} id="import" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
           <div className="quickstart-orb quickstart-orb-left absolute inset-x-0 top-16 -z-10 mx-auto h-72 max-w-6xl rounded-full bg-foreground/[0.04] blur-3xl" />
           <div className="quickstart-orb quickstart-orb-right absolute right-8 bottom-20 -z-10 h-48 w-48 rounded-full bg-foreground/[0.05] blur-3xl" />
-          <div className="mx-auto max-w-6xl">
+          <div className="mx-auto max-w-[86rem]">
             <div className="quickstart-shell-reveal rounded-[2rem] border border-border/70 bg-card/65 p-5 shadow-[0_40px_120px_-60px_color-mix(in_oklab,var(--foreground)_18%,transparent)] backdrop-blur sm:p-8 lg:p-10">
               <div className="space-y-8">
-                <div className="flex flex-col justify-between">
+                <div className="mx-auto flex max-w-6xl flex-col justify-between">
                   <div>
                     <div className="landing-fade-up">
                       <SectionHeading
@@ -672,7 +741,7 @@ export default function LandingPage() {
                         <div
                           key={item.step}
                           className={cn(
-                            "quickstart-step-reveal rounded-[1.4rem] border border-border/70 bg-background/80 p-4 shadow-sm transition-transform duration-300 hover:-translate-y-1",
+                            "quickstart-step-card quickstart-step-reveal rounded-[1.4rem] border border-border/70 bg-background/80 p-4 shadow-sm transition-transform duration-300 hover:-translate-y-1",
                             item.step === "01" && "quickstart-step-delay-1",
                             item.step === "02" && "quickstart-step-delay-2",
                             item.step === "03" && "quickstart-step-delay-3"
@@ -699,7 +768,7 @@ export default function LandingPage() {
                     ].map((item) => (
                       <div
                         key={item.label}
-                        className="rounded-full border border-border/70 bg-background/80 px-4 py-2 text-sm text-muted-foreground"
+                        className="quickstart-format-pill rounded-full border border-border/70 bg-background/80 px-4 py-2 text-sm text-muted-foreground"
                       >
                         <span className="font-medium text-foreground">{item.value}</span> · {item.label}
                       </div>
@@ -707,18 +776,18 @@ export default function LandingPage() {
                   </div>
                 </div>
 
-                <div className="quickstart-workspace-reveal rounded-[1.8rem] border border-border/70 bg-background/85 p-4 shadow-[0_32px_90px_-54px_color-mix(in_oklab,var(--foreground)_20%,transparent)] sm:p-5">
-                  <div className="mb-4 flex items-center justify-between gap-4 rounded-[1.25rem] border border-border/70 bg-muted/30 px-4 py-3">
+                <div className="quickstart-workspace-reveal rounded-[1.8rem] border border-border/70 bg-background/85 p-2.5 shadow-[0_32px_90px_-54px_color-mix(in_oklab,var(--foreground)_20%,transparent)] sm:p-3">
+                  <div className="quickstart-workspace-header mb-2 flex items-center justify-between gap-4 rounded-[1.25rem] border border-border/70 bg-muted/30 px-4 py-2">
                     <div className="flex min-w-0 items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/70 bg-background shadow-sm">
-                        <FileSpreadsheet className="h-5 w-5 text-foreground" />
+                      <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border/70 bg-background shadow-sm">
+                        <FileSpreadsheet className="h-4 w-4 text-foreground" />
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-foreground">Import workspace</p>
                         <p className="truncate text-xs text-muted-foreground">Upload, inspect, and enrich in one flow</p>
                       </div>
                     </div>
-                    <span className="rounded-full border border-border/70 bg-background px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    <span className="quickstart-ready-pill rounded-full border border-border/70 bg-background px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
                       Ready
                     </span>
                   </div>
@@ -737,7 +806,7 @@ export default function LandingPage() {
                     role="button"
                     tabIndex={0}
                     className={cn(
-                      "quickstart-dropzone relative overflow-hidden rounded-[1.6rem] border-2 border-dashed px-6 py-14 text-center transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "quickstart-dropzone relative overflow-hidden rounded-[1.6rem] border-2 border-dashed px-6 py-4 text-center transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       isDragging
                         ? "scale-[1.01] border-foreground bg-foreground/[0.04] shadow-[0_24px_60px_-30px_color-mix(in_oklab,var(--foreground)_20%,transparent)]"
                         : csvData
@@ -749,7 +818,7 @@ export default function LandingPage() {
                     <input
                       ref={fileInputRef}
                       type="file"
-                  accept=".csv,.xlsx,.xls"
+                      accept=".csv,.xlsx,.xls"
                       className="hidden"
                       onChange={(event) => {
                         const file = event.target.files?.[0]
@@ -757,29 +826,29 @@ export default function LandingPage() {
                       }}
                     />
                     {csvData ? (
-                      <div className="relative flex flex-col items-center gap-4">
-                        <div className="quickstart-icon-pop flex h-16 w-16 items-center justify-center rounded-[1.4rem] bg-foreground text-background shadow-lg shadow-foreground/15">
-                          <Check className="h-8 w-8" />
+                      <div className="relative flex flex-col items-center gap-2">
+                        <div className="quickstart-icon-pop flex h-10 w-10 items-center justify-center rounded-xl bg-foreground text-background shadow-lg shadow-foreground/15">
+                          <Check className="h-5 w-5" />
                         </div>
                         <div>
-                          <p className="text-xl font-semibold tracking-[-0.02em] text-foreground">{fileName}</p>
+                          <p className="text-base font-semibold tracking-[-0.02em] text-foreground">{fileName}</p>
                           <p className="mt-1 text-sm text-muted-foreground">
                             {csvData.headers.length} columns, {csvData.rows.length} rows. Click to replace.
                           </p>
                         </div>
                       </div>
                     ) : (
-                      <div className="relative flex flex-col items-center gap-4">
-                        <div className="quickstart-icon-pop flex h-16 w-16 items-center justify-center rounded-[1.4rem] border border-border/70 bg-background text-foreground shadow-lg shadow-foreground/5">
-                          <UploadCloud className="h-8 w-8" />
+                      <div className="relative flex flex-col items-center gap-2">
+                        <div className="quickstart-icon-pop flex h-10 w-10 items-center justify-center rounded-xl border border-border/70 bg-background text-foreground shadow-lg shadow-foreground/5">
+                          <UploadCloud className="h-5 w-5" />
                         </div>
                         <div>
-                          <p className="text-xl font-semibold tracking-[-0.02em] text-foreground">
+                          <p className="text-base font-semibold tracking-[-0.02em] text-foreground">
                             Drop your CSV or Excel file here
                           </p>
-                        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                          <p className="mt-1 text-sm leading-5 text-muted-foreground">
                             Click to browse or drag and drop. CSV, XLSX, and XLS are supported.
-                        </p>
+                          </p>
                         </div>
                       </div>
                     )}
@@ -846,7 +915,7 @@ export default function LandingPage() {
                       />
                       <Button
                         size="lg"
-                        className="h-12 shrink-0 rounded-xl px-8 text-base shadow-lg shadow-foreground/10"
+                        className="landing-amber-sweep h-12 shrink-0 rounded-xl px-8 text-base shadow-lg shadow-foreground/10"
                         disabled={isCreating || !sheetName.trim()}
                         onClick={handleStartEnrich}
                       >
@@ -872,16 +941,23 @@ export default function LandingPage() {
               description="Each agent is purpose-built for a business data task. Chain them together or let the Orchestrator decide."
             />
 
-            <div className="mt-14 grid grid-cols-1 gap-4 md:grid-cols-6">
-              {AGENTS.slice(0, 3).map((agent) => (
-                <AgentCard key={agent.title} agent={agent} className="md:col-span-2" />
-              ))}
-              {AGENTS.slice(3, 4).map((agent) => (
-                <AgentCard key={agent.title} agent={agent} className="md:col-span-3" />
-              ))}
-              {AGENTS.slice(4).map((agent) => (
-                <AgentCard key={agent.title} agent={agent} className="md:col-span-3" />
-              ))}
+            <div className="mt-14 h-[28rem] overflow-hidden max-md:h-[21rem]">
+              <ScrollStack
+                className="agents-scroll-stack"
+                itemDistance={46}
+                itemStackDistance={18}
+                stackPosition="18"
+                scaleEndPosition="10"
+                baseScale={0.92}
+                itemScale={0.018}
+                blurAmount={0}
+              >
+                {AGENTS.map((agent, index) => (
+                  <ScrollStackItem key={agent.title} itemClassName="agent-scroll-stack-item">
+                    <AgentStackContent agent={agent} index={index} />
+                  </ScrollStackItem>
+                ))}
+              </ScrollStack>
             </div>
           </div>
         </section>
@@ -929,7 +1005,7 @@ export default function LandingPage() {
                     </div>
 
                     <Button
-                      className={cn("mb-6 h-11 w-full rounded-xl", plan.isFeatured && "shadow-lg shadow-foreground/10")}
+                      className={cn("landing-amber-sweep mb-6 h-11 w-full rounded-xl", plan.isFeatured && "shadow-lg shadow-foreground/10")}
                       variant={plan.isFeatured ? "default" : "outline"}
                       asChild
                     >
