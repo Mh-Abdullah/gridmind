@@ -812,7 +812,12 @@ const SCRAPER_TOOLS = {
   extractFromRowData,
 }
 
-const SCRAPER_MODEL = openai(process.env.OPENAI_MODEL || "gpt-4o")
+const SCRAPER_MODEL = openai(process.env.OPENAI_MODEL || "gpt-5.5")
+const SCRAPER_PROVIDER_OPTIONS = {
+  openai: {
+    reasoningEffort: "high" as const,
+  },
+}
 
 const GENERATE_ACTIVE_TOOLS: Array<keyof typeof SCRAPER_TOOLS> = [
   "scrapeWebPage",
@@ -1021,6 +1026,7 @@ const scraperAgent = new ToolLoopAgent<
 >({
   id: "gridmind-scraper",
   model: SCRAPER_MODEL,
+  providerOptions: SCRAPER_PROVIDER_OPTIONS,
   tools: SCRAPER_TOOLS,
   stopWhen: stepCountIs(40),
   output: Output.object({
@@ -1390,6 +1396,7 @@ async function trySearchBackedGenerateFallback(
 
   const { text } = await generateText({
     model: SCRAPER_MODEL,
+    providerOptions: SCRAPER_PROVIDER_OPTIONS,
     system: [
       "You are a data structuring tool.",
       "Use ONLY the supplied search snippets and scraped page text.",

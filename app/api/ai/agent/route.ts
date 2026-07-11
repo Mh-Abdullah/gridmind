@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server"
-import { Output, ToolLoopAgent, tool, stepCountIs } from "ai"
+import { NoOutputGeneratedError, Output, ToolLoopAgent, generateText, tool, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 
@@ -128,7 +128,12 @@ const USER_AGENTS = [
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
 ]
 
-const AGENT_MODEL = openai(process.env.OPENAI_MODEL || "gpt-4o")
+const AGENT_MODEL = openai(process.env.OPENAI_MODEL || "gpt-5.5")
+const AGENT_PROVIDER_OPTIONS = {
+  openai: {
+    reasoningEffort: "high" as const,
+  },
+}
 
 export async function POST(request: NextRequest) {
   const body: AgentRequest = await request.json()
@@ -192,10 +197,27 @@ export async function POST(request: NextRequest) {
           },
         })
 
-        const agentData = parseAgentResult(result.output)
+        let outputValue: unknown = null
+        try {
+          outputValue = result.output
+        } catch (error) {
+          if (!NoOutputGeneratedError.isInstance(error)) throw error
+          console.warn("[Agent API] Tool loop ended without structured output; running finalization recovery")
+        }
+
+        let agentData = parseAgentResult(outputValue)
+        if (!agentData) {
+          send({ type: "thinking", content: "Finalizing spreadsheet changes..." })
+          const toolEvidence = previewValue(
+            result.steps.map((step) => step.toolResults),
+            12000
+          )
+          agentData = await recoverAgentResult(context, result.text, toolEvidence)
+        }
+
         if (!agentData) {
           console.error("[Agent API] Failed to parse structured output", {
-            outputPreview: previewValue(result.output),
+            outputPreview: previewValue(outputValue),
             textPreview: previewValue(result.text),
           })
           send({ type: "error", content: "Failed to parse agent response. Please try again." })
@@ -399,6 +421,7 @@ function createSpreadsheetAgent(context: SpreadsheetContext) {
   }, ReturnType<typeof Output.object>>({
     id: "gridmind-spreadsheet-agent",
     model: AGENT_MODEL,
+    providerOptions: AGENT_PROVIDER_OPTIONS,
     instructions: AGENT_SYSTEM_PROMPT,
     tools: {
       getSpreadsheetOverview: overviewTool,
@@ -420,9 +443,45 @@ function createSpreadsheetAgent(context: SpreadsheetContext) {
     stopWhen: stepCountIs(20),
     prepareStep: async ({ stepNumber }) => {
       if (stepNumber === 0) return { toolChoice: "required" }
+      // Reserve the final model call for producing the structured spreadsheet edits.
+      if (stepNumber >= 18) return { toolChoice: "none" }
       return { toolChoice: "auto" }
     },
   })
+}
+
+async function recoverAgentResult(
+  context: SpreadsheetContext,
+  previousText: string,
+  toolEvidence: string
+): Promise<AgentResult | null> {
+  try {
+    const result = await generateText({
+      model: AGENT_MODEL,
+      providerOptions: AGENT_PROVIDER_OPTIONS,
+      output: Output.object({
+        schema: AGENT_OUTPUT_SCHEMA,
+        name: "spreadsheet_changes_recovery",
+        description: "Final spreadsheet edits and formatting changes to apply.",
+      }),
+      system: `${AGENT_SYSTEM_PROMPT}\nDo not call tools. Finalize the structured output using only the supplied context and tool evidence.`,
+      prompt: `${buildAgentPrompt(context)}
+
+Spreadsheet snapshot:
+${buildSpreadsheetPreview(context, 50)}
+
+Evidence gathered by the tool loop:
+${toolEvidence || "No tool evidence was returned."}
+
+Previous agent text:
+${previousText || "No final text was returned."}`,
+    })
+
+    return parseAgentResult(result.output)
+  } catch (error) {
+    console.error("[Agent API] Structured-output recovery failed:", error)
+    return null
+  }
 }
 
 function buildSpreadsheetContext(input: Omit<SpreadsheetContext, "tableRows" | "columnLabels" | "nextFreeCol">): SpreadsheetContext {

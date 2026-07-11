@@ -31,6 +31,8 @@ interface SpreadsheetState {
   rowHeights: { [key: number]: number };
 }
 
+const CELL_AUTOSAVE_DELAY_MS = 2_000;
+
 export function useSpreadsheetSync({
   tableId,
   userId,
@@ -149,10 +151,11 @@ export function useSpreadsheetSync({
         clearTimeout(debounceTimerRef.current);
       }
 
-      // Set new timer to flush updates after 300ms of inactivity
+      // Save only after the user has stopped editing for two full seconds.
+      // Every new cell change clears and restarts this timer.
       debounceTimerRef.current = setTimeout(() => {
         flushCellUpdates();
-      }, 300);
+      }, CELL_AUTOSAVE_DELAY_MS);
     },
     [spreadsheetId, flushCellUpdates]
   );

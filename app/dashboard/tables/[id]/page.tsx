@@ -46,6 +46,11 @@ import {
   Regex,
   Building2,
   Wand2,
+  Mail,
+  Play,
+  Send,
+  Sparkles,
+  CircleAlert,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -58,19 +63,43 @@ const getColumnLabel = (index: number): string => {
   return label
 }
 
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/i
+const URL_WITH_PROTOCOL_REGEX = /^https?:\/\//i
+const DOMAIN_REGEX = /^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:\/[^\s]*)?$/i
+const TIME_REGEX = /^\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*-\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?\s*$/i
+const DATE_HINT_REGEX = /\d{4}|\d{1,2}[\/\-]\d{1,2}/
+
+const isLikelyEmail = (value: string): boolean => EMAIL_REGEX.test(value.trim())
+
+const isLikelyUrl = (value: string): boolean => {
+  const trimmed = value.trim()
+  if (!trimmed || isLikelyEmail(trimmed) || /\s/.test(trimmed)) return false
+  return URL_WITH_PROTOCOL_REGEX.test(trimmed) || DOMAIN_REGEX.test(trimmed)
+}
+
+const toDisplayUrl = (value: string): string => {
+  const trimmed = value.trim()
+  return URL_WITH_PROTOCOL_REGEX.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
+const isLikelyDateOrTime = (value: string): boolean => {
+  const trimmed = value.trim()
+  if (!trimmed) return false
+  if (TIME_REGEX.test(trimmed)) return true
+  const parsed = Date.parse(trimmed)
+  return !Number.isNaN(parsed) && DATE_HINT_REGEX.test(trimmed)
+}
+
 const detectFieldType = (values: string[]): string => {
   const nonEmpty = values.filter(v => v && v.trim() !== "" && v.trim() !== "N/A")
   if (nonEmpty.length === 0) return "Text"
-  if (nonEmpty.every(v => /^https?:\/\//i.test(v.trim()))) return "URL"
-  if (nonEmpty.every(v => /^(true|false|yes|no)$/i.test(v.trim()))) return "Boolean"
+  if (nonEmpty.every(v => isLikelyEmail(v))) return "Email"
+  if (nonEmpty.every(v => isLikelyUrl(v))) return "URL"
   if (nonEmpty.every(v => {
-    const cleaned = v.replace(/[$,%]/g, "").trim()
+    const cleaned = v.replace(/[$,%\s,]/g, "").trim()
     return cleaned !== "" && !isNaN(Number(cleaned))
   })) return "Number"
-  if (nonEmpty.every(v => {
-    const d = Date.parse(v)
-    return !isNaN(d) && /\d{4}|\d{1,2}[\/\-]\d{1,2}/.test(v)
-  })) return "Date"
+  if (nonEmpty.every(v => isLikelyDateOrTime(v))) return "Date & Time"
   return "Text"
 }
 
@@ -86,6 +115,12 @@ interface CellFormatting {
   textColor?: string
   backgroundColor?: string
   fontSize?: number
+}
+
+interface EmailCampaignConfig {
+  prompt: string
+  subject: string
+  body: string
 }
 
 export default function TableEditorPage() {
@@ -150,6 +185,16 @@ export default function TableEditorPage() {
   const [colFieldType, setColFieldType] = useState<{ [key: number]: string }>({ 0: "Text" })
   const [hiddenCols, setHiddenCols] = useState<Set<number>>(new Set())
   const colMenuRef = useRef<HTMLDivElement>(null)
+
+  // Email campaign configuration and delivery state
+  const [emailCampaigns, setEmailCampaigns] = useState<Record<number, EmailCampaignConfig>>({})
+  const [emailComposerCol, setEmailComposerCol] = useState<number | null>(null)
+  const [emailPrompt, setEmailPrompt] = useState("")
+  const [emailSubject, setEmailSubject] = useState("")
+  const [emailBody, setEmailBody] = useState("")
+  const [isGeneratingEmail, setIsGeneratingEmail] = useState(false)
+  const [sendingEmailCols, setSendingEmailCols] = useState<Set<number>>(new Set())
+  const [emailNotice, setEmailNotice] = useState<{ type: "success" | "error"; message: string } | null>(null)
 
   // Add-column panel
   const [showAddColPanel, setShowAddColPanel] = useState(false)
@@ -216,6 +261,33 @@ export default function TableEditorPage() {
       setIsInitialized(true)
     }
   }, [sync.spreadsheet, sync.cells, sync.columnNames, sync.isColumnNamesReady, isInitialized])
+
+  useEffect(() => {
+    if (!isInitialized) return
+
+    setColFieldType(prev => {
+      const next: { [key: number]: string } = {}
+      let changed = false
+
+      for (let colIndex = 0; colIndex < numCols; colIndex++) {
+        const colValues = Array.from({ length: numRows }, (_, rowIndex) => getCellValue(rowIndex, colIndex))
+        const detectedType = detectFieldType(colValues)
+        next[colIndex] = detectedType
+        if ((prev[colIndex] ?? "Text") !== detectedType) changed = true
+      }
+
+      return changed ? next : prev
+    })
+  }, [cells, isInitialized, numCols, numRows])
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(`gridmind-email-campaigns:${tableId}`)
+      setEmailCampaigns(stored ? JSON.parse(stored) : {})
+    } catch {
+      setEmailCampaigns({})
+    }
+  }, [tableId])
 
   // Keep cells in sync with Convex (real-time updates from other clients)
   useEffect(() => {
@@ -851,16 +923,20 @@ export default function TableEditorPage() {
       if (!res.ok) throw new Error("AI request failed")
       const result = await readAgentSSE(res)
       if (result?.changes?.length) {
+        const changes = result.changes
         // Derive column name from prompt (first 4 words)
         const autoName = newColAIPrompt.trim().split(/\s+/).slice(0, 4).join(" ")
         const colName = newColName.trim() || autoName
         setColNames(prev => ({ ...prev, [numCols]: colName }))
         setColColumnType(prev => ({ ...prev, [numCols]: "AI Agent" }))
-        setColFieldType(prev => ({ ...prev, [numCols]: "Text" }))
+        setColFieldType(prev => ({
+          ...prev,
+          [numCols]: detectFieldType(changes.map((ch: { row: number; col: number; value: string }) => ch.value ?? "")),
+        }))
         setNumCols(numCols + 1)
         // Apply the AI-generated cell changes
         const updates: { [key: string]: string } = {}
-        result.changes.forEach((ch: { row: number; col: number; value: string }) => {
+        changes.forEach((ch: { row: number; col: number; value: string }) => {
           updates[`${ch.row}-${ch.col}`] = ch.value
         })
         setCells(prev => ({ ...prev, ...updates }))
@@ -949,6 +1025,210 @@ export default function TableEditorPage() {
     setColMenuOpen(null)
   }
 
+  const getEmailRowData = (rowIndex: number): Record<string, string> => {
+    const rowData: Record<string, string> = {}
+    for (let colIndex = 0; colIndex < numCols; colIndex++) {
+      const value = getCellValue(rowIndex, colIndex)
+      const name = colNames[colIndex] ?? getColumnLabel(colIndex)
+      rowData[name] = value
+      rowData[getColumnLabel(colIndex)] = value
+    }
+    return rowData
+  }
+
+  const personalizeEmailTemplate = (template: string, rowData: Record<string, string>): string => {
+    const normalized = new Map(
+      Object.entries(rowData).map(([key, value]) => [key.trim().toLowerCase(), value])
+    )
+    return template.replace(/\{\{\s*([^}]+?)\s*\}\}/g, (_, key: string) => (
+      normalized.get(key.trim().toLowerCase()) ?? ""
+    ))
+  }
+
+  const persistEmailCampaigns = (campaigns: Record<number, EmailCampaignConfig>) => {
+    setEmailCampaigns(campaigns)
+    window.localStorage.setItem(`gridmind-email-campaigns:${tableId}`, JSON.stringify(campaigns))
+  }
+
+  const openEmailComposer = (colIndex: number) => {
+    const existing = emailCampaigns[colIndex]
+    setEmailComposerCol(colIndex)
+    setEmailPrompt(existing?.prompt ?? "")
+    setEmailSubject(existing?.subject ?? "")
+    setEmailBody(existing?.body ?? "")
+    setEmailNotice(null)
+    setColMenuOpen(null)
+  }
+
+  const generateEmailDraft = async () => {
+    if (emailComposerCol === null || emailPrompt.trim().length < 3) return
+    setIsGeneratingEmail(true)
+    setEmailNotice(null)
+
+    try {
+      const columns = Array.from({ length: numCols }, (_, index) => colNames[index] ?? getColumnLabel(index))
+      const sampleRows = Array.from({ length: Math.min(numRows, 5) }, (_, rowIndex) => getEmailRowData(rowIndex))
+      const response = await fetch("/api/ai/email-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: emailPrompt, columns, sampleRows }),
+      })
+      const result = await response.json() as { subject?: string; body?: string; error?: string }
+      if (!response.ok || !result.subject || !result.body) {
+        throw new Error(result.error || "AI could not create an email draft")
+      }
+      setEmailSubject(result.subject)
+      setEmailBody(result.body)
+    } catch (error) {
+      setEmailNotice({ type: "error", message: error instanceof Error ? error.message : "Failed to generate email" })
+    } finally {
+      setIsGeneratingEmail(false)
+    }
+  }
+
+  const handleRowSelect = (row: number, event: React.MouseEvent) => {
+    const rowKeys = Array.from({ length: numCols }, (_, col) => `${row}-${col}`)
+
+    if (event.ctrlKey || event.metaKey) {
+      setSelectedCells((previous) => {
+        const next = new Set(previous)
+        const rowIsSelected = rowKeys.every((key) => next.has(key))
+        rowKeys.forEach((key) => rowIsSelected ? next.delete(key) : next.add(key))
+        return next
+      })
+    } else if (event.shiftKey && selectedCell) {
+      const next = new Set<string>()
+      const firstRow = Math.min(selectedCell.row, row)
+      const lastRow = Math.max(selectedCell.row, row)
+      for (let rowIndex = firstRow; rowIndex <= lastRow; rowIndex++) {
+        for (let col = 0; col < numCols; col++) next.add(`${rowIndex}-${col}`)
+      }
+      setSelectedCells(next)
+    } else {
+      setSelectedCells(new Set(rowKeys))
+    }
+
+    setSelectedCell({ row, col: 0 })
+    setEditingCell(null)
+  }
+
+  const toggleSelectAllRows = () => {
+    const allCellCount = numRows * numCols
+    if (selectedCells.size === allCellCount && allCellCount > 0) {
+      setSelectedCells(new Set())
+      setSelectedCell(null)
+      return
+    }
+
+    const next = new Set<string>()
+    for (let row = 0; row < numRows; row++) {
+      for (let col = 0; col < numCols; col++) next.add(`${row}-${col}`)
+    }
+    setSelectedCells(next)
+    setSelectedCell(numRows > 0 ? { row: 0, col: 0 } : null)
+  }
+
+  const saveEmailCampaign = () => {
+    if (emailComposerCol === null || !emailSubject.trim() || !emailBody.trim()) {
+      setEmailNotice({ type: "error", message: "Add both a subject and email body before enabling the run button." })
+      return
+    }
+
+    const availablePlaceholders = new Set(
+      Array.from({ length: numCols }, (_, index) => [
+        (colNames[index] ?? getColumnLabel(index)).trim().toLowerCase(),
+        getColumnLabel(index).toLowerCase(),
+      ]).flat()
+    )
+    const usedPlaceholders = Array.from(`${emailSubject}\n${emailBody}`.matchAll(/\{\{\s*([^}]+?)\s*\}\}/g))
+      .map((match) => match[1].trim().toLowerCase())
+    if (!usedPlaceholders.some((placeholder) => availablePlaceholders.has(placeholder))) {
+      setEmailNotice({
+        type: "error",
+        message: "Add at least one valid column placeholder so every email can be personalized, for example {{Name}}.",
+      })
+      return
+    }
+
+    persistEmailCampaigns({
+      ...emailCampaigns,
+      [emailComposerCol]: {
+        prompt: emailPrompt.trim(),
+        subject: emailSubject.trim(),
+        body: emailBody.trim(),
+      },
+    })
+    setEmailComposerCol(null)
+    setEmailNotice({ type: "success", message: "Email campaign saved. Use the run button in the email column header." })
+  }
+
+  const runEmailCampaign = async (colIndex: number) => {
+    const campaign = emailCampaigns[colIndex]
+    if (!campaign || sendingEmailCols.has(colIndex)) return
+
+    const selectedRows = Array.from(new Set(
+      Array.from(selectedCells).map((key) => Number(key.split("-")[0]))
+    )).filter((rowIndex) => Number.isInteger(rowIndex) && rowIndex >= 0 && rowIndex < numRows)
+    const targetRows = selectedCells.size > 0
+      ? selectedRows
+      : Array.from({ length: numRows }, (_, rowIndex) => rowIndex)
+
+    const seenEmails = new Set<string>()
+    const messages = targetRows.flatMap((rowIndex) => {
+      const email = getCellValue(rowIndex, colIndex).trim()
+      const normalizedEmail = email.toLowerCase()
+      if (!isLikelyEmail(email) || seenEmails.has(normalizedEmail)) return []
+      seenEmails.add(normalizedEmail)
+      const rowData = getEmailRowData(rowIndex)
+      return [{
+        rowIndex,
+        to: email,
+        subject: personalizeEmailTemplate(campaign.subject, rowData),
+        body: personalizeEmailTemplate(campaign.body, rowData),
+      }]
+    })
+
+    if (messages.length === 0) {
+      setEmailNotice({
+        type: "error",
+        message: selectedCells.size > 0
+          ? "The selected rows do not contain valid emails in this column."
+          : "This column does not contain any valid email addresses.",
+      })
+      return
+    }
+
+    const scope = selectedCells.size > 0 ? "selected rows" : "all rows"
+    if (!window.confirm(`Send ${messages.length} personalized email${messages.length === 1 ? "" : "s"} to ${scope}?`)) return
+
+    setSendingEmailCols((previous) => new Set(previous).add(colIndex))
+    setEmailNotice(null)
+
+    try {
+      let sentCount = 0
+      for (let start = 0; start < messages.length; start += 100) {
+        const response = await fetch("/api/email/send-batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ runId: crypto.randomUUID(), messages: messages.slice(start, start + 100) }),
+        })
+        const result = await response.json() as { sentCount?: number; error?: string }
+        if (!response.ok) throw new Error(result.error || "Email delivery failed")
+        sentCount += result.sentCount ?? 0
+      }
+
+      setEmailNotice({ type: "success", message: `Sent ${sentCount} personalized email${sentCount === 1 ? "" : "s"}.` })
+    } catch (error) {
+      setEmailNotice({ type: "error", message: error instanceof Error ? error.message : "Email delivery failed" })
+    } finally {
+      setSendingEmailCols((previous) => {
+        const next = new Set(previous)
+        next.delete(colIndex)
+        return next
+      })
+    }
+  }
+
   // Sort column ASC / DESC from header menu
   const sortColFromMenu = (colIndex: number, order: "asc" | "desc") => {
     const rowIndices = Array.from({ length: numRows }, (_, i) => i)
@@ -1010,11 +1290,18 @@ export default function TableEditorPage() {
     newColColumnType[insertAt] = colColumnType[colIndex] ?? "User Input"
     newColFieldType[insertAt] = colFieldType[colIndex] ?? "Text"
 
+    const shiftedEmailCampaigns: Record<number, EmailCampaignConfig> = {}
+    for (const [campaignCol, campaign] of Object.entries(emailCampaigns)) {
+      const currentCol = Number(campaignCol)
+      shiftedEmailCampaigns[currentCol < insertAt ? currentCol : currentCol + 1] = campaign
+    }
+
     setCellsLocal(newCells)
     setCellFormattingState(newFormatting)
     setColNames(newColNames)
     setColColumnType(newColColumnType)
     setColFieldType(newColFieldType)
+    persistEmailCampaigns(shiftedEmailCampaigns)
     setNumCols(numCols + 1)
     setColMenuOpen(null)
   }
@@ -1067,11 +1354,19 @@ export default function TableEditorPage() {
       newColFieldType[newCol] = colFieldType[col] ?? "Text"
     }
 
+    const shiftedEmailCampaigns: Record<number, EmailCampaignConfig> = {}
+    for (const [campaignCol, campaign] of Object.entries(emailCampaigns)) {
+      const currentCol = Number(campaignCol)
+      if (currentCol === colIndex) continue
+      shiftedEmailCampaigns[currentCol < colIndex ? currentCol : currentCol - 1] = campaign
+    }
+
     setCellsLocal(newCells)
     setCellFormattingState(newFormatting)
     setColNames(newColNames)
     setColColumnType(newColColumnType)
     setColFieldType(newColFieldType)
+    persistEmailCampaigns(shiftedEmailCampaigns)
     setNumCols(numCols - 1)
     setColMenuOpen(null)
 
@@ -1463,6 +1758,12 @@ export default function TableEditorPage() {
     return selectedCells.has(`${row}-${col}`)
   }
 
+  const emailPreviewRow = emailComposerCol === null
+    ? null
+    : Array.from({ length: numRows }, (_, rowIndex) => rowIndex)
+      .find((rowIndex) => isLikelyEmail(getCellValue(rowIndex, emailComposerCol))) ?? null
+  const emailPreviewData = emailPreviewRow === null ? {} : getEmailRowData(emailPreviewRow)
+
   return (
     <div data-spreadsheet-page="true" className="flex h-screen bg-background">
       {/* Persistent hidden file input for "User Input - File" cells */}
@@ -1758,7 +2059,13 @@ export default function TableEditorPage() {
                 {/* Corner cell with checkbox */}
                 <th className="sticky left-0 z-30 w-10 border-b border-r border-border bg-background p-0 text-center text-xs font-medium text-muted-foreground">
                   <div className="flex items-center justify-center py-2.5">
-                    <input type="checkbox" className="h-3.5 w-3.5 rounded border-border" />
+                    <input
+                      type="checkbox"
+                      checked={numRows * numCols > 0 && selectedCells.size === numRows * numCols}
+                      onChange={toggleSelectAllRows}
+                      className="h-3.5 w-3.5 rounded border-border"
+                      aria-label="Select all rows"
+                    />
                   </div>
                 </th>
                 {/* Named column headers with type icons - Loopster style */}
@@ -1776,10 +2083,33 @@ export default function TableEditorPage() {
                       className={`flex items-center gap-1.5 px-3 py-2 w-full cursor-pointer hover:bg-muted/40 transition-colors ${isMenuOpen ? 'bg-primary/10' : ''}`}
                       onClick={() => isMenuOpen ? setColMenuOpen(null) : openColMenu(colIndex)}
                     >
-                      <Type className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
+                      {colFieldType[colIndex] === "Email" ? (
+                        <Mail className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
+                      ) : (
+                        <Type className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
+                      )}
                       <span className={`flex-1 min-w-0 truncate text-xs font-medium ${isMenuOpen ? 'text-primary' : ''}`}>
                         {colNames[colIndex] ?? "Input"}
                       </span>
+                      {colFieldType[colIndex] === "Email" && emailCampaigns[colIndex] && (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            void runEmailCampaign(colIndex)
+                          }}
+                          disabled={sendingEmailCols.has(colIndex)}
+                          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-primary/10 disabled:cursor-wait disabled:opacity-60"
+                          aria-label={`Run email campaign for ${colNames[colIndex] ?? `column ${getColumnLabel(colIndex)}`}`}
+                          title="Send personalized emails"
+                        >
+                          {sendingEmailCols.has(colIndex) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Play className="h-3.5 w-3.5 fill-current" />
+                          )}
+                        </button>
+                      )}
                     </div>
 
                     {/* Column menu panel */}
@@ -1838,9 +2168,9 @@ export default function TableEditorPage() {
                                   >
                                     <option value="Text">Text</option>
                                     <option value="Number">Number</option>
+                                    <option value="Email">Email</option>
                                     <option value="URL">URL</option>
-                                    <option value="Date">Date</option>
-                                    <option value="Boolean">Boolean</option>
+                                    <option value="Date &amp; Time">Date &amp; Time</option>
                                   </select>
                                   <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
                                 </div>
@@ -1897,6 +2227,16 @@ export default function TableEditorPage() {
                             <Filter className="h-3.5 w-3.5" />
                             Filter
                           </button>
+
+                          {colFieldType[colIndex] === "Email" && (
+                            <button
+                              onClick={() => openEmailComposer(colIndex)}
+                              className="flex w-full items-center gap-2.5 border-b border-border px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/10"
+                            >
+                              <Send className="h-3.5 w-3.5" />
+                              {emailCampaigns[colIndex] ? "Edit email campaign" : "Send email"}
+                            </button>
+                          )}
 
                           {/* Hide column */}
                           <button
@@ -2191,6 +2531,7 @@ export default function TableEditorPage() {
                 <tr key={rowIndex} style={{ height: rowHeights[rowIndex] || 36 }} className="group hover:bg-muted/20">
                   {/* Row number */}
                   <td className="relative left-0 z-10 border-b border-r border-border bg-muted/80 p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
+                      onClick={(event) => handleRowSelect(rowIndex, event)}
                       onDoubleClick={() => onRowHeaderDoubleClick(rowIndex)}
                   >
                     {rowIndex + 1}
@@ -2296,7 +2637,7 @@ export default function TableEditorPage() {
                                 📁
                               </button>
                             </div>
-                          ) : colFieldType[colIndex] === "Boolean" ? (
+                          ) : colFieldType[colIndex] === "__legacy_boolean__" ? (
                             <select
                               ref={editInputRef as unknown as React.RefObject<HTMLSelectElement>}
                               value={cellValue}
@@ -2341,7 +2682,7 @@ export default function TableEditorPage() {
                             onBlur={() => setEditingCell(null)}
                             type={
                               colFieldType[colIndex] === "Number" ? "text" :
-                              colFieldType[colIndex] === "Date" ? "date" :
+                              colFieldType[colIndex] === "Email" ? "email" :
                               "text"
                             }
                             autoComplete="off"
@@ -2433,9 +2774,17 @@ export default function TableEditorPage() {
                                   📁 Double-click to upload
                                 </span>
                               )
-                            ) : colFieldType[colIndex] === "URL" && cellValue && /^https?:\/\//i.test(cellValue) ? (
+                            ) : colFieldType[colIndex] === "Email" && cellValue && isLikelyEmail(cellValue) ? (
                               <a
-                                href={cellValue}
+                                href={`mailto:${cellValue.trim()}`}
+                                onClick={(e) => e.stopPropagation()}
+                                style={{ color: "var(--primary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                              >
+                                {cellValue}
+                              </a>
+                            ) : colFieldType[colIndex] === "URL" && cellValue && isLikelyUrl(cellValue) ? (
+                              <a
+                                href={toDisplayUrl(cellValue)}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
@@ -2443,7 +2792,7 @@ export default function TableEditorPage() {
                               >
                                 {cellValue}
                               </a>
-                            ) : colFieldType[colIndex] === "Boolean" ? (
+                            ) : colFieldType[colIndex] === "__legacy_boolean__" ? (
                               <span style={{ color: cellValue === "true" ? "var(--primary)" : cellValue === "false" ? "var(--destructive)" : "inherit" }}>
                                 {cellValue === "true" ? "✓" : cellValue === "false" ? "✗" : cellValue}
                               </span>
@@ -2503,6 +2852,172 @@ export default function TableEditorPage() {
         </div>
       </div>
       </div>
+
+      {/* Email campaign composer */}
+      {emailComposerCol !== null && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-3 sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="email-composer-title"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !isGeneratingEmail) setEmailComposerCol(null)
+          }}
+        >
+          <div className="flex max-h-[92dvh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-border bg-background shadow-2xl">
+            <div className="flex items-start justify-between border-b border-border px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Mail className="h-4 w-4" />
+                  </span>
+                  <div>
+                    <h2 id="email-composer-title" className="text-base font-semibold">Personalized email campaign</h2>
+                    <p className="text-xs text-muted-foreground">
+                      Sending from {colNames[emailComposerCol] ?? getColumnLabel(emailComposerCol)}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmailComposerCol(null)}
+                disabled={isGeneratingEmail}
+                className="flex h-10 w-10 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+                aria-label="Close email composer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="grid min-h-0 flex-1 overflow-y-auto lg:grid-cols-[1.05fr_0.95fr] lg:overflow-hidden">
+              <div className="space-y-5 border-b border-border p-5 lg:overflow-y-auto lg:border-b-0 lg:border-r">
+                <div>
+                  <label htmlFor="email-goal" className="text-sm font-medium">What should this email say?</label>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Describe the goal, tone, offer, and call to action. AI will use row data for personalization.
+                  </p>
+                  <textarea
+                    id="email-goal"
+                    value={emailPrompt}
+                    onChange={(event) => setEmailPrompt(event.target.value)}
+                    rows={4}
+                    maxLength={3000}
+                    placeholder="Example: Introduce our lead-generation service, mention the company naturally, and ask for a short call next week. Keep it friendly and concise."
+                    className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-none transition-shadow placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  />
+                  <Button
+                    type="button"
+                    onClick={generateEmailDraft}
+                    disabled={emailPrompt.trim().length < 3 || isGeneratingEmail}
+                    className="mt-3 min-h-10 gap-2"
+                  >
+                    {isGeneratingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                    {isGeneratingEmail ? "Writing personalized draft..." : "Generate with AI"}
+                  </Button>
+                </div>
+
+                <div className="space-y-4 border-t border-border pt-5">
+                  <div>
+                    <label htmlFor="email-subject" className="text-sm font-medium">Subject</label>
+                    <Input
+                      id="email-subject"
+                      value={emailSubject}
+                      onChange={(event) => setEmailSubject(event.target.value)}
+                      maxLength={200}
+                      placeholder="A quick idea for {{Name}}"
+                      className="mt-2 min-h-10"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="email-body" className="text-sm font-medium">Email body</label>
+                    <textarea
+                      id="email-body"
+                      value={emailBody}
+                      onChange={(event) => setEmailBody(event.target.value)}
+                      rows={11}
+                      maxLength={12000}
+                      placeholder={`Hi {{Name}},\n\nI noticed {{Company}}...`}
+                      className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2.5 text-sm leading-6 outline-none transition-shadow placeholder:text-muted-foreground/60 focus:border-primary focus:ring-2 focus:ring-primary/20"
+                    />
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Personalize with column names in braces, for example {`{{Name}}`}, {`{{Company}}`}, or {`{{${colNames[emailComposerCol] ?? getColumnLabel(emailComposerCol)}}}`}.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex min-h-[360px] flex-col bg-muted/20 p-5 lg:overflow-y-auto">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold">Personalized preview</p>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {emailPreviewRow === null
+                        ? "Add a valid email to preview row data."
+                        : `Previewing row ${emailPreviewRow + 1}: ${getCellValue(emailPreviewRow, emailComposerCol)}`}
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-muted-foreground">
+                    Row-aware
+                  </span>
+                </div>
+
+                <div className="mt-4 flex-1 rounded-xl border border-border bg-background p-5 shadow-sm">
+                  <div className="border-b border-border pb-3">
+                    <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Subject</p>
+                    <p className="mt-1 break-words text-sm font-semibold">
+                      {emailSubject
+                        ? personalizeEmailTemplate(emailSubject, emailPreviewData)
+                        : "Your personalized subject will appear here"}
+                    </p>
+                  </div>
+                  <div className="whitespace-pre-wrap break-words pt-4 text-sm leading-6 text-foreground">
+                    {emailBody
+                      ? personalizeEmailTemplate(emailBody, emailPreviewData)
+                      : "Generate a draft or write your email to see the personalized preview."}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5">
+                  <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                  <p>The run button asks for confirmation before delivery. Select cells in specific rows to email only those rows; clear the selection to email the whole column.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col-reverse gap-3 border-t border-border bg-background px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted-foreground">Drafts are saved for this table in this browser.</p>
+              <div className="flex items-center justify-end gap-2">
+                <Button type="button" variant="outline" onClick={() => setEmailComposerCol(null)} disabled={isGeneratingEmail}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={saveEmailCampaign} disabled={isGeneratingEmail || !emailSubject.trim() || !emailBody.trim()} className="gap-2">
+                  <Play className="h-4 w-4" />
+                  Enable run button
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {emailNotice && (
+        <div
+          className={`fixed bottom-5 right-5 z-[80] flex max-w-sm items-start gap-3 rounded-lg border bg-background px-4 py-3 text-sm shadow-xl ${emailNotice.type === "error" ? "border-destructive/40" : "border-emerald-500/40"}`}
+          role="status"
+          aria-live="polite"
+        >
+          {emailNotice.type === "error" ? (
+            <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+          ) : (
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+          )}
+          <span className="flex-1 leading-5">{emailNotice.message}</span>
+          <button type="button" onClick={() => setEmailNotice(null)} className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted" aria-label="Dismiss notification">
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* AI Chat Panel - full right side of page */}
       {showAIChat && <div className="fixed inset-0 bg-black/30 z-30 md:hidden" onClick={() => setShowAIChat(false)} />}
