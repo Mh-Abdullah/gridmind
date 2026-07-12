@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { api } from "@/convex/_generated/api"
 import type { Id } from "@/convex/_generated/dataModel"
 import { convexClient } from "@/lib/convex-server"
-import { getPolarServerMode } from "@/lib/polar"
+import { getPolarProductId, getPolarServerMode } from "@/lib/polar"
 import { requireAuthenticatedUser } from "@/lib/server-auth"
 
 export async function GET(request: NextRequest) {
@@ -24,13 +24,6 @@ export async function GET(request: NextRequest) {
 
   if (!pkg) {
     return NextResponse.json({ error: "Package not found" }, { status: 404 })
-  }
-
-  if (!pkg.polarProductId) {
-    return NextResponse.json(
-      { error: "This package is not connected to a Polar product yet." },
-      { status: 400 }
-    )
   }
 
   const purchaseStatus = await convexClient.query(api.billing.getUserPackagePurchaseStatus, {
@@ -60,8 +53,35 @@ export async function GET(request: NextRequest) {
   successUrl.searchParams.set("checkout_id", "{CHECKOUT_ID}")
 
   try {
+    let polarProductId = getPolarProductId(pkg)
+
+    // A Polar product ID is environment-specific. If this environment has not
+    // been persisted yet, recover the product created by the admin sync from
+    // its stable package metadata instead of requiring a database edit.
+    if (!polarProductId) {
+      const products = await polar.products.list({ limit: 100 })
+      const matchingProduct = products.result.items.find((product) => {
+        const metadata = product.metadata
+        return (
+          String(metadata.localPackageId ?? "") === String(pkg._id) ||
+          String(metadata.localPackageSlug ?? "") === pkg.slug
+        )
+      })
+      polarProductId = matchingProduct?.id
+    }
+
+    if (!polarProductId) {
+      return NextResponse.json(
+        {
+          error:
+            "No matching product exists in the active Polar environment. Sync this package from the admin billing page once.",
+        },
+        { status: 400 }
+      )
+    }
+
     const checkout = await polar.checkouts.create({
-      products: [pkg.polarProductId],
+      products: [polarProductId],
       externalCustomerId: user.id,
       customerEmail: user.email,
       customerName: user.name || user.email,

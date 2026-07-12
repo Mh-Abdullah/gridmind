@@ -1073,12 +1073,13 @@ export default function TableEditorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: emailPrompt, columns, sampleRows }),
       })
-      const result = await response.json() as { subject?: string; body?: string; error?: string }
+      const result = await response.json() as { subject?: string; body?: string; creditsCharged?: number; error?: string }
       if (!response.ok || !result.subject || !result.body) {
         throw new Error(result.error || "AI could not create an email draft")
       }
       setEmailSubject(result.subject)
       setEmailBody(result.body)
+      setEmailNotice({ type: "success", message: `Email draft generated for ${result.creditsCharged ?? 2} credits.` })
     } catch (error) {
       setEmailNotice({ type: "error", message: error instanceof Error ? error.message : "Failed to generate email" })
     } finally {
@@ -1199,25 +1200,28 @@ export default function TableEditorPage() {
     }
 
     const scope = selectedCells.size > 0 ? "selected rows" : "all rows"
-    if (!window.confirm(`Send ${messages.length} personalized email${messages.length === 1 ? "" : "s"} to ${scope}?`)) return
+    const sendCreditCost = messages.length * 3
+    if (!window.confirm(`Send ${messages.length} personalized email${messages.length === 1 ? "" : "s"} to ${scope}? This will cost ${sendCreditCost} credits (3 per row).`)) return
 
     setSendingEmailCols((previous) => new Set(previous).add(colIndex))
     setEmailNotice(null)
 
     try {
       let sentCount = 0
+      let chargedCredits = 0
       for (let start = 0; start < messages.length; start += 100) {
         const response = await fetch("/api/email/send-batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ runId: crypto.randomUUID(), messages: messages.slice(start, start + 100) }),
         })
-        const result = await response.json() as { sentCount?: number; error?: string }
+        const result = await response.json() as { sentCount?: number; creditsCharged?: number; error?: string }
         if (!response.ok) throw new Error(result.error || "Email delivery failed")
         sentCount += result.sentCount ?? 0
+        chargedCredits += result.creditsCharged ?? 0
       }
 
-      setEmailNotice({ type: "success", message: `Sent ${sentCount} personalized email${sentCount === 1 ? "" : "s"}.` })
+      setEmailNotice({ type: "success", message: `Sent ${sentCount} personalized email${sentCount === 1 ? "" : "s"} for ${chargedCredits} credits.` })
     } catch (error) {
       setEmailNotice({ type: "error", message: error instanceof Error ? error.message : "Email delivery failed" })
     } finally {

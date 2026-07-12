@@ -4,6 +4,7 @@ import type { Id } from "@/convex/_generated/dataModel"
 import { api } from "@/convex/_generated/api"
 import { convexClient } from "@/lib/convex-server"
 import { syncPackageToPolar } from "@/lib/polar-products"
+import { getPolarProductId, getPolarServerMode } from "@/lib/polar"
 import { requireAuthenticatedUser } from "@/lib/server-auth"
 
 export async function POST(request: NextRequest) {
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Package not found" }, { status: 404 })
     }
 
+    const polarMode = getPolarServerMode()
     const syncResult = await syncPackageToPolar({
       id: pkg._id,
       name: pkg.name,
@@ -37,7 +39,7 @@ export async function POST(request: NextRequest) {
       description: pkg.description,
       credits: pkg.credits,
       salePriceCents: pkg.salePriceCents,
-      polarProductId: pkg.polarProductId,
+      polarProductId: getPolarProductId(pkg, polarMode),
       isActive: pkg.isActive,
     })
 
@@ -45,6 +47,7 @@ export async function POST(request: NextRequest) {
       adminUserId: user.id,
       packageId: pkg._id,
       polarProductId: syncResult.productId,
+      polarMode,
       polarSyncedAt: syncResult.syncedAt,
     })
 

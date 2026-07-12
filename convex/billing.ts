@@ -251,7 +251,12 @@ export const findPackageByPolarProductId = query({
   args: { polarProductId: v.string() },
   handler: async (ctx, { polarProductId }) => {
     const packages = await ctx.db.query("billingPackages").collect()
-    return packages.find((pkg) => pkg.polarProductId === polarProductId) ?? null
+    return packages.find(
+      (pkg) =>
+        pkg.polarProductId === polarProductId ||
+        pkg.polarSandboxProductId === polarProductId ||
+        pkg.polarProductionProductId === polarProductId
+    ) ?? null
   },
 })
 
@@ -664,13 +669,34 @@ export const updatePackagePolarConnection = mutation({
     adminUserId: v.string(),
     packageId: v.id("billingPackages"),
     polarProductId: v.string(),
+    polarMode: v.union(v.literal("sandbox"), v.literal("production")),
     polarSyncedAt: v.number(),
   },
   handler: async (ctx, args) => {
     await requireAdmin(ctx, args.adminUserId)
 
+    const existing = await ctx.db.get(args.packageId)
+    if (!existing) {
+      throw new Error("Package not found")
+    }
+
+    // Product mappings that predate per-environment storage were created while
+    // this app was configured for production. Preserve that mapping the first
+    // time the package is synced in either environment.
+    const legacyProductionProductId =
+      !existing.polarProductEnvironment && !existing.polarProductionProductId
+        ? existing.polarProductId
+        : undefined
+
     await ctx.db.patch(args.packageId, {
       polarProductId: args.polarProductId,
+      polarProductEnvironment: args.polarMode,
+      ...(legacyProductionProductId
+        ? { polarProductionProductId: legacyProductionProductId }
+        : {}),
+      ...(args.polarMode === "production"
+        ? { polarProductionProductId: args.polarProductId }
+        : { polarSandboxProductId: args.polarProductId }),
       polarSyncedAt: args.polarSyncedAt,
       updatedAt: Date.now(),
     })

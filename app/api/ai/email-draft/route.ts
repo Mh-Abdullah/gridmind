@@ -4,6 +4,7 @@ import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 
 import { requireAuthenticatedUser } from "@/lib/server-auth"
+import { chargeCreditsForAction } from "@/lib/billing-server"
 
 const EmailDraftRequestSchema = z.object({
   prompt: z.string().trim().min(3).max(3000),
@@ -17,6 +18,14 @@ const EmailDraftSchema = z.object({
 })
 
 const EMAIL_MODEL = openai(process.env.OPENAI_MODEL || "gpt-5.5")
+
+function getEmailGenerationCredits(subject: string, body: string) {
+  const wordCount = `${subject} ${body}`.trim().split(/\s+/).filter(Boolean).length
+  if (wordCount <= 100) return 2
+  if (wordCount <= 200) return 3
+  if (wordCount <= 350) return 4
+  return 5
+}
 
 export async function POST(request: NextRequest) {
   const user = await requireAuthenticatedUser(request)
@@ -74,12 +83,23 @@ Write a subject and body that can be personalized for every row.`,
       draft.body = `Hi {{${personalizationColumn}}},\n\n${draft.body}`
     }
 
-    return NextResponse.json(draft)
+    const creditsCharged = getEmailGenerationCredits(draft.subject, draft.body)
+    const billing = await chargeCreditsForAction(
+      request,
+      "generate_email",
+      `AI email generation (${creditsCharged} credits based on content length)`,
+      creditsCharged
+    )
+
+    return NextResponse.json({
+      ...draft,
+      creditsCharged: billing.charge.skipped ? 0 : billing.charge.creditsCharged,
+    })
   } catch (error) {
     console.error("[email-draft] generation failed:", error)
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to generate email draft" },
-      { status: 500 }
+      { status: error instanceof Error && error.message.includes("Not enough credits") ? 402 : 500 }
     )
   }
 }

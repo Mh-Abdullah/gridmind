@@ -16,14 +16,14 @@ const WORKFLOW_STEPS = [
   {
     step: "02",
     title: "Run AI agents",
-    description: "Enrich columns, scrape the web, verify contacts, or describe the outcome and let the orchestrator decide.",
+    description: "Analyze spreadsheet data, generate summaries, classify information, organize structured content, and automate repetitive tasks with AI.",
     icon: Sparkles,
     accent: "from-foreground/14 via-foreground/6 to-transparent",
   },
   {
     step: "03",
     title: "Ship clean data",
-    description: "Export verified rows, launch outreach, or keep iterating with chat-driven sheet edits.",
+    description: "Export organized data, continue working with AI-assisted workflows, or refine your spreadsheet through chat-based instructions.",
     icon: Zap,
     accent: "from-foreground/10 via-foreground/5 to-transparent",
   },
@@ -90,7 +90,7 @@ function WorkflowMiniVisual({ variant, active }: { variant: number; active: bool
     return (
       <div className="relative mt-6 h-24 overflow-hidden rounded-xl border border-border/60 bg-muted/30 p-3">
         <div className="grid grid-cols-3 gap-2">
-          {["Scrape", "Enrich", "Verify"].map((label, index) => (
+          {["Analyze", "Classify", "Organize"].map((label, index) => (
             <div
               key={label}
               className={cn(
@@ -113,7 +113,7 @@ function WorkflowMiniVisual({ variant, active }: { variant: number; active: bool
   return (
     <div className="relative mt-6 h-24 overflow-hidden rounded-xl border border-border/60 bg-muted/30 p-3">
       <div className="space-y-2">
-        {["Verified contacts", "Outreach draft", "Export ready"].map((label, index) => (
+        {["Rows organized", "Summary ready", "Export ready"].map((label, index) => (
           <div
             key={label}
             className={cn(
@@ -250,11 +250,8 @@ export function LandingWorkflowSection() {
             Workflow
           </span>
           <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] text-foreground md:text-4xl lg:text-[2.75rem] lg:leading-[1.08]">
-            Three steps from raw rows to revenue-ready data
+            Three steps from messy spreadsheets to structured rows
           </h2>
-          <p className="mt-4 text-pretty text-base leading-7 text-muted-foreground md:text-lg">
-            GridMind keeps the spreadsheet at the center while AI agents handle scraping, enrichment, verification, and orchestration around it.
-          </p>
         </div>
 
         <div className="relative mt-14">

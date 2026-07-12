@@ -7,14 +7,14 @@ import { useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import {
   ArrowRight,
-  Bot,
+  // Bot,
   Check,
   DatabaseZap,
   FileSpreadsheet,
   Globe2,
-  MailCheck,
+  // MailCheck,
   Menu,
-  MessageSquareText,
+  // MessageSquareText,
   Sparkles,
   UploadCloud,
   X,
@@ -24,7 +24,7 @@ import * as XLSX from "xlsx"
 import { AppFooter } from "@/components/app-footer"
 import { BrandIcon, BrandLogo } from "@/components/brand-assets"
 import { LandingWorkflowSection } from "@/components/landing-workflow-section"
-import ScrollStack, { ScrollStackItem } from "@/components/ScrollStack"
+// import ScrollStack, { ScrollStackItem } from "@/components/ScrollStack"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -38,10 +38,10 @@ interface ParsedCSV {
   rows: string[][]
 }
 
-interface Agent {
+/* interface Agent {
   badge: string
   title: string
-  description: string
+  description?: string
   capabilities: string[]
   icon: React.ComponentType<{ className?: string }>
   featured?: boolean
@@ -50,10 +50,10 @@ interface Agent {
 const AGENTS: Agent[] = [
   {
     badge: "Data Collection",
-    title: "Web & Platform Scraper",
+    title: "Web & Platform Automation",
     description:
       "Pull structured data from websites, LinkedIn profiles, and Google Maps listings with automatic parsing, pagination, and deduplication.",
-    capabilities: ["Website scraping", "LinkedIn extraction", "Maps data"],
+    capabilities: ["Website automation", "Profile workflows", "Location data"],
     icon: Globe2,
   },
   {
@@ -73,10 +73,10 @@ const AGENTS: Agent[] = [
     icon: DatabaseZap,
   },
   {
-    badge: "Contact & Outreach",
+    badge: "Contact Automation",
     title: "Contact Intelligence Agent",
     description:
-      "Verify email addresses, phone numbers, and social profiles, then generate row-aware outreach for every qualified lead.",
+      "Verify email addresses, phone numbers, and social profiles, then automate personalized follow-ups for every qualified contact.",
     capabilities: ["Contact verification", "Message generation", "Row templates"],
     icon: MailCheck,
   },
@@ -84,35 +84,35 @@ const AGENTS: Agent[] = [
     badge: "Orchestration",
     title: "AI Orchestrator",
     description:
-      "Read one instruction and choose the right sequence of sheet edits, enrichments, scraping tasks, and follow-up actions.",
+      "Read one instruction and choose the right sequence of sheet edits, enrichments, web automations, and follow-up actions.",
     capabilities: ["Multi-step execution", "Agent routing", "Sheet automation"],
     icon: Bot,
     featured: true,
   },
-]
+] */
 
 const SAMPLE_ROWS = [
-  ["Northstar Labs", "northstar.ai", "sarah@", "Verified"],
-  ["Atlas Supply", "atlas.co", "ops@", "Enriching"],
-  ["Cobalt Health", "cobalt.health", "sales@", "Queued"],
-  ["Brightline CRM", "brightline.io", "founder@", "Verified"],
+  ["Desk Lamp", "Office", "Energy-efficient workspace lighting"],
+  ["Notebook", "Stationery", "Recycled paper project notes"],
+  ["Keyboard", "Technology", "Compact wireless input device"],
+  ["Water Bottle", "Accessories", "Reusable insulated container"],
 ]
 
-const RIBBON_ITEMS = [
+/* const RIBBON_ITEMS = [
   "CSV & Excel",
   "LinkedIn profiles",
   "Google Maps",
   "Bulk enrichment",
   "Credit-based billing",
-  "Website scraping",
+  "Web research automation",
   "AI-powered enrichment",
   "Lead intelligence",
-]
+] */
 
 const NAV_LINKS = [
   { label: "Import", href: "#import", onClick: true },
   { label: "How it works", href: "#workflow" },
-  { label: "Agents", href: "#agents" },
+  // { label: "Agents", href: "#agents" },
   { label: "Pricing", href: "#pricing" },
 ]
 
@@ -183,12 +183,14 @@ function SectionHeading({
       <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] text-foreground md:text-4xl lg:text-[2.75rem] lg:leading-[1.08]">
         {title}
       </h2>
-      <p className="mt-4 text-pretty text-base leading-7 text-muted-foreground md:text-lg">{description}</p>
+      {description ? (
+        <p className="mt-4 text-pretty text-base leading-7 text-muted-foreground md:text-lg">{description}</p>
+      ) : null}
     </div>
   )
 }
 
-function AgentMiniVisual({ variant }: { variant: number }) {
+/* function AgentMiniVisual({ variant }: { variant: number }) {
   if (variant === 0) {
     return (
       <div className="agent-mini-visual">
@@ -280,7 +282,7 @@ function AgentMiniVisual({ variant }: { variant: number }) {
   return (
     <div className="agent-mini-visual">
       <div className="agent-mini-pipeline">
-        {["Scrape", "Clean", "Enrich", "Route"].map((label, index) => (
+        {["Automate", "Clean", "Enrich", "Route"].map((label, index) => (
           <div key={label} className="agent-mini-node">
             <Sparkles className={cn("h-3.5 w-3.5", index === 3 && "agent-mini-spin")} />
             <span>{label}</span>
@@ -330,6 +332,8 @@ function AgentStackContent({ agent, index }: { agent: Agent; index: number }) {
   )
 }
 
+*/
+
 function HeroPreview() {
   return (
     <div className="landing-float relative">
@@ -346,8 +350,8 @@ function HeroPreview() {
               <FileSpreadsheet className="h-4 w-4 text-foreground" />
             </div>
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-foreground">Lead enrichment.csv</p>
-              <p className="text-xs text-muted-foreground">4 rows · 4 agents active</p>
+              <p className="truncate text-sm font-medium text-foreground">Project Data.csv</p>
+              <p className="text-xs text-muted-foreground">4 rows · 4 workflows active</p>
             </div>
           </div>
           <span className="landing-pulse-ring shrink-0 rounded-full border border-foreground/10 bg-foreground/5 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-foreground">
@@ -357,10 +361,10 @@ function HeroPreview() {
 
         <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_220px]">
           <div className="overflow-x-auto">
-            <table className="min-w-[520px] text-sm">
+            <table className="min-w-[430px] text-sm">
               <thead className="bg-muted/50 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                 <tr>
-                  {["Company", "Website", "Contact", "Status"].map((header) => (
+                  {["Product", "Category", "Summary"].map((header) => (
                     <th
                       key={header}
                       className="border-r border-border/70 px-4 py-3 text-left font-medium last:border-r-0"
@@ -373,27 +377,12 @@ function HeroPreview() {
               <tbody>
                 {SAMPLE_ROWS.map((row) => (
                   <tr key={row[0]} className="border-t border-border/70 bg-background/80">
-                    {row.map((cell, index) => (
+                    {row.slice(0, 3).map((cell, index) => (
                       <td
                         key={`${row[0]}-${index}`}
                         className="border-r border-border/50 px-4 py-3 text-foreground last:border-r-0"
                       >
-                        {index === 3 ? (
-                          <span
-                            className={cn(
-                              "rounded-full px-2.5 py-1 text-xs font-medium",
-                              cell === "Enriching"
-                                ? "bg-foreground/10 text-foreground"
-                                : cell === "Verified"
-                                  ? "bg-foreground text-background"
-                                  : "border border-border bg-muted/50 text-muted-foreground"
-                            )}
-                          >
-                            {cell}
-                          </span>
-                        ) : (
-                          cell
-                        )}
+                        {cell}
                       </td>
                     ))}
                   </tr>
@@ -406,9 +395,9 @@ function HeroPreview() {
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Agent run</p>
             <div className="mt-4 space-y-3">
               {[
-                { icon: Globe2, label: "Scraper found 18 sources" },
+                { icon: Globe2, label: "Automation found 18 sources" },
                 { icon: BrandIcon, label: "AI agent reviewed rows" },
-                { icon: DatabaseZap, label: "Rows enriched" },
+                { icon: DatabaseZap, label: "Rows processed" },
               ].map((item) => {
                 const Icon = item.icon
                 return (
@@ -424,7 +413,7 @@ function HeroPreview() {
             </div>
             <div className="mt-5 rounded-xl bg-foreground px-4 py-4 text-background shadow-lg">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-background/60">Next action</p>
-              <p className="mt-2 text-sm leading-relaxed">Generate personalized outreach for verified contacts.</p>
+              <p className="mt-2 text-sm leading-relaxed">Arrange alphabetically.</p>
             </div>
           </div>
         </div>
@@ -433,7 +422,7 @@ function HeroPreview() {
   )
 }
 
-function HeroRibbon() {
+/* function HeroRibbon() {
   const items = [...RIBBON_ITEMS, ...RIBBON_ITEMS]
 
   return (
@@ -454,7 +443,7 @@ function HeroRibbon() {
       </div>
     </div>
   )
-}
+} */
 
 export default function LandingPage() {
   const router = useRouter()
@@ -645,27 +634,23 @@ export default function LandingPage() {
               <div className="max-w-2xl px-2 py-4 sm:px-4 lg:px-8">
                 <div className="landing-fade-up landing-amber-badge mb-6 inline-flex items-center gap-2 rounded-full border border-border/80 bg-background/70 px-4 py-2 text-sm font-medium text-foreground shadow-sm backdrop-blur">
                   <Sparkles className="h-4 w-4" />
-                  AI spreadsheet workspace for enrichment teams
+                  AI-powered spreadsheet workspace
                 </div>
 
                 <h1 className="landing-fade-up landing-fade-up-delay-1 max-w-none text-[1.7rem] font-semibold leading-[1.06] tracking-[-0.038em] text-foreground sm:text-[2.1rem] lg:text-[2.75rem]">
                   <span className="block whitespace-nowrap">
-                    Turn messy{" "}
+                    AI-powered{" "}
                     <span className="landing-amber-word font-serif italic font-semibold tracking-[-0.03em]">
                       spreadsheets
                     </span>{" "}
-                    into
+                    for
                   </span>
-                  <span className="block whitespace-nowrap">verified business intelligence.</span>
+                  <span className="block whitespace-nowrap">faster analysis and productivity.</span>
                 </h1>
 
-                <p className="landing-fade-up landing-fade-up-delay-2 mt-6 max-w-lg text-pretty text-base leading-7 text-muted-foreground sm:text-lg">
-                  Enrich leads without leaving your sheet.
-                </p>
-
-                <div className="landing-fade-up landing-fade-up-delay-3 mt-8 flex flex-col gap-3 sm:flex-row">
+                <div className="landing-fade-up landing-fade-up-delay-2 mt-8 flex flex-col gap-3 sm:flex-row">
                   <Button size="lg" className="landing-amber-sweep h-12 rounded-full px-7 text-base shadow-lg shadow-foreground/10" onClick={scrollToImport}>
-                    Import and enrich
+                    Import Spreadsheet
                     <ArrowRight className="h-4 w-4" />
                   </Button>
                   <Button size="lg" variant="outline" className="landing-amber-sweep h-12 rounded-full px-7 text-base" asChild>
@@ -679,7 +664,7 @@ export default function LandingPage() {
                   {[
                     { value: "10K+", label: "Sheets created" },
                     { value: "5", label: "AI agents" },
-                    { value: "<2s", label: "Avg enrich" },
+                    { value: "<2s", label: "Avg processing" },
                   ].map((stat) => (
                     <div
                       key={stat.label}
@@ -700,7 +685,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <HeroRibbon />
+          {/* <HeroRibbon /> */}
         </section>
 
         <section ref={importSectionRef} id="import" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
@@ -714,8 +699,8 @@ export default function LandingPage() {
                     <div className="landing-fade-up">
                       <SectionHeading
                         label="Quick start"
-                        title="From file to insights in seconds"
-                        description="Import your sheet, preview the structure, and launch enrichment without leaving the workspace."
+                        title="Edit file data in seconds"
+                        description="Import your sheet, preview its structure, and launch AI analysis without leaving the workspace."
                         align="center"
                       />
                     </div>
@@ -725,17 +710,17 @@ export default function LandingPage() {
                         {
                           step: "01",
                           title: "Drop a CSV or Excel file",
-                          text: "Bring raw lead lists, exports, and internal spreadsheets into GridMind in one step.",
+                          text: "Bring project data, inventory files, research notes, and internal spreadsheets into GridMind in one step.",
                         },
                         {
                           step: "02",
                           title: "Preview the structure",
-                          text: "Check headers and rows before enrichment starts so your table stays clean.",
+                          text: "Check headers and rows before processing starts so your table stays clean.",
                         },
                         {
                           step: "03",
-                          title: "Launch AI enrichment",
-                          text: "Name the sheet and let the agents prepare contacts, context, and next actions.",
+                          title: "Launch AI analysis",
+                          text: "Name the sheet and let AI organize rows, analyze content, and prepare useful summaries.",
                         },
                       ].map((item) => (
                         <div
@@ -784,7 +769,7 @@ export default function LandingPage() {
                       </div>
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-foreground">Import workspace</p>
-                        <p className="truncate text-xs text-muted-foreground">Upload, inspect, and enrich in one flow</p>
+                        <p className="truncate text-xs text-muted-foreground">Upload, inspect, and analyze in one flow</p>
                       </div>
                     </div>
                     <span className="quickstart-ready-pill rounded-full border border-border/70 bg-background px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -919,7 +904,7 @@ export default function LandingPage() {
                         disabled={isCreating || !sheetName.trim()}
                         onClick={handleStartEnrich}
                       >
-                        {isCreating ? "Creating..." : "Start enrich"}
+                        {isCreating ? "Creating..." : "Start analysis"}
                         {!isCreating && <ArrowRight className="h-4 w-4" />}
                       </Button>
                     </div>
@@ -932,13 +917,12 @@ export default function LandingPage() {
 
         <LandingWorkflowSection />
 
-        <section id="agents" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
+        {/* <section id="agents" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
           <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-muted/30 to-transparent" />
           <div className="mx-auto max-w-6xl">
             <SectionHeading
               label="AI agents"
               title="Five agents. Every data workflow covered."
-              description="Each agent is purpose-built for a business data task. Chain them together or let the Orchestrator decide."
             />
 
             <div className="mt-14 h-[28rem] overflow-hidden max-md:h-[21rem]">
@@ -960,14 +944,14 @@ export default function LandingPage() {
               </ScrollStack>
             </div>
           </div>
-        </section>
+        </section> */}
 
         <section id="pricing" className="border-t border-border/70 bg-muted/15 px-4 py-20 sm:px-6 md:py-28">
           <div className="mx-auto max-w-5xl">
             <SectionHeading
               label="Pricing"
               title="Simple, transparent pricing"
-              description="Start for free. Upgrade when your data workflows need more power."
+              description="Everything you need to get started with GridMind. Organize spreadsheets, generate AI-powered insights, analyze data, and improve productivity with essential automation tools."
             />
 
             <div className="mt-14 grid grid-cols-1 items-stretch gap-6 md:grid-cols-3">

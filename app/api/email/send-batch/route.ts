@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server"
 import { z } from "zod"
 
 import { requireAuthenticatedUser } from "@/lib/server-auth"
+import { chargeCreditsForAction, refundCredits } from "@/lib/billing-server"
 
 const EmailMessageSchema = z.object({
   rowIndex: z.number().int().min(0),
@@ -73,7 +74,21 @@ export async function POST(request: NextRequest) {
     text: message.body,
   }))
 
+  let billingTransactionId: string | null = null
+  let creditsCharged = 0
+
   try {
+    const billing = await chargeCreditsForAction(
+      request,
+      "send_email",
+      `Email delivery (${messages.length} recipient row${messages.length === 1 ? "" : "s"})`,
+      messages.length
+    )
+    if (!billing.charge.skipped) {
+      billingTransactionId = String(billing.charge.transactionId)
+      creditsCharged = billing.charge.creditsCharged ?? 0
+    }
+
     const response = await fetch("https://api.resend.com/emails/batch", {
       method: "POST",
       headers: {
@@ -93,10 +108,7 @@ export async function POST(request: NextRequest) {
 
     if (!response.ok) {
       console.error("[email-send] Resend rejected batch:", response.status, data)
-      return NextResponse.json(
-        { error: data?.message || data?.error || `Email provider returned HTTP ${response.status}` },
-        { status: response.status >= 400 && response.status < 500 ? 400 : 502 }
-      )
+      throw new Error(data?.message || data?.error || `Email provider returned HTTP ${response.status}`)
     }
 
     const sent = (data?.data || []).map((item, index) => ({
@@ -105,12 +117,21 @@ export async function POST(request: NextRequest) {
       to: messages[index]?.to,
     }))
 
-    return NextResponse.json({ success: true, sent, sentCount: sent.length })
+    return NextResponse.json({
+      success: true,
+      sent,
+      sentCount: sent.length,
+      creditsCharged,
+    })
   } catch (error) {
+    if (billingTransactionId) {
+      await refundCredits(user.id, billingTransactionId, `Email batch ${runId} failed`)
+    }
     console.error("[email-send] batch failed:", error)
+    const message = error instanceof Error ? error.message : "Failed to send email batch"
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to send email batch" },
-      { status: 502 }
+      { error: message },
+      { status: message.includes("Not enough credits") ? 402 : 502 }
     )
   }
 }

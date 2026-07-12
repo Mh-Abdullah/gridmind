@@ -1,5 +1,6 @@
 import { Polar } from "@polar-sh/sdk"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
+import { getPolarServerMode } from "@/lib/polar"
 
 type BillingPackageForPolar = {
   id: string
@@ -20,7 +21,7 @@ function getPolarClient() {
 
   return new Polar({
     accessToken,
-    server: process.env.POLAR_MODE === "production" ? "production" : "sandbox",
+    server: getPolarServerMode(),
   })
 }
 
@@ -56,6 +57,26 @@ function buildProductPayload(pkg: BillingPackageForPolar) {
   }
 }
 
+function isPolarResourceNotFound(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false
+  }
+
+  const candidate = error as {
+    status?: number
+    statusCode?: number
+    message?: string
+    body$?: string
+  }
+
+  return (
+    candidate.status === 404 ||
+    candidate.statusCode === 404 ||
+    candidate.message?.includes("ResourceNotFound") === true ||
+    candidate.body$?.includes("ResourceNotFound") === true
+  )
+}
+
 export async function syncPackageToPolar(pkg: BillingPackageForPolar) {
   const polar = getPolarClient()
   const payload = buildProductPayload(pkg)
@@ -69,10 +90,26 @@ export async function syncPackageToPolar(pkg: BillingPackageForPolar) {
     }
   }
 
-  await polar.products.update({
-    id: pkg.polarProductId,
-    productUpdate: payload,
-  })
+  try {
+    await polar.products.update({
+      id: pkg.polarProductId,
+      productUpdate: payload,
+    })
+  } catch (error) {
+    // Sandbox and production have separate product IDs. When a package still
+    // references its sandbox product after switching to production, recreate
+    // it in the active Polar environment and let the caller persist the new ID.
+    if (!isPolarResourceNotFound(error)) {
+      throw error
+    }
+
+    const created = await polar.products.create(payload)
+    return {
+      productId: created.id,
+      syncedAt: Date.now(),
+      mode: "created" as const,
+    }
+  }
 
   return {
     productId: pkg.polarProductId,

@@ -7,7 +7,7 @@ const FOOTER_LINKS = [
     title: "Product",
     links: [
       { label: "Import", href: "/#import" },
-      { label: "Agents", href: "/#agents" },
+      { label: "How it works", href: "/#workflow" },
       { label: "Pricing", href: "/#pricing" },
     ],
   },
@@ -29,7 +29,7 @@ export function AppFooter() {
           <div>
             <BrandLogo className="h-8" />
             <p className="mt-4 max-w-sm text-sm leading-relaxed text-muted-foreground">
-              GridMind turns spreadsheets into AI-ready datasets with scraping, enrichment, verification, and orchestration built in.
+              GridMind helps users organize, analyze, summarize, classify, and manage spreadsheet data through intelligent AI-powered workflows.
             </p>
           </div>
 
