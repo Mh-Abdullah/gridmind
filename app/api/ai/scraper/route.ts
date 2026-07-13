@@ -1783,6 +1783,81 @@ function parseGenerateOutput(outputValue: unknown): { table: GeneratedTable; sum
   }
 }
 
+function buildGenerateResultFromToolSteps(
+  steps: unknown[],
+  prompt: string
+): { table: GeneratedTable; summary: string } | null {
+  const requestedCount = extractRequestedCount(prompt)
+  const normalizedRows: Array<Record<string, string>> = []
+  const seen = new Set<string>()
+
+  const textValue = (record: Record<string, unknown>, keys: string[]): string => {
+    for (const key of keys) {
+      const value = record[key]
+      if (typeof value === "string" && value.trim()) return value.trim()
+      if (typeof value === "number") return String(value)
+    }
+    return "N/A"
+  }
+
+  for (const step of steps) {
+    if (!step || typeof step !== "object") continue
+    const toolResults = (step as { toolResults?: unknown[] }).toolResults
+    if (!Array.isArray(toolResults)) continue
+
+    for (const toolResult of toolResults) {
+      if (!toolResult || typeof toolResult !== "object") continue
+      const resultRecord = toolResult as { output?: unknown; result?: unknown }
+      const payload = resultRecord.output ?? resultRecord.result
+      if (!payload || typeof payload !== "object") continue
+      const records = (payload as { results?: unknown[] }).results
+      if (!Array.isArray(records)) continue
+
+      for (const item of records) {
+        if (!item || typeof item !== "object") continue
+        const record = item as Record<string, unknown>
+        const name = textValue(record, ["name", "title"])
+        const website = textValue(record, ["website", "url", "profileUrl", "registryUrl"])
+        if (name === "N/A" && website === "N/A") continue
+
+        const dedupeKey = `${name.toLowerCase()}|${website.toLowerCase()}`
+        if (seen.has(dedupeKey)) continue
+        seen.add(dedupeKey)
+
+        normalizedRows.push({
+          Name: name,
+          Address: textValue(record, ["address", "registeredAddress"]),
+          Phone: textValue(record, ["phone", "telephone"]),
+          Email: textValue(record, ["email"]),
+          Website: website,
+          Country: textValue(record, ["country", "jurisdiction"]),
+          Status: textValue(record, ["status", "currentStatus"]),
+          "Source Summary": textValue(record, ["snippet", "description", "type"]),
+        })
+
+        if (normalizedRows.length >= requestedCount) break
+      }
+      if (normalizedRows.length >= requestedCount) break
+    }
+    if (normalizedRows.length >= requestedCount) break
+  }
+
+  if (normalizedRows.length === 0) return null
+
+  const candidateHeaders = ["Name", "Address", "Phone", "Email", "Website", "Country", "Status", "Source Summary"]
+  const headers = candidateHeaders.filter((header) =>
+    header === "Name" || normalizedRows.some((row) => row[header] && row[header] !== "N/A")
+  )
+
+  return {
+    table: {
+      headers,
+      rows: normalizedRows.map((row) => headers.map((header) => row[header] || "N/A")),
+    },
+    summary: `Recovered ${normalizedRows.length} result${normalizedRows.length === 1 ? "" : "s"} directly from completed scraper searches.`,
+  }
+}
+
 function parseEnrichResult(responseText: string): { columns: ScrapedColumn[]; summary: string } | null {
   const trimmed = responseText.trim()
   if (!trimmed || !trimmed.includes("{")) return null
@@ -1844,19 +1919,40 @@ async function streamGenerateMode(
   console.log("[Scraper] Generate steps:", result.steps.length)
   send({ type: "thinking", content: "📊 Processing and structuring data..." })
 
-  const generatedData = parseGenerateOutput(result.output) ?? parseGenerateResult(result.text)
+  let outputValue: unknown = null
+  try {
+    outputValue = result.output
+  } catch (error) {
+    console.warn("[Scraper] Agent finished without structured output", error)
+  }
+
+  const generatedData = parseGenerateOutput(outputValue) ?? parseGenerateResult(result.text)
 
   if (!generatedData?.table) {
     console.error("[Scraper] Generate parse failed", {
-      outputPreview: previewValue(result.output),
+      outputPreview: previewValue(outputValue),
       textPreview: previewValue(result.text),
     })
 
-    const fallbackData = await tryDirectGenerateFallback(prompt, send)
+    const toolEvidenceData = buildGenerateResultFromToolSteps(result.steps, prompt)
+    if (toolEvidenceData) {
+      send({ type: "thinking", content: "🧩 Recovering rows directly from completed scraper searches" })
+    }
+
+    const fallbackData = toolEvidenceData
+      ?? await tryDirectGenerateFallback(prompt, send)
       ?? await trySearchBackedGenerateFallback(prompt, send)
       ?? await trySimpleWebSearchLastRetry(prompt, send)
     if (!fallbackData?.table) {
-      send({ type: "error", content: "Failed to parse structured data from agent response." })
+      send({
+        type: "result",
+        data: {
+          success: true,
+          mode: "generate",
+          summary: "No usable results were found after the scraper and one simple web-search retry.",
+          steps: result.steps.length,
+        },
+      })
       return
     }
 
@@ -1926,7 +2022,14 @@ async function streamEnrichMode(
   console.log("[Scraper] Enrich steps:", result.steps.length)
   send({ type: "thinking", content: "📋 Building column data..." })
 
-  const rawScrapedData = parseEnrichOutput(result.output) ?? parseEnrichResult(result.text)
+  let outputValue: unknown = null
+  try {
+    outputValue = result.output
+  } catch (error) {
+    console.warn("[Scraper] Enrichment finished without structured output", error)
+  }
+
+  const rawScrapedData = parseEnrichOutput(outputValue) ?? parseEnrichResult(result.text)
   const scrapedData = rawScrapedData
     ? {
         ...rawScrapedData,
@@ -1936,7 +2039,7 @@ async function streamEnrichMode(
 
   if (!scrapedData?.columns?.length) {
     console.error("[Scraper] Enrich parse failed", {
-      outputPreview: previewValue(result.output),
+      outputPreview: previewValue(outputValue),
       textPreview: previewValue(result.text),
     })
 
@@ -1945,7 +2048,15 @@ async function streamEnrichMode(
       ? sanitizeEnrichmentColumns(prompt, fallbackData.columns)
       : []
     if (!fallbackData || fallbackColumns.length === 0) {
-      send({ type: "error", content: "Failed to parse structured data from agent response." })
+      send({
+        type: "result",
+        data: {
+          success: true,
+          mode: "enrich",
+          summary: "No usable enrichment data was found for the requested rows.",
+          steps: result.steps.length,
+        },
+      })
       return
     }
 
