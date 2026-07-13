@@ -8,10 +8,13 @@ export const POST = Webhooks({
   webhookSecret: process.env.POLAR_WEBHOOK_SECRET || "",
   onOrderPaid: async (payload) => {
     const localPackageId = payload.data.metadata.localPackageId
-    const externalUserId = payload.data.customer.externalId
+    // Polar can reuse a customer with an older externalId when the email
+    // already exists. Checkout metadata is set by our authenticated server and
+    // remains tied to the user who initiated this specific purchase.
+    const externalUserId = payload.data.metadata.userId
     const polarCustomerId = payload.data.customer.id
 
-    if (!externalUserId) {
+    if (typeof externalUserId !== "string" || !externalUserId) {
       console.warn("[Polar webhook] Missing external user id on paid order", payload.data.id)
       return
     }

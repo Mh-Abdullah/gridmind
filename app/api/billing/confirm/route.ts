@@ -45,7 +45,6 @@ export async function GET(request: NextRequest) {
 
     const orders = await polar.orders.list({
       checkoutId,
-      externalCustomerId: user.id,
       limit: 10,
     })
 

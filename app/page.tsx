@@ -993,9 +993,11 @@ export default function LandingPage() {
                       variant={plan.isFeatured ? "default" : "outline"}
                       asChild
                     >
-                      <Link href={user?.id && plan.polarProductId ? `/api/billing/checkout?packageId=${plan.id}` : "/register"}>
-                        {user?.id && plan.polarProductId ? "Buy credits" : "Get started"}
-                      </Link>
+                      {user?.id && plan.polarProductId ? (
+                        <a href={`/api/billing/checkout?packageId=${plan.id}`}>Buy credits</a>
+                      ) : (
+                        <Link href="/register">Get started</Link>
+                      )}
                     </Button>
 
                     <ul className="flex-1 space-y-3">

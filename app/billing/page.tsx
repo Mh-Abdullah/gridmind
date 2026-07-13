@@ -1,6 +1,5 @@
 "use client"
 
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { useSearchParams } from "next/navigation"
 import { Suspense, useEffect, useState } from "react"
@@ -231,10 +230,10 @@ function BillingPageContent() {
                     disabled={!featuredPackage}
                   >
                     {featuredPackage ? (
-                      <Link href={`/api/billing/checkout?packageId=${featuredPackage.id}`}>
+                      <a href={`/api/billing/checkout?packageId=${featuredPackage.id}`}>
                         Buy featured credits
                         <ArrowUpRight className="h-4 w-4" />
-                      </Link>
+                      </a>
                     ) : (
                       <span>No available package to buy right now</span>
                     )}
@@ -349,10 +348,10 @@ function BillingPageContent() {
                         disabled={!pkg.polarProductId || pkg.isLockedForUser}
                       >
                         {pkg.polarProductId && !pkg.isLockedForUser ? (
-                          <Link href={`/api/billing/checkout?packageId=${pkg.id}`}>
+                          <a href={`/api/billing/checkout?packageId=${pkg.id}`}>
                             Buy {pkg.name}
                             <ArrowUpRight className="h-4 w-4" />
-                          </Link>
+                          </a>
                         ) : pkg.isLockedForUser ? (
                           <span>Already active until {formatLockDate(pkg.lockedUntil)}</span>
                         ) : (
