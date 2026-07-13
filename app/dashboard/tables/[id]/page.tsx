@@ -69,7 +69,10 @@ const DOMAIN_REGEX = /^(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:\/[^\s]*
 const TIME_REGEX = /^\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?(?:\s*-\s*\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?\s*$/i
 const DATE_HINT_REGEX = /\d{4}|\d{1,2}[\/\-]\d{1,2}/
 
-const isLikelyEmail = (value: string): boolean => EMAIL_REGEX.test(value.trim())
+const isLikelyEmail = (value: string): boolean => {
+  const addresses = value.split(/[;,]/).map((part) => part.trim()).filter(Boolean)
+  return addresses.length > 0 && addresses.every((address) => EMAIL_REGEX.test(address))
+}
 
 const isLikelyUrl = (value: string): boolean => {
   const trimmed = value.trim()
@@ -101,6 +104,12 @@ const detectFieldType = (values: string[]): string => {
   })) return "Number"
   if (nonEmpty.every(v => isLikelyDateOrTime(v))) return "Date & Time"
   return "Text"
+}
+
+const detectColumnFieldType = (header: string, values: string[]): string => {
+  if (/\bemail\b|\be-mail\b/i.test(header)) return "Email"
+  if (/\bwebsite\b|\bdomain\b|\burl\b/i.test(header)) return "URL"
+  return detectFieldType(values)
 }
 
 interface Cell {
@@ -271,14 +280,14 @@ export default function TableEditorPage() {
 
       for (let colIndex = 0; colIndex < numCols; colIndex++) {
         const colValues = Array.from({ length: numRows }, (_, rowIndex) => getCellValue(rowIndex, colIndex))
-        const detectedType = detectFieldType(colValues)
+        const detectedType = detectColumnFieldType(colNames[colIndex] || getColumnLabel(colIndex), colValues)
         next[colIndex] = detectedType
         if ((prev[colIndex] ?? "Text") !== detectedType) changed = true
       }
 
       return changed ? next : prev
     })
-  }, [cells, isInitialized, numCols, numRows])
+  }, [cells, colNames, isInitialized, numCols, numRows])
 
   useEffect(() => {
     try {
@@ -3079,6 +3088,8 @@ export default function TableEditorPage() {
               cells: { ...cells },
               numRows,
               numCols,
+              colNames: { ...colNames },
+              colFieldType: { ...colFieldType },
             }
 
             // Calculate new changes
@@ -3092,7 +3103,10 @@ export default function TableEditorPage() {
               const colIndex = startCol + colOffset
               maxColIndex = Math.max(maxColIndex, colIndex + 1)
               newColNames[colIndex] = column.header
-              newColFieldTypes[colIndex] = detectFieldType(column.values.map(({ value }) => value))
+              newColFieldTypes[colIndex] = detectColumnFieldType(
+                column.header,
+                column.values.map(({ value }) => value)
+              )
 
               column.values.forEach(({ rowIndex, value }) => {
                 newChanges.push({ row: rowIndex, col: colIndex, value })
@@ -3142,7 +3156,7 @@ export default function TableEditorPage() {
             const newColFieldTypes: { [key: number]: string } = {}
             headers.forEach((_, colIndex) => {
               const colValues = rows.map(row => row[colIndex] ?? "")
-              newColFieldTypes[colIndex] = detectFieldType(colValues)
+              newColFieldTypes[colIndex] = detectColumnFieldType(headers[colIndex], colValues)
             })
 
             // Collect data rows starting at row 0

@@ -1611,6 +1611,80 @@ function getRequestedEnrichmentHeaders(prompt: string): string[] {
   return requested.length > 0 ? requested : ["Website", "Phone", "Email", "Address", "Opening Hours"]
 }
 
+function columnMatchesEnrichmentHeader(columnHeader: string, requestedHeader: string): boolean {
+  const header = columnHeader.toLowerCase()
+  const matchers: Record<string, RegExp> = {
+    Website: /\bwebsite\b|\bdomain\b|\burl\b/,
+    Phone: /\bphone\b|\btelephone\b|\bmobile\b/,
+    Email: /\bemail\b|\be-mail\b/,
+    Address: /\baddress\b|\blocation\b/,
+    "Opening Hours": /\bopening hours\b|\bbusiness hours\b|\bworking hours\b|\bhours\b/,
+  }
+  return matchers[requestedHeader]?.test(header) ?? header === requestedHeader.toLowerCase()
+}
+
+function sanitizeEnrichmentValue(header: string, value: string): string {
+  const trimmed = value.trim()
+  if (!trimmed || /^n\/?a$/i.test(trimmed)) return "N/A"
+
+  if (header === "Email") {
+    const emails = trimmed.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi) || []
+    return Array.from(new Set(emails.map((email) => email.toLowerCase()))).join("; ") || "N/A"
+  }
+
+  if (header === "Website") {
+    const explicitUrl = trimmed.match(/https?:\/\/[^\s<>"')\]]+/i)?.[0]?.replace(/[.,;:]+$/, "")
+    if (explicitUrl) return explicitUrl
+
+    const withoutEmails = trimmed.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, " ")
+    const domain = withoutEmails.match(/(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+(?::\d+)?(?:\/[^\s<>"')\]]*)?/i)?.[0]
+    return domain ? normalizeWebsite(domain) || domain : "N/A"
+  }
+
+  if (header === "Phone") {
+    const phones = trimmed.match(/(?:\+?\d[\d\s().-]{6,}\d)/g) || []
+    const normalized = Array.from(new Set(phones.map((phone) => phone.replace(/\s+/g, " ").trim())))
+    return normalized.slice(0, 5).join("; ") || "N/A"
+  }
+
+  const compact = trimmed.replace(/\s+/g, " ")
+  const maxLength = header === "Address" ? 300 : 200
+  return compact.length > maxLength ? `${compact.slice(0, maxLength).trim()}…` : compact
+}
+
+function sanitizeEnrichmentColumns(prompt: string, columns: ScrapedColumn[]): ScrapedColumn[] {
+  const requestedHeaders = getRequestedEnrichmentHeaders(prompt)
+
+  return requestedHeaders.flatMap((requestedHeader) => {
+    const matchingColumns = columns.filter((column) =>
+      columnMatchesEnrichmentHeader(column.header, requestedHeader)
+    )
+    if (matchingColumns.length === 0) return []
+
+    const valuesByRow = new Map<number, string>()
+    for (const column of matchingColumns) {
+      for (const item of column.values) {
+        const sanitized = sanitizeEnrichmentValue(requestedHeader, item.value)
+        const existing = valuesByRow.get(item.rowIndex)
+
+        if (!existing || existing === "N/A") {
+          valuesByRow.set(item.rowIndex, sanitized)
+        } else if (requestedHeader === "Email" && sanitized !== "N/A") {
+          valuesByRow.set(
+            item.rowIndex,
+            sanitizeEnrichmentValue("Email", `${existing}; ${sanitized}`)
+          )
+        }
+      }
+    }
+
+    return [{
+      header: requestedHeader,
+      values: Array.from(valuesByRow, ([rowIndex, value]) => ({ rowIndex, value })),
+    }]
+  })
+}
+
 async function findWebsiteForRow(
   row: NonNullable<ScraperRequest["selectedRows"]>[number],
   existingColumns: string[]
@@ -1852,7 +1926,13 @@ async function streamEnrichMode(
   console.log("[Scraper] Enrich steps:", result.steps.length)
   send({ type: "thinking", content: "📋 Building column data..." })
 
-  const scrapedData = parseEnrichOutput(result.output) ?? parseEnrichResult(result.text)
+  const rawScrapedData = parseEnrichOutput(result.output) ?? parseEnrichResult(result.text)
+  const scrapedData = rawScrapedData
+    ? {
+        ...rawScrapedData,
+        columns: sanitizeEnrichmentColumns(prompt, rawScrapedData.columns),
+      }
+    : null
 
   if (!scrapedData?.columns?.length) {
     console.error("[Scraper] Enrich parse failed", {
@@ -1861,7 +1941,10 @@ async function streamEnrichMode(
     })
 
     const fallbackData = await tryDirectEnrichFallback(prompt, selectedRows!, existingColumns, send)
-    if (!fallbackData?.columns?.length) {
+    const fallbackColumns = fallbackData
+      ? sanitizeEnrichmentColumns(prompt, fallbackData.columns)
+      : []
+    if (!fallbackData || fallbackColumns.length === 0) {
       send({ type: "error", content: "Failed to parse structured data from agent response." })
       return
     }
@@ -1871,7 +1954,7 @@ async function streamEnrichMode(
       data: {
         success: true,
         mode: "enrich",
-        columns: fallbackData.columns,
+        columns: fallbackColumns,
         summary: fallbackData.summary,
         steps: result.steps.length,
       },
