@@ -1308,7 +1308,7 @@ function inferPlaceType(prompt: string): string | null {
 
 function inferLocation(prompt: string): string | null {
   const lower = prompt.toLowerCase()
-  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60}?)(?=\s+(?:according to|based on|by|with|for|from|using|on)\b|[,.]|$)/i)
+  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60}?)(?=\s+(?:that|who|which|want|need|looking|according to|based on|by|with|for|from|using|on)\b|[,.]|$)/i)
   if (inMatch) {
     const location = inMatch[1]
       .replace(/\b(with|for|from)\b.*$/i, "")
@@ -1340,6 +1340,16 @@ function buildSearchFallbackQueries(prompt: string): string[] {
   const location = inferLocation(prompt)
   const queries = [prompt.trim()]
 
+  if (requiresExplicitPurchaseEvidence(prompt)) {
+    const potentialMatchQuery = prompt
+      .replace(/\s+(?:that|who|which)\s+(?:want(?:s|ed|ing)?|need(?:s|ed|ing)?|(?:is|are)\s+looking|seek(?:s|ing)?)\b[\s\S]*$/i, "")
+      .replace(/\s+(?:want(?:s|ed|ing)?|need(?:s|ed|ing)?|looking|seeking)\s+(?:to\s+)?(?:buy|purchase|source|procure)\b[\s\S]*$/i, "")
+      .trim()
+    if (potentialMatchQuery && potentialMatchQuery.toLowerCase() !== prompt.trim().toLowerCase()) {
+      queries.push(potentialMatchQuery)
+    }
+  }
+
   if (placeType && location) {
     queries.push(`best ${placeType}s in ${location} google rating`)
     queries.push(`${placeType}s in ${location} official websites`)
@@ -1349,16 +1359,43 @@ function buildSearchFallbackQueries(prompt: string): string[] {
   return Array.from(new Set(queries.filter(Boolean))).slice(0, 4)
 }
 
+type FallbackSearchResult = { title: string; snippet: string; url: string }
+
+async function runHighQualityFallbackSearch(query: string, count: number): Promise<FallbackSearchResult[]> {
+  const serperTool = searchGoogleSerper as unknown as {
+    execute: (input: { query: string; num?: number }) => Promise<{ results?: FallbackSearchResult[] }>
+  }
+  const braveTool = searchBraveWeb as unknown as {
+    execute: (input: { query: string; count?: number }) => Promise<{ results?: FallbackSearchResult[] }>
+  }
+  const basicTool = searchWeb as unknown as {
+    execute: (input: { query: string; context?: string }) => Promise<{ results?: FallbackSearchResult[] }>
+  }
+
+  const attempts = [
+    () => serperTool.execute({ query, num: count }),
+    () => braveTool.execute({ query, count }),
+    () => basicTool.execute({ query, context: "Find trustworthy sources relevant to this data request" }),
+  ]
+
+  for (const attempt of attempts) {
+    try {
+      const response = await attempt()
+      const results = (response.results || []).filter((result) => result.url && result.title)
+      if (results.length > 0) return results
+    } catch (error) {
+      console.warn("[Scraper] Search provider failed; trying the next provider", error)
+    }
+  }
+
+  return []
+}
+
 async function trySearchBackedGenerateFallback(
   prompt: string,
   send: (obj: object) => void
 ): Promise<{ table: GeneratedTable; summary: string } | null> {
   const requestedCount = extractRequestedCount(prompt)
-  const searchTool = searchWeb as unknown as {
-    execute: (input: { query: string; context?: string }) => Promise<{
-      results?: Array<{ title: string; snippet: string; url: string }>
-    }>
-  }
   const searchQueries = buildSearchFallbackQueries(prompt)
   const aggregatedResults: Array<{ title: string; snippet: string; url: string }> = []
   const seenUrls = new Set<string>()
@@ -1366,15 +1403,15 @@ async function trySearchBackedGenerateFallback(
   send({ type: "thinking", content: "🛟 Fallback: searching and structuring results directly" })
 
   for (const query of searchQueries) {
-    const searchResult = await searchTool.execute({
-      query,
-      context: "Find trustworthy sources that help answer this table-generation request",
-    })
+    const searchResults = await runHighQualityFallbackSearch(query, Math.max(5, requestedCount))
+    const isExplicitIntentSearch =
+      requiresExplicitPurchaseEvidence(prompt) &&
+      query.toLowerCase() === prompt.trim().toLowerCase()
 
-    for (const result of searchResult.results || []) {
+    for (const result of searchResults) {
       if (!result.url || seenUrls.has(result.url)) continue
       if (
-        requiresExplicitPurchaseEvidence(prompt) &&
+        isExplicitIntentSearch &&
         !containsExplicitPurchaseEvidence(`${result.title} ${result.snippet}`)
       ) continue
       seenUrls.add(result.url)
@@ -1388,16 +1425,26 @@ async function trySearchBackedGenerateFallback(
 
   // Map source-backed search results directly. A model is never allowed to
   // rewrite this evidence into new entity names or contact details.
-  const rows = aggregatedResults.slice(0, requestedCount).map((result) => [
-    result.title || "N/A",
-    result.url,
-    result.snippet || "N/A",
-  ])
+  const intentRequested = requiresExplicitPurchaseEvidence(prompt)
+  const headers = ["Name", "Website", "Source Summary", ...(intentRequested ? ["Intent Evidence"] : [])]
+  const rows = aggregatedResults.slice(0, requestedCount).map((result) => {
+    const evidenceText = `${result.title} ${result.snippet}`
+    return [
+      result.title || "N/A",
+      result.url,
+      result.snippet || "N/A",
+      ...(intentRequested
+        ? [containsExplicitPurchaseEvidence(evidenceText) ? result.snippet || result.title : "Not verified — potential match only"]
+        : []),
+    ]
+  })
 
   return rows.length > 0
     ? {
-        table: { headers: ["Name", "Website", "Source Summary"], rows },
-        summary: `Found ${rows.length} web results relevant to the request.`,
+        table: { headers, rows },
+        summary: intentRequested
+          ? `Found ${rows.length} real potential web match${rows.length === 1 ? "" : "es"}; buying intent is not assumed.`
+          : `Found ${rows.length} web results relevant to the request.`,
       }
     : null
 }
@@ -1420,10 +1467,6 @@ async function trySimpleWebSearchLastRetry(
   const results = (searchResult.results || [])
     .filter((result) => {
       if (!result.url || seenUrls.has(result.url)) return false
-      if (
-        requiresExplicitPurchaseEvidence(prompt) &&
-        !containsExplicitPurchaseEvidence(`${result.title} ${result.snippet}`)
-      ) return false
       seenUrls.add(result.url)
       return true
     })
@@ -1431,22 +1474,27 @@ async function trySimpleWebSearchLastRetry(
 
   if (results.length === 0) return null
 
+  const intentRequested = requiresExplicitPurchaseEvidence(prompt)
   return {
     table: {
-      headers: ["Name", "Website", "Source Summary"],
-      rows: results.map((result) => [
-        result.title || "N/A",
-        result.url,
-        result.snippet || "N/A",
-      ]),
+      headers: ["Name", "Website", "Source Summary", ...(intentRequested ? ["Intent Evidence"] : [])],
+      rows: results.map((result) => {
+        const evidenceText = `${result.title} ${result.snippet}`
+        return [
+          result.title || "N/A",
+          result.url,
+          result.snippet || "N/A",
+          ...(intentRequested
+            ? [containsExplicitPurchaseEvidence(evidenceText) ? result.snippet || result.title : "Not verified — potential match only"]
+            : []),
+        ]
+      }),
     },
     summary: `The normal scraping methods found no structured data. A final simple web search returned ${results.length} result${results.length === 1 ? "" : "s"}.`,
   }
 }
 
 async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => void): Promise<{ table: GeneratedTable; summary: string } | null> {
-  if (requiresExplicitPurchaseEvidence(prompt)) return null
-
   const placeType = inferPlaceType(prompt)
   const location = inferLocation(prompt)
 
@@ -1460,7 +1508,8 @@ async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => 
 
   if (rows.length === 0) return null
 
-  const headers = ["Name", "Address", "Phone", "Website", "Opening Hours", "Source"]
+  const intentRequested = requiresExplicitPurchaseEvidence(prompt)
+  const headers = ["Name", "Address", "Phone", "Website", "Opening Hours", "Source", ...(intentRequested ? ["Intent Evidence"] : [])]
   return {
     table: {
       headers,
@@ -1471,9 +1520,12 @@ async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => 
         row.website || "N/A",
         row.openingHours || "N/A",
         "OpenStreetMap",
+        ...(intentRequested ? ["Not verified — potential match only"] : []),
       ]),
     },
-    summary: `Found ${Math.min(rows.length, requestedCount)} ${placeType}${rows.length === 1 ? "" : "s"} in ${location} using OpenStreetMap fallback.`,
+    summary: intentRequested
+      ? `Found ${Math.min(rows.length, requestedCount)} real ${placeType}${rows.length === 1 ? "" : "s"} in ${location}. They are potential matches; buying intent is not verified.`
+      : `Found ${Math.min(rows.length, requestedCount)} ${placeType}${rows.length === 1 ? "" : "s"} in ${location} using OpenStreetMap fallback.`,
   }
 }
 
@@ -1778,9 +1830,6 @@ function buildGenerateResultFromToolSteps(
           textValue(record, ["snippet"]),
           textValue(record, ["description"]),
         ].join(" ")
-        if (requiresExplicitPurchaseEvidence(prompt) && !containsExplicitPurchaseEvidence(evidenceText)) {
-          continue
-        }
         const name = textValue(record, ["name", "title"])
         const website = textValue(record, ["website", "url", "profileUrl", "registryUrl"])
         if (name === "N/A" && website === "N/A") continue
@@ -1799,6 +1848,13 @@ function buildGenerateResultFromToolSteps(
           Status: textValue(record, ["status", "currentStatus"]),
           "Source Summary": textValue(record, ["snippet", "description", "type"]),
           Source: resultRecord.toolName || "Verified scraper tool",
+          ...(requiresExplicitPurchaseEvidence(prompt)
+            ? {
+                "Intent Evidence": containsExplicitPurchaseEvidence(evidenceText)
+                  ? evidenceText.replace(/\s+/g, " ").slice(0, 300)
+                  : "Not verified — potential match only",
+              }
+            : {}),
         })
 
         if (normalizedRows.length >= requestedCount) break
@@ -1810,7 +1866,7 @@ function buildGenerateResultFromToolSteps(
 
   if (normalizedRows.length === 0) return null
 
-  const candidateHeaders = ["Name", "Address", "Phone", "Email", "Website", "Country", "Status", "Source Summary", "Source"]
+  const candidateHeaders = ["Name", "Address", "Phone", "Email", "Website", "Country", "Status", "Source Summary", "Source", "Intent Evidence"]
   const headers = candidateHeaders.filter((header) =>
     header === "Name" || normalizedRows.some((row) => row[header] && row[header] !== "N/A")
   )
@@ -1820,7 +1876,9 @@ function buildGenerateResultFromToolSteps(
       headers,
       rows: normalizedRows.map((row) => headers.map((header) => row[header] || "N/A")),
     },
-    summary: `Recovered ${normalizedRows.length} result${normalizedRows.length === 1 ? "" : "s"} directly from completed scraper searches.`,
+    summary: requiresExplicitPurchaseEvidence(prompt)
+      ? `Found ${normalizedRows.length} real potential match${normalizedRows.length === 1 ? "" : "es"} from scraper sources. Buying intent is labeled separately and is not assumed.`
+      : `Recovered ${normalizedRows.length} result${normalizedRows.length === 1 ? "" : "s"} directly from completed scraper searches.`,
   }
 }
 
