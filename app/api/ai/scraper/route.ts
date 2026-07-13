@@ -1,5 +1,5 @@
 ﻿import { NextRequest } from "next/server"
-import { Output, ToolLoopAgent, generateText, tool, stepCountIs } from "ai"
+import { Output, ToolLoopAgent, tool, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 
@@ -995,6 +995,8 @@ const SCRAPER_GENERATE_PROMPT = `You are GridMind Scraper — a universal data r
 
 ━━━ RULES ━━━
 - Only use REAL data from tool results — never fabricate rows, names, or addresses
+- Never output placeholders such as "Hotel A", "Company B", example.com, or invented phone numbers
+- Never infer buying intent, demand, procurement activity, or willingness to purchase. For requests such as "companies that want to buy X", include a result only when a search result or scraped source explicitly provides that evidence.
 - Do NOT print fake tool calls like searchOpenStreetMap(...) in the response text. If a tool is needed, call the actual tool.
 - N/A is a LAST RESORT — for Phone, Website, Email, Address, Hours, or Price always attempt a follow-up web search before accepting N/A. Only write N/A if that search also fails.
 - TARGET: less than 20% N/A across all cells. Too many N/A values means you stopped searching too early.
@@ -1009,15 +1011,12 @@ FINAL RESPONSE — output ONLY this JSON (no prose before or after):
 {
   "table": {
     "headers": ["Name", "Address", "Phone", "Website", "Opening Hours"],
-    "rows": [
-      ["Example Place", "123 Main St, City", "+44 123 456", "example.com", "9am-9pm"],
-      ["Another Place", "456 High St, City", "N/A", "N/A", "N/A"]
-    ]
+    "rows": []
   },
   "summary": "Found X results for Y in Z"
 }
 \`\`\`
-Headers and row values must be in the same order.\``
+Populate rows only with exact values returned by tools. Headers and row values must be in the same order.\``
 
 const scraperAgent = new ToolLoopAgent<
   ScraperAgentCallOptions,
@@ -1360,13 +1359,6 @@ async function trySearchBackedGenerateFallback(
       results?: Array<{ title: string; snippet: string; url: string }>
     }>
   }
-  const scrapeTool = scrapeWebPage as unknown as {
-    execute: (input: { url: string; extractionHint?: string }) => Promise<{
-      content?: string | null
-      success?: boolean
-    }>
-  }
-
   const searchQueries = buildSearchFallbackQueries(prompt)
   const aggregatedResults: Array<{ title: string; snippet: string; url: string }> = []
   const seenUrls = new Set<string>()
@@ -1381,6 +1373,10 @@ async function trySearchBackedGenerateFallback(
 
     for (const result of searchResult.results || []) {
       if (!result.url || seenUrls.has(result.url)) continue
+      if (
+        requiresExplicitPurchaseEvidence(prompt) &&
+        !containsExplicitPurchaseEvidence(`${result.title} ${result.snippet}`)
+      ) continue
       seenUrls.add(result.url)
       aggregatedResults.push(result)
     }
@@ -1390,62 +1386,8 @@ async function trySearchBackedGenerateFallback(
 
   if (aggregatedResults.length === 0) return null
 
-  const contextChunks: string[] = []
-  for (const result of aggregatedResults.slice(0, 5)) {
-    contextChunks.push(`Source: ${result.title}\nURL: ${result.url}\nSnippet: ${result.snippet || "N/A"}`)
-    const scraped = await scrapeTool.execute({
-      url: result.url,
-      extractionHint: prompt,
-    })
-
-    if (scraped.success && scraped.content) {
-      contextChunks.push(`Page content:\n${scraped.content.slice(0, 3000)}`)
-    }
-  }
-
-  try {
-    const structuredResult = await generateText({
-      model: SCRAPER_MODEL,
-      providerOptions: SCRAPER_PROVIDER_OPTIONS,
-      output: Output.object({
-        schema: GenerateAgentResultSchema,
-        name: "search_fallback_table",
-        description: "A table structured only from the supplied search evidence.",
-      }),
-      system: [
-        "You are a data structuring tool.",
-        "Use ONLY the supplied search snippets and scraped page text.",
-        "Return ONLY valid JSON matching the requested schema.",
-        "Do not include prose, markdown, or explanations.",
-        "If a field is not available in the evidence, use N/A.",
-        `Return at most ${requestedCount} rows.`,
-      ].join(" "),
-      prompt: `User request: ${prompt}
-
-Evidence:
-${contextChunks.join("\n\n---\n\n")}
-
-Return JSON in exactly this shape:
-{
-  "table": {
-    "headers": ["Name", "Address", "Rating", "Website"],
-    "rows": [
-      ["Example", "Address or N/A", "4.5/5 or N/A", "https://example.com or N/A"]
-    ]
-  },
-  "summary": "Short summary"
-}`,
-    })
-
-    const parsed = parseGenerateOutput(structuredResult.output) ?? parseGenerateResult(structuredResult.text)
-    if (parsed) return parsed
-  } catch (error) {
-    console.warn("[Scraper] Structured search fallback failed; using deterministic search rows", error)
-  }
-
-  // A model/provider can still fail to emit structured output in production.
-  // Search results are already structured, so return a useful evidence table
-  // instead of surfacing a parser error to the user.
+  // Map source-backed search results directly. A model is never allowed to
+  // rewrite this evidence into new entity names or contact details.
   const rows = aggregatedResults.slice(0, requestedCount).map((result) => [
     result.title || "N/A",
     result.url,
@@ -1478,6 +1420,10 @@ async function trySimpleWebSearchLastRetry(
   const results = (searchResult.results || [])
     .filter((result) => {
       if (!result.url || seenUrls.has(result.url)) return false
+      if (
+        requiresExplicitPurchaseEvidence(prompt) &&
+        !containsExplicitPurchaseEvidence(`${result.title} ${result.snippet}`)
+      ) return false
       seenUrls.add(result.url)
       return true
     })
@@ -1499,6 +1445,8 @@ async function trySimpleWebSearchLastRetry(
 }
 
 async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => void): Promise<{ table: GeneratedTable; summary: string } | null> {
+  if (requiresExplicitPurchaseEvidence(prompt)) return null
+
   const placeType = inferPlaceType(prompt)
   const location = inferLocation(prompt)
 
@@ -1512,7 +1460,7 @@ async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => 
 
   if (rows.length === 0) return null
 
-  const headers = ["Name", "Address", "Phone", "Website", "Opening Hours"]
+  const headers = ["Name", "Address", "Phone", "Website", "Opening Hours", "Source"]
   return {
     table: {
       headers,
@@ -1522,6 +1470,7 @@ async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => 
         row.phone || "N/A",
         row.website || "N/A",
         row.openingHours || "N/A",
+        "OpenStreetMap",
       ]),
     },
     summary: `Found ${Math.min(rows.length, requestedCount)} ${placeType}${rows.length === 1 ? "" : "s"} in ${location} using OpenStreetMap fallback.`,
@@ -1783,6 +1732,14 @@ function parseGenerateOutput(outputValue: unknown): { table: GeneratedTable; sum
   }
 }
 
+function requiresExplicitPurchaseEvidence(prompt: string): boolean {
+  return /\b(?:want(?:s|ed|ing)?|looking|need(?:s|ed|ing)?|seeking|interested|ready|planning)\s+(?:to\s+)?(?:buy|purchase|source|procure)|\bbuyer intent\b|\bprocurement (?:lead|opportunity|notice)\b/i.test(prompt)
+}
+
+function containsExplicitPurchaseEvidence(value: string): boolean {
+  return /\b(?:tender|procurement|request for (?:proposal|quotation)|rfp|rfq|invitation to bid|seeking suppliers?|supplier required|looking to (?:buy|purchase|source|procure)|want(?:s|ed|ing)? to (?:buy|purchase)|purchase order|bid notice)\b/i.test(value)
+}
+
 function buildGenerateResultFromToolSteps(
   steps: unknown[],
   prompt: string
@@ -1807,7 +1764,7 @@ function buildGenerateResultFromToolSteps(
 
     for (const toolResult of toolResults) {
       if (!toolResult || typeof toolResult !== "object") continue
-      const resultRecord = toolResult as { output?: unknown; result?: unknown }
+      const resultRecord = toolResult as { toolName?: string; output?: unknown; result?: unknown }
       const payload = resultRecord.output ?? resultRecord.result
       if (!payload || typeof payload !== "object") continue
       const records = (payload as { results?: unknown[] }).results
@@ -1816,6 +1773,14 @@ function buildGenerateResultFromToolSteps(
       for (const item of records) {
         if (!item || typeof item !== "object") continue
         const record = item as Record<string, unknown>
+        const evidenceText = [
+          textValue(record, ["title"]),
+          textValue(record, ["snippet"]),
+          textValue(record, ["description"]),
+        ].join(" ")
+        if (requiresExplicitPurchaseEvidence(prompt) && !containsExplicitPurchaseEvidence(evidenceText)) {
+          continue
+        }
         const name = textValue(record, ["name", "title"])
         const website = textValue(record, ["website", "url", "profileUrl", "registryUrl"])
         if (name === "N/A" && website === "N/A") continue
@@ -1833,6 +1798,7 @@ function buildGenerateResultFromToolSteps(
           Country: textValue(record, ["country", "jurisdiction"]),
           Status: textValue(record, ["status", "currentStatus"]),
           "Source Summary": textValue(record, ["snippet", "description", "type"]),
+          Source: resultRecord.toolName || "Verified scraper tool",
         })
 
         if (normalizedRows.length >= requestedCount) break
@@ -1844,7 +1810,7 @@ function buildGenerateResultFromToolSteps(
 
   if (normalizedRows.length === 0) return null
 
-  const candidateHeaders = ["Name", "Address", "Phone", "Email", "Website", "Country", "Status", "Source Summary"]
+  const candidateHeaders = ["Name", "Address", "Phone", "Email", "Website", "Country", "Status", "Source Summary", "Source"]
   const headers = candidateHeaders.filter((header) =>
     header === "Name" || normalizedRows.some((row) => row[header] && row[header] !== "N/A")
   )
@@ -1926,43 +1892,35 @@ async function streamGenerateMode(
     console.warn("[Scraper] Agent finished without structured output", error)
   }
 
-  const generatedData = parseGenerateOutput(outputValue) ?? parseGenerateResult(result.text)
+  const modelGeneratedData = parseGenerateOutput(outputValue) ?? parseGenerateResult(result.text)
+  const toolEvidenceData = buildGenerateResultFromToolSteps(result.steps, prompt)
 
-  if (!generatedData?.table) {
-    console.error("[Scraper] Generate parse failed", {
+  if (modelGeneratedData?.table && !toolEvidenceData) {
+    console.warn("[Scraper] Rejecting model-generated rows because no matching tool evidence was available", {
       outputPreview: previewValue(outputValue),
       textPreview: previewValue(result.text),
     })
+  }
 
-    const toolEvidenceData = buildGenerateResultFromToolSteps(result.steps, prompt)
-    if (toolEvidenceData) {
-      send({ type: "thinking", content: "🧩 Recovering rows directly from completed scraper searches" })
-    }
+  if (toolEvidenceData) {
+    send({ type: "thinking", content: "✅ Building rows only from verified scraper sources" })
+  }
 
-    const fallbackData = toolEvidenceData
-      ?? await tryDirectGenerateFallback(prompt, send)
-      ?? await trySearchBackedGenerateFallback(prompt, send)
-      ?? await trySimpleWebSearchLastRetry(prompt, send)
-    if (!fallbackData?.table) {
-      send({
-        type: "result",
-        data: {
-          success: true,
-          mode: "generate",
-          summary: "No usable results were found after the scraper and one simple web-search retry.",
-          steps: result.steps.length,
-        },
-      })
-      return
-    }
+  const verifiedData = toolEvidenceData
+    ?? await tryDirectGenerateFallback(prompt, send)
+    ?? await trySearchBackedGenerateFallback(prompt, send)
+    ?? await trySimpleWebSearchLastRetry(prompt, send)
 
+  if (!verifiedData?.table) {
+    const intentNote = requiresExplicitPurchaseEvidence(prompt)
+      ? " No source explicitly confirmed the requested buying or procurement intent."
+      : ""
     send({
       type: "result",
       data: {
         success: true,
         mode: "generate",
-        table: fallbackData.table,
-        summary: fallbackData.summary,
+        summary: `No verified results were found after the scraper and one simple web-search retry.${intentNote}`,
         steps: result.steps.length,
       },
     })
@@ -1971,7 +1929,7 @@ async function streamGenerateMode(
 
   send({
     type: "thinking",
-    content: `📝 Writing ${generatedData.table.rows.length} row${generatedData.table.rows.length === 1 ? "" : "s"} and ${generatedData.table.headers.length} column${generatedData.table.headers.length === 1 ? "" : "s"} to the sheet...`,
+    content: `📝 Writing ${verifiedData.table.rows.length} verified row${verifiedData.table.rows.length === 1 ? "" : "s"} and ${verifiedData.table.headers.length} column${verifiedData.table.headers.length === 1 ? "" : "s"} to the sheet...`,
   })
 
   send({
@@ -1979,8 +1937,8 @@ async function streamGenerateMode(
     data: {
       success: true,
       mode: "generate",
-      table: generatedData.table,
-      summary: generatedData.summary || "Data generated successfully",
+      table: verifiedData.table,
+      summary: verifiedData.summary,
       steps: result.steps.length,
     },
   })
