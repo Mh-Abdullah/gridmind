@@ -1278,6 +1278,10 @@ function extractRequestedCount(prompt: string): number {
 
 function inferPlaceType(prompt: string): string | null {
   const lower = prompt.toLowerCase()
+  if (/\bcar\s+(?:showrooms?|dealers?|dealerships?)\b/.test(lower)) {
+    return "car dealership"
+  }
+
   const types = [
     "school",
     "college",
@@ -1307,10 +1311,15 @@ function inferLocation(prompt: string): string | null {
   const lower = prompt.toLowerCase()
   const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60}?)(?=\s+(?:according to|based on|by|with|for|from|using|on)\b|[,.]|$)/i)
   if (inMatch) {
-    return inMatch[1]
+    const location = inMatch[1]
       .replace(/\b(with|for|from)\b.*$/i, "")
       .trim()
       .replace(/\s+/g, " ")
+
+    const knownLocationTypos: Record<string, string> = {
+      faisalbafd: "Faisalabad",
+    }
+    return knownLocationTypos[location.toLowerCase()] || location
   }
 
   return null
@@ -1394,18 +1403,24 @@ async function trySearchBackedGenerateFallback(
     }
   }
 
-  const { text } = await generateText({
-    model: SCRAPER_MODEL,
-    providerOptions: SCRAPER_PROVIDER_OPTIONS,
-    system: [
-      "You are a data structuring tool.",
-      "Use ONLY the supplied search snippets and scraped page text.",
-      "Return ONLY valid JSON matching the requested schema.",
-      "Do not include prose, markdown, or explanations.",
-      "If a field is not available in the evidence, use N/A.",
-      `Return at most ${requestedCount} rows.`,
-    ].join(" "),
-    prompt: `User request: ${prompt}
+  try {
+    const structuredResult = await generateText({
+      model: SCRAPER_MODEL,
+      providerOptions: SCRAPER_PROVIDER_OPTIONS,
+      output: Output.object({
+        schema: GenerateAgentResultSchema,
+        name: "search_fallback_table",
+        description: "A table structured only from the supplied search evidence.",
+      }),
+      system: [
+        "You are a data structuring tool.",
+        "Use ONLY the supplied search snippets and scraped page text.",
+        "Return ONLY valid JSON matching the requested schema.",
+        "Do not include prose, markdown, or explanations.",
+        "If a field is not available in the evidence, use N/A.",
+        `Return at most ${requestedCount} rows.`,
+      ].join(" "),
+      prompt: `User request: ${prompt}
 
 Evidence:
 ${contextChunks.join("\n\n---\n\n")}
@@ -1420,9 +1435,67 @@ Return JSON in exactly this shape:
   },
   "summary": "Short summary"
 }`,
-  })
+    })
 
-  return parseGenerateResult(text)
+    const parsed = parseGenerateOutput(structuredResult.output) ?? parseGenerateResult(structuredResult.text)
+    if (parsed) return parsed
+  } catch (error) {
+    console.warn("[Scraper] Structured search fallback failed; using deterministic search rows", error)
+  }
+
+  // A model/provider can still fail to emit structured output in production.
+  // Search results are already structured, so return a useful evidence table
+  // instead of surfacing a parser error to the user.
+  const rows = aggregatedResults.slice(0, requestedCount).map((result) => [
+    result.title || "N/A",
+    result.url,
+    result.snippet || "N/A",
+  ])
+
+  return rows.length > 0
+    ? {
+        table: { headers: ["Name", "Website", "Source Summary"], rows },
+        summary: `Found ${rows.length} web results relevant to the request.`,
+      }
+    : null
+}
+
+async function trySimpleWebSearchLastRetry(
+  prompt: string,
+  send: (obj: object) => void
+): Promise<{ table: GeneratedTable; summary: string } | null> {
+  const searchTool = searchWeb as unknown as {
+    execute: (input: { query: string; context?: string }) => Promise<{
+      results?: Array<{ title: string; snippet: string; url: string }>
+    }>
+  }
+
+  send({ type: "thinking", content: "🔄 Final retry: running one simple web search" })
+
+  const searchResult = await searchTool.execute({ query: prompt })
+  const requestedCount = extractRequestedCount(prompt)
+  const seenUrls = new Set<string>()
+  const results = (searchResult.results || [])
+    .filter((result) => {
+      if (!result.url || seenUrls.has(result.url)) return false
+      seenUrls.add(result.url)
+      return true
+    })
+    .slice(0, requestedCount)
+
+  if (results.length === 0) return null
+
+  return {
+    table: {
+      headers: ["Name", "Website", "Source Summary"],
+      rows: results.map((result) => [
+        result.title || "N/A",
+        result.url,
+        result.snippet || "N/A",
+      ]),
+    },
+    summary: `The normal scraping methods found no structured data. A final simple web search returned ${results.length} result${results.length === 1 ? "" : "s"}.`,
+  }
 }
 
 async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => void): Promise<{ table: GeneratedTable; summary: string } | null> {
@@ -1705,8 +1778,9 @@ async function streamGenerateMode(
       textPreview: previewValue(result.text),
     })
 
-    const fallbackData = await trySearchBackedGenerateFallback(prompt, send)
-      ?? await tryDirectGenerateFallback(prompt, send)
+    const fallbackData = await tryDirectGenerateFallback(prompt, send)
+      ?? await trySearchBackedGenerateFallback(prompt, send)
+      ?? await trySimpleWebSearchLastRetry(prompt, send)
     if (!fallbackData?.table) {
       send({ type: "error", content: "Failed to parse structured data from agent response." })
       return
