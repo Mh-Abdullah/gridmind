@@ -3037,6 +3037,7 @@ export default function TableEditorPage() {
             selectedCells,
             getCellValue,
             getColumnLabel,
+            getColumnName: (index) => colNames[index] || getColumnLabel(index),
             getCellFormatting,
           }}
           onApplyFormatting={(formattingChanges) => {
@@ -3051,6 +3052,8 @@ export default function TableEditorPage() {
               cells: { ...cells },
               numRows,
               numCols,
+              colNames: { ...colNames },
+              colFieldType: { ...colFieldType },
             }
 
             // Apply dimension changes first
@@ -3082,13 +3085,14 @@ export default function TableEditorPage() {
             const startCol = numCols
             let maxColIndex = startCol
             const newChanges: { row: number; col: number; value: string }[] = []
+            const newColNames: { [key: number]: string } = {}
+            const newColFieldTypes: { [key: number]: string } = {}
 
             columns.forEach((column, colOffset) => {
               const colIndex = startCol + colOffset
               maxColIndex = Math.max(maxColIndex, colIndex + 1)
-
-              // Write header to row 0
-              newChanges.push({ row: 0, col: colIndex, value: column.header })
+              newColNames[colIndex] = column.header
+              newColFieldTypes[colIndex] = detectFieldType(column.values.map(({ value }) => value))
 
               column.values.forEach(({ rowIndex, value }) => {
                 newChanges.push({ row: rowIndex, col: colIndex, value })
@@ -3099,7 +3103,10 @@ export default function TableEditorPage() {
             newChanges.forEach(({ row, col, value }) => {
               setCellValue(row, col, value)
             })
+            setColNames(prev => ({ ...prev, ...newColNames }))
+            setColFieldType(prev => ({ ...prev, ...newColFieldTypes }))
             setNumCols(maxColIndex)
+            sync.setColumnNamesBatch(newColNames)
 
             // Store for undo
             const columnNames = columns.map(c => c.header).join(", ")

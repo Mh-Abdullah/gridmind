@@ -1516,13 +1516,26 @@ function extractLabeledValue(content: string, label: string): string {
 }
 
 function parseScrapedDetails(content: string, fallbackWebsite: string): Record<string, string> {
+  const email = extractLabeledValue(content, "Email")
+  const detectedEmail = content.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0]
+
   return {
     Website: extractLabeledValue(content, "Website") !== "N/A" ? extractLabeledValue(content, "Website") : fallbackWebsite,
     Phone: extractLabeledValue(content, "Phone"),
-    Email: extractLabeledValue(content, "Email"),
+    Email: email !== "N/A" ? email : detectedEmail || "N/A",
     Address: extractLabeledValue(content, "Address"),
     "Opening Hours": extractLabeledValue(content, "Opening Hours"),
   }
+}
+
+function getRequestedEnrichmentHeaders(prompt: string): string[] {
+  const requested: string[] = []
+  if (/\bwebsite(?:s)?|\bdomain(?:s)?|\burl(?:s)?/i.test(prompt)) requested.push("Website")
+  if (/\bphone(?:s| numbers?)?|\btelephone(?:s)?/i.test(prompt)) requested.push("Phone")
+  if (/\bemail(?:s| addresses?)?/i.test(prompt)) requested.push("Email")
+  if (/\baddress(?:es)?|\blocation(?:s)?/i.test(prompt)) requested.push("Address")
+  if (/\bopening hours|\bbusiness hours|\bworking hours/i.test(prompt)) requested.push("Opening Hours")
+  return requested.length > 0 ? requested : ["Website", "Phone", "Email", "Address", "Opening Hours"]
 }
 
 async function findWebsiteForRow(
@@ -1564,7 +1577,7 @@ async function tryDirectEnrichFallback(
   send({ type: "thinking", content: "🛟 Fallback: enriching directly from selected row websites" })
 
   const columnsMap = new Map<string, { rowIndex: number; value: string }[]>()
-  const headers = ["Website", "Phone", "Email", "Address", "Opening Hours"]
+  const headers = getRequestedEnrichmentHeaders(prompt)
   for (const header of headers) columnsMap.set(header, [])
 
   let enrichedCount = 0

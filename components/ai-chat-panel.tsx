@@ -166,6 +166,7 @@ interface AIChatPanelProps {
     selectedCells?: Set<string>
     getCellValue: (row: number, col: number) => string
     getColumnLabel: (index: number) => string
+    getColumnName?: (index: number) => string
     getCellFormatting?: (row: number, col: number) => CellFormatting
   }
   onApplyChanges?: (changes: { row: number; col: number; value: string }[], newNumRows?: number, newNumCols?: number) => void
@@ -555,8 +556,22 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
 
   // Handle Web Scraper agent
   const handleScraperAgent = async (prompt: string, assistantMessageId: string, chatHistory: APIMessage[]) => {
-    const hasSelection = tableContext?.selectedCells && tableContext.selectedCells.size > 0
-    const mode = hasSelection ? "enrich" : "generate"
+    const hasSelection = Boolean(tableContext?.selectedCells?.size)
+    let hasExistingData = false
+    if (tableContext) {
+      for (let row = 0; row < tableContext.numRows && !hasExistingData; row += 1) {
+        for (let col = 0; col < tableContext.numCols; col += 1) {
+          if (tableContext.getCellValue(row, col).trim()) {
+            hasExistingData = true
+            break
+          }
+        }
+      }
+    }
+
+    const asksForRowEnrichment = /\b(email(?:s| addresses?)?|phone(?:s| numbers?)?|website(?:s)?|domain(?:s)?|address(?:es)?|contact(?:s| details?)?|opening hours|social (?:media|profiles?)|linkedin|enrich|add (?:a |the )?(?:new )?column)\b/i.test(prompt)
+    const enrichAllRows = !hasSelection && hasExistingData && asksForRowEnrichment
+    const mode = hasSelection || enrichAllRows ? "enrich" : "generate"
 
     // Build request body
     let requestBody: Record<string, unknown>
@@ -574,20 +589,33 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         },
       }
     } else {
-      const { selectedCells, getCellValue, numCols, getColumnLabel } = tableContext!
+      const { selectedCells, getCellValue, numRows, numCols, getColumnLabel, getColumnName } = tableContext!
       const rowsMap = new Map<number, { [colIndex: string]: string }>()
-      selectedCells!.forEach(cellKey => {
-        const [row, col] = cellKey.split('-').map(Number)
-        if (!rowsMap.has(row)) rowsMap.set(row, {})
-        const rowData = rowsMap.get(row)!
-        for (let c = 0; c < numCols; c++) {
-          const value = getCellValue(row, c)
-          if (value) rowData[c.toString()] = value
+      if (hasSelection) {
+        selectedCells!.forEach(cellKey => {
+          const [row] = cellKey.split('-').map(Number)
+          if (!rowsMap.has(row)) rowsMap.set(row, {})
+          const rowData = rowsMap.get(row)!
+          for (let c = 0; c < numCols; c++) {
+            const value = getCellValue(row, c)
+            if (value) rowData[c.toString()] = value
+          }
+        })
+      } else {
+        for (let row = 0; row < numRows; row += 1) {
+          const rowData: { [colIndex: string]: string } = {}
+          for (let col = 0; col < numCols; col += 1) {
+            const value = getCellValue(row, col)
+            if (value) rowData[col.toString()] = value
+          }
+          if (Object.keys(rowData).length > 0) {
+            rowsMap.set(row, rowData)
+          }
         }
-      })
+      }
       const selectedRows = Array.from(rowsMap.entries()).map(([rowIndex, cells]) => ({ rowIndex, cells }))
       const existingColumns: string[] = []
-      for (let c = 0; c < numCols; c++) existingColumns.push(getColumnLabel(c))
+      for (let c = 0; c < numCols; c++) existingColumns.push(getColumnName?.(c) || getColumnLabel(c))
 
       requestBody = {
         prompt,
