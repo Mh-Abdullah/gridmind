@@ -10,15 +10,15 @@ import { useRouter } from "next/navigation"
 import { X, Loader2, Search, ExternalLink, Zap, Wand2 } from "lucide-react"
 
 const EXAMPLE_QUERIES = [
-  "Software Engineers from London",
-  "Social Media Agencies in New York",
-  "Shopify Stores Selling Pet Products",
-  "Recently Funded Startups in Germany",
-  "Marketing Job Openings in San Francisco",
-  "Competitor Case Studies in AI SaaS",
-  "SaaS companies in Berlin",
-  "E-commerce brands on Shopify",
-  "Freelance designers on Dribbble",
+  { label: "Software Engineers from London", query: "site:linkedin.com/in + Software Engineers from London" },
+  { label: "Social Media Agencies in New York", query: "site:clutch.co + Social Media Agencies in New York" },
+  { label: "Shopify Stores Selling Pet Products", query: "site:linkedin.com + Shopify Stores Selling Pet Products" },
+  { label: "Recently Funded Startups in Germany", query: "site:crunchbase.com + Recently Funded Startups in Germany" },
+  { label: "Marketing Job Openings in San Francisco", query: "site:linkedin.com/jobs + Marketing Job Openings in San Francisco" },
+  { label: "Competitor Case Studies in AI SaaS", query: "site:g2.com + Competitor Case Studies in AI SaaS" },
+  { label: "SaaS companies in Berlin", query: "site:linkedin.com/company + SaaS companies in Berlin" },
+  { label: "E-commerce brands on Shopify", query: "site:myshopify.com + E-commerce brands on Shopify" },
+  { label: "Freelance designers on Dribbble", query: "site:dribbble.com + Freelance designers on Dribbble" },
 ]
 
 const LANGUAGES = [
@@ -62,9 +62,8 @@ export default function GoogleSearchModal({ onClose }: Props) {
   const [results, setResults] = useState<SearchResult[]>([])
 
   const [isCreating, setIsCreating] = useState(false)
-
-  // Query Builder: converts natural language to a site: query via AI
   const [isBuilding, setIsBuilding] = useState(false)
+  const [queryBuilderError, setQueryBuilderError] = useState("")
 
   const createSpreadsheet = useMutation(api.spreadsheets.getOrCreateSpreadsheet)
   const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
@@ -100,25 +99,25 @@ export default function GoogleSearchModal({ onClose }: Props) {
   const handleQueryBuilder = useCallback(async () => {
     if (!query.trim()) return
     setIsBuilding(true)
+    setSearchError("")
+    setQueryBuilderError("")
+
     try {
-      const res = await fetch("/api/ai/chat", {
+      const response = await fetch("/api/ai/query-builder", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{
-            role: "user",
-            content: `Convert this natural language search into a Google search query (use site:, intitle:, inurl:, quotes as appropriate). Return ONLY the query string, nothing else.\n\nSearch: ${query}`,
-          }],
-        }),
+        body: JSON.stringify({ query: query.trim() }),
       })
-      if (res.ok) {
-        const text = await res.text()
-        // Extract just the query from the response
-        const cleaned = text.replace(/^["']|["']$/g, "").trim()
-        if (cleaned) setQuery(cleaned)
+      const data = await response.json() as { query?: string; error?: string }
+
+      if (!response.ok || !data.query) {
+        setQueryBuilderError(data.error ?? "Query Builder failed. Please try again.")
+        return
       }
+
+      setQuery(data.query)
     } catch {
-      // silently ignore
+      setQueryBuilderError("Query Builder could not connect. Please try again.")
     } finally {
       setIsBuilding(false)
     }
@@ -203,18 +202,22 @@ export default function GoogleSearchModal({ onClose }: Props) {
             <h4 className="text-sm font-semibold text-foreground">Example Queries</h4>
           </div>
           <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
-            {EXAMPLE_QUERIES.map((q) => (
+            {EXAMPLE_QUERIES.map((example) => (
               <button
-                key={q}
-                onClick={() => setQuery(q)}
+                key={example.label}
+                onClick={() => {
+                  setQuery(example.query)
+                  setSearchError("")
+                  setQueryBuilderError("")
+                }}
                 className={cn(
                   "w-full text-left text-xs px-3 py-2 rounded-lg transition-colors leading-snug",
-                  query === q
+                  query === example.query
                     ? "bg-background border border-border text-foreground font-medium shadow-sm"
                     : "text-muted-foreground hover:bg-background/70 hover:text-foreground"
                 )}
               >
-                {q}
+                {example.label}
               </button>
             ))}
           </div>
@@ -259,11 +262,22 @@ export default function GoogleSearchModal({ onClose }: Props) {
               <input
                 type="text"
                 value={query}
-                onChange={(e) => { setQuery(e.target.value); setSearchError("") }}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setSearchError("")
+                  setQueryBuilderError("")
+                }}
                 onKeyDown={(e) => { if (e.key === "Enter") handleSearch() }}
-                placeholder='site:linkedin.com/in "Software Engineer" "London"'
+                placeholder="site:linkedin.com/in + Software Engineers from London"
+                aria-describedby={queryBuilderError ? "query-builder-error" : undefined}
+                aria-invalid={queryBuilderError ? true : undefined}
                 className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
               />
+              {queryBuilderError && (
+                <p id="query-builder-error" role="alert" className="mt-1.5 text-xs text-destructive">
+                  {queryBuilderError}
+                </p>
+              )}
             </div>
 
             {/* Number of results */}
