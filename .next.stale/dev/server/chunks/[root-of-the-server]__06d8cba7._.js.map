@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": [],
-  "sections": [
-    {"offset": {"line": 40, "column": 0}, "map": {"version":3,"sources":["file:///D:/gridmind/lib/polar.ts"],"sourcesContent":["export function getPolarServerMode() {\n  return process.env.POLAR_MODE === \"production\" ? \"production\" : \"sandbox\"\n}\n\nexport function isPolarConfigured() {\n  return Boolean(process.env.POLAR_ACCESS_TOKEN)\n}\n"],"names":[],"mappings":";;;;;;AAAO,SAAS;IACd,OAAO,QAAQ,GAAG,CAAC,UAAU,KAAK,eAAe,eAAe;AAClE;AAEO,SAAS;IACd,OAAO,QAAQ,QAAQ,GAAG,CAAC,kBAAkB;AAC/C"}},
-    {"offset": {"line": 56, "column": 0}, "map": {"version":3,"sources":["file:///D:/gridmind/app/api/polar/checkout/route.ts"],"sourcesContent":["import { Checkout } from \"@polar-sh/nextjs\"\n\nimport { getPolarServerMode } from \"@/lib/polar\"\n\nexport const GET = Checkout({\n  accessToken: process.env.POLAR_ACCESS_TOKEN,\n  successUrl: process.env.POLAR_SUCCESS_URL || process.env.NEXT_PUBLIC_APP_URL,\n  returnUrl: process.env.POLAR_RETURN_URL || process.env.NEXT_PUBLIC_APP_URL,\n  server: getPolarServerMode(),\n  theme: \"light\",\n})\n"],"names":[],"mappings":";;;;AAAA;AAEA;;;AAEO,MAAM,MAAM,IAAA,sLAAQ,EAAC;IAC1B,aAAa,QAAQ,GAAG,CAAC,kBAAkB;IAC3C,YAAY,QAAQ,GAAG,CAAC,iBAAiB;IACzC,WAAW,QAAQ,GAAG,CAAC,gBAAgB;IACvC,QAAQ,IAAA,oIAAkB;IAC1B,OAAO;AACT"}}]
-}
