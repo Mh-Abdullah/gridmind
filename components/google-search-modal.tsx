@@ -191,17 +191,19 @@ export default function GoogleSearchModal({ onClose }: Props) {
   const rowCount = results.length > 0 ? results.length : numResults
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 backdrop-blur-sm sm:p-4">
       <div
-        className="w-full max-w-3xl rounded-2xl border border-border bg-background shadow-2xl flex overflow-hidden"
-        style={{ height: "min(600px, 90vh)" }}
+        className="flex h-[calc(100dvh-1rem)] max-h-[700px] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl md:h-[min(600px,90vh)] md:flex-row"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="google-search-title"
       >
         {/* ── Left: Example Queries ── */}
-        <div className="w-56 shrink-0 border-r border-border bg-muted/30 flex flex-col">
-          <div className="px-5 pt-5 pb-3 shrink-0">
+        <div className="flex max-h-36 w-full shrink-0 flex-col border-b border-border bg-muted/30 md:max-h-none md:w-56 md:border-b-0 md:border-r">
+          <div className="shrink-0 px-4 pb-2 pt-3 md:px-5 md:pb-3 md:pt-5">
             <h4 className="text-sm font-semibold text-foreground">Example Queries</h4>
           </div>
-          <div className="flex-1 overflow-y-auto px-3 pb-4 space-y-0.5">
+          <div className="flex flex-1 gap-2 overflow-x-auto px-3 pb-3 md:block md:space-y-0.5 md:overflow-x-hidden md:overflow-y-auto md:pb-4">
             {EXAMPLE_QUERIES.map((example) => (
               <button
                 key={example.label}
@@ -211,7 +213,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
                   setQueryBuilderError("")
                 }}
                 className={cn(
-                  "w-full text-left text-xs px-3 py-2 rounded-lg transition-colors leading-snug",
+                  "min-h-11 min-w-40 rounded-lg px-3 py-2 text-left text-xs leading-snug transition-colors md:min-h-0 md:w-full md:min-w-0",
                   query === example.query
                     ? "bg-background border border-border text-foreground font-medium shadow-sm"
                     : "text-muted-foreground hover:bg-background/70 hover:text-foreground"
@@ -224,23 +226,24 @@ export default function GoogleSearchModal({ onClose }: Props) {
         </div>
 
         {/* ── Right: Form ── */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {/* Header */}
-          <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-border shrink-0">
-            <div>
-              <h3 className="text-base font-bold text-foreground">Find with a Google Search</h3>
+          <div className="flex shrink-0 items-start justify-between border-b border-border px-4 pb-3 pt-4 sm:px-6 sm:pb-4 sm:pt-5">
+            <div className="min-w-0 pr-2">
+              <h3 id="google-search-title" className="text-base font-bold text-foreground">Find with a Google Search</h3>
               <p className="text-xs text-muted-foreground mt-0.5">Pull search results from Google and enrich them.</p>
             </div>
             <button
               onClick={onClose}
-              className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              aria-label="Close Google search"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           {/* Scrollable body */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+          <div className="flex-1 space-y-5 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5">
 
             {/* Query field */}
             <div>
@@ -271,7 +274,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
                 placeholder="site:linkedin.com/in + Software Engineers from London"
                 aria-describedby={queryBuilderError ? "query-builder-error" : undefined}
                 aria-invalid={queryBuilderError ? true : undefined}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
               />
               {queryBuilderError && (
                 <p id="query-builder-error" role="alert" className="mt-1.5 text-xs text-destructive">
@@ -292,19 +295,19 @@ export default function GoogleSearchModal({ onClose }: Props) {
                 max={100}
                 value={numResults}
                 onChange={(e) => setNumResults(Math.min(100, Math.max(1, parseInt(e.target.value) || 1)))}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
               />
             </div>
 
             {/* Language + Country */}
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className="text-xs font-semibold text-foreground mb-1.5 block">Language</label>
                 <div className="relative">
                   <select
                     value={language}
                     onChange={(e) => setLanguage(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 pr-8"
+                    className="min-h-11 w-full appearance-none rounded-lg border border-border bg-background px-3 py-2 pr-8 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
                   >
                     {LANGUAGES.map((l) => <option key={l}>{l}</option>)}
                   </select>
@@ -317,7 +320,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
                   <select
                     value={country}
                     onChange={(e) => setCountry(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 pr-8"
+                    className="min-h-11 w-full appearance-none rounded-lg border border-border bg-background px-3 py-2 pr-8 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
                   >
                     {COUNTRIES.map((c) => <option key={c}>{c}</option>)}
                   </select>
@@ -378,16 +381,16 @@ export default function GoogleSearchModal({ onClose }: Props) {
           </div>
 
           {/* Footer */}
-          <div className="px-6 py-4 border-t border-border shrink-0">
-            <div className="flex items-center justify-between">
+          <div className="shrink-0 border-t border-border px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <span className="text-xs text-muted-foreground flex items-center gap-1.5">
                 <Search className="h-3.5 w-3.5" />
                 Powered by Serper.dev
               </span>
-              <div className="flex items-center gap-2">
+              <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:items-center">
                 <Button
                   variant="secondary"
-                  className="h-9 px-4 text-xs"
+                  className="h-auto min-h-11 whitespace-normal px-3 py-2 text-xs sm:min-h-9 sm:px-4"
                   onClick={handleSearch}
                   disabled={isSearching || !query.trim() || isCreating}
                 >
@@ -399,14 +402,14 @@ export default function GoogleSearchModal({ onClose }: Props) {
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-9 px-4 text-xs"
+                  className="h-auto min-h-11 whitespace-normal px-3 py-2 text-xs sm:min-h-9 sm:px-4"
                   onClick={() => handleCreate(false)}
                   disabled={isCreating || isSearching}
                 >
                   {isCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create Project"}
                 </Button>
                 <Button
-                  className="h-9 px-4 text-xs gap-1"
+                  className="col-span-2 h-auto min-h-11 gap-1 whitespace-normal px-3 py-2 text-xs sm:min-h-9 sm:px-4"
                   onClick={() => handleCreate(true)}
                   disabled={isCreating || isSearching || results.length === 0}
                 >

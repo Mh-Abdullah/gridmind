@@ -44,19 +44,19 @@ export function UsageMonospaceBarChart({ rows, empty }: UsageMonospaceBarChartPr
   const topRow = rows.reduce((top, row) => (row.value > top.value ? row : top), rows[0])
 
   return (
-    <div className="flex min-h-[360px] flex-col rounded-[24px] bg-background/70 p-4">
+    <div className="flex min-h-[320px] min-w-0 flex-col overflow-hidden rounded-[20px] bg-background/70 p-3 sm:min-h-[360px] sm:rounded-[24px] sm:p-4">
       <div className="flex flex-col justify-between gap-4 sm:flex-row">
-        <div className="flex flex-row">
-          <div className="flex flex-col gap-2">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="flex min-w-0 flex-col gap-2">
             <span className="font-mono text-xs text-muted-foreground">{"[#] Total usage"}</span>
-            <span className="font-mono text-3xl text-primary">
+            <span className="break-all font-mono text-2xl text-primary sm:text-3xl">
               <span className="tracking-tighter">{formatCompact(total)}</span>
             </span>
           </div>
           <hr className="mx-4 h-full border-l border-dashed" />
-          <div className="flex flex-col gap-2">
+          <div className="flex min-w-0 flex-col gap-2">
             <span className="font-mono text-xs text-muted-foreground">{"[^] Top usage"}</span>
-            <span className="font-mono text-3xl text-primary">
+            <span className="break-all font-mono text-2xl text-primary sm:text-3xl">
               <span className="tracking-tighter">{formatCompact(topRow.value)}</span>
             </span>
           </div>
@@ -73,7 +73,7 @@ export function UsageMonospaceBarChart({ rows, empty }: UsageMonospaceBarChartPr
         </div>
       </div>
       <hr className="my-4 border-t border-dashed" />
-      <ChartContainer className="min-h-[250px] [aspect-ratio:auto]" config={chartConfig}>
+      <ChartContainer className="min-h-[220px] min-w-0 [aspect-ratio:auto] sm:min-h-[250px]" config={chartConfig}>
         <BarChart accessibilityLayer data={chartData}>
           <XAxis
             dataKey="label"

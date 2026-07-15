@@ -332,17 +332,21 @@ export default function TemplatesPage() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Describe what data you want to collect and we&apos;ll build the columns and sample rows for you.
                 </p>
-                <div className="flex gap-3">
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row">
                   <input
                     type="text"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && !isGenerating && handleGenerate()}
                     placeholder="e.g. track job applicants with their skills and interview stages…"
-                    className="flex-1 rounded-lg border border-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-shadow"
+                    className="min-h-11 w-full min-w-0 flex-1 rounded-lg border border-border bg-background px-4 py-2.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 transition-shadow"
                     disabled={isGenerating}
                   />
-                  <Button onClick={handleGenerate} disabled={isGenerating || !description.trim()} className="gap-2 shrink-0">
+                  <Button
+                    onClick={handleGenerate}
+                    disabled={isGenerating || !description.trim()}
+                    className="min-h-11 w-full shrink-0 gap-2 sm:w-auto"
+                  >
                     {isGenerating ? (
                       <>
                         <Loader2 className="h-4 w-4 animate-spin" />

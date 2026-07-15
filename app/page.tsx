@@ -25,6 +25,7 @@ import { AppFooter } from "@/components/app-footer"
 import { BrandIcon, BrandLogo } from "@/components/brand-assets"
 import { LandingWorkflowSection } from "@/components/landing-workflow-section"
 import ScrollStack, { ScrollStackItem } from "@/components/ScrollStack"
+import { SmoothCursor } from "@/components/smooth-cursor"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -536,6 +537,7 @@ export default function LandingPage() {
 
   return (
     <div className="landing-page flex min-h-screen flex-col overflow-x-hidden bg-background text-foreground">
+      <SmoothCursor />
       <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <Link

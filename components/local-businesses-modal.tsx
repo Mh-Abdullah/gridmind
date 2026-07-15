@@ -81,7 +81,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
     )
   }, [])
 
-  const [radiusKm, setRadiusKm] = useState(1)
+  const radiusKm = 1
   const [searchMode, setSearchMode] = useState<"type" | "text">("type")
   const [businessType, setBusinessType] = useState("restaurant")
   const [searchText, setSearchText] = useState("")
@@ -233,15 +233,27 @@ export default function LocalBusinessesModal({ onClose }: Props) {
   }))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="w-full max-w-5xl rounded-2xl border border-border bg-background shadow-2xl flex overflow-hidden"
-        style={{ height: "min(620px, 90vh)" }}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-2 backdrop-blur-sm sm:p-4">
+      <div
+        className="flex h-[calc(100dvh-1rem)] max-h-[760px] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-2xl lg:h-[min(620px,90vh)] lg:flex-row"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="local-businesses-title"
+      >
 
         {/* ── Left: Map ── */}
-        <div className="relative flex-1 min-w-0 overflow-hidden">
+        <div className="relative h-52 min-h-52 w-full shrink-0 overflow-hidden sm:h-64 sm:min-h-64 lg:h-auto lg:min-h-0 lg:min-w-0 lg:flex-1">
+
+          <button
+            onClick={onClose}
+            className="absolute right-3 top-3 z-1001 flex h-11 w-11 items-center justify-center rounded-lg border border-border bg-white/95 text-gray-600 shadow-sm backdrop-blur transition-colors hover:bg-white hover:text-gray-950 lg:hidden"
+            aria-label="Close local business search"
+          >
+            <X className="h-4 w-4" />
+          </button>
 
           {/* Location search overlay */}
-          <div className="absolute top-3 left-3 right-3 z-1000">
+          <div className="absolute left-3 right-16 top-3 z-1000 lg:right-3">
             <div className={cn(
               "flex items-center gap-2 bg-white/95 backdrop-blur rounded-lg border shadow-sm px-3 py-2",
               geocodeError ? "border-destructive" : "border-border"
@@ -253,14 +265,14 @@ export default function LocalBusinessesModal({ onClose }: Props) {
                 onChange={(e) => { setLocationInput(e.target.value); setGeocodeError("") }}
                 onKeyDown={(e) => { if (e.key === "Enter") geocodeLocation(locationInput) }}
                 placeholder="Location (e.g. 'Faisalabad, Pakistan' or '38000')"
-                className="flex-1 text-sm bg-transparent outline-none text-gray-900 placeholder:text-gray-400 min-w-0"
+                className="min-w-0 flex-1 bg-transparent text-base text-gray-900 outline-none placeholder:text-gray-400 sm:text-sm"
               />
               {isGeocoding ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />
               ) : (
                 <button
                   onClick={() => geocodeLocation(locationInput)}
-                  className="text-xs font-medium text-primary hover:text-primary/80 shrink-0"
+                  className="min-h-11 shrink-0 px-2 text-xs font-medium text-primary hover:text-primary/80"
                 >
                   Go
                 </button>
@@ -301,26 +313,27 @@ export default function LocalBusinessesModal({ onClose }: Props) {
         </div>
 
         {/* ── Right: Form ── */}
-        <div className="w-80 shrink-0 border-l border-border flex flex-col bg-background">
+        <div className="flex min-h-0 w-full flex-1 flex-col border-t border-border bg-background lg:w-80 lg:flex-none lg:border-l lg:border-t-0">
 
           {/* Header */}
-          <div className="flex items-start justify-between px-5 py-4 border-b border-border shrink-0">
+          <div className="flex shrink-0 items-start justify-between border-b border-border px-4 py-3 sm:px-5 sm:py-4">
             <div className="min-w-0 pr-2">
-              <h3 className="text-base font-bold text-foreground">Find local businesses</h3>
+              <h3 id="local-businesses-title" className="text-base font-bold text-foreground">Find local businesses</h3>
               <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
                 Search for businesses near a specific location with customizable radius.
               </p>
             </div>
             <button
               onClick={onClose}
-              className="h-6 w-6 flex items-center justify-center text-muted-foreground hover:text-foreground shrink-0 mt-0.5"
+              className="mt-0.5 hidden h-11 w-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:flex"
+              aria-label="Close local business search"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
 
           {/* Scrollable form body */}
-          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+          <div className="flex-1 space-y-4 overflow-y-auto px-4 py-4 sm:px-5">
 
             {/* Search Type toggle */}
             <div>
@@ -333,7 +346,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
                     key={mode}
                     onClick={() => setSearchMode(mode)}
                     className={cn(
-                      "flex-1 py-1.5 font-medium transition-colors",
+                      "min-h-11 flex-1 py-2 font-medium transition-colors",
                       searchMode === mode
                         ? "bg-foreground text-background"
                         : "bg-background text-muted-foreground hover:text-foreground"
@@ -353,7 +366,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
                   <select
                     value={businessType}
                     onChange={(e) => setBusinessType(e.target.value)}
-                    className="w-full appearance-none rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 pr-8"
+                    className="min-h-11 w-full appearance-none rounded-lg border border-border bg-background px-3 py-2 pr-8 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
                   >
                     <option value="">Select business type</option>
                     {BUSINESS_TYPES.map((t) => (
@@ -372,7 +385,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
                   onChange={(e) => setSearchText(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter") handleSearch() }}
                   placeholder="e.g. pizza, yoga studio…"
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                  className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
                 />
               </div>
             )}
@@ -389,7 +402,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
                 max={50}
                 value={maxResults}
                 onChange={(e) => setMaxResults(Math.min(50, Math.max(1, parseInt(e.target.value) || 1)))}
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
+                className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
               />
             </div>
 
@@ -448,11 +461,11 @@ export default function LocalBusinessesModal({ onClose }: Props) {
           </div>
 
           {/* Footer */}
-          <div className="px-5 py-4 border-t border-border shrink-0 space-y-2.5">
+          <div className="shrink-0 space-y-2.5 border-t border-border px-4 py-3 sm:px-5 sm:py-4">
             {/* Search button */}
             <Button
               variant="outline"
-              className="w-full gap-2 text-xs h-8"
+              className="h-auto min-h-11 w-full gap-2 whitespace-normal py-2 text-xs"
               onClick={handleSearch}
               disabled={isSearching || (searchMode === "type" && !businessType) || (searchMode === "text" && !searchText.trim())}
             >
@@ -468,17 +481,17 @@ export default function LocalBusinessesModal({ onClose }: Props) {
               <span>Estimated Cost: free</span>
               <span>{businesses.length > 0 ? `${businesses.length} results` : ""}</span>
             </div>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2">
               <Button
                 variant="secondary"
-                className="flex-1 text-xs h-9"
+                className="h-auto min-h-11 whitespace-normal py-2 text-xs"
                 onClick={() => handleCreate(false)}
                 disabled={isCreating}
               >
                 {isCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create Project"}
               </Button>
               <Button
-                className="flex-1 text-xs h-9 gap-1"
+                className="h-auto min-h-11 gap-1 whitespace-normal py-2 text-xs"
                 onClick={() => handleCreate(true)}
                 disabled={isCreating || businesses.length === 0}
               >

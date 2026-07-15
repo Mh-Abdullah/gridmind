@@ -475,11 +475,8 @@ export default function TablesPage() {
           {/* ── Projects list ── */}
           <section>
             <div className="flex items-center justify-between mb-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Projects &amp; Folders</p>
-              <button className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
-                <FolderPlus className="h-3.5 w-3.5" />
-                New folder
-              </button>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">Projects</p>
+
             </div>
 
             {/* Column headers */}
@@ -533,8 +530,11 @@ export default function TablesPage() {
                     <span className="text-xs text-muted-foreground text-right">{formatDate(sheet.updatedAt)}</span>
                     <div className="flex justify-end">
                       <button
-                        className="h-7 w-7 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-all duration-150"
+                        type="button"
+                        className="h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive/60 transition-colors duration-150"
                         onClick={(e) => { e.stopPropagation(); handleDeleteTable(sheet._id) }}
+                        aria-label={`Delete ${sheet.name}`}
+                        title={`Delete ${sheet.name}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>

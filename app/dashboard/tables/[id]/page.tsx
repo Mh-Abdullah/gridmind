@@ -51,6 +51,8 @@ import {
   Send,
   Sparkles,
   CircleAlert,
+  MoreHorizontal,
+  Eraser,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -132,6 +134,54 @@ interface EmailCampaignConfig {
   body: string
 }
 
+interface SpreadsheetClipboard {
+  cells: { [key: string]: string }
+  minRow: number
+  minCol: number
+  maxRow: number
+  maxCol: number
+}
+
+const buildClipboardPayload = (
+  selectedKeys: Set<string>,
+  sourceCells: { [key: string]: string }
+): { clipboard: SpreadsheetClipboard; text: string } | null => {
+  if (selectedKeys.size === 0) return null
+
+  const selected = Array.from(selectedKeys, (key) => {
+    const [row, col] = key.split("-").map(Number)
+    return { row, col, key }
+  }).filter(({ row, col }) => Number.isInteger(row) && Number.isInteger(col))
+
+  if (selected.length === 0) return null
+
+  const minRow = Math.min(...selected.map(({ row }) => row))
+  const maxRow = Math.max(...selected.map(({ row }) => row))
+  const minCol = Math.min(...selected.map(({ col }) => col))
+  const maxCol = Math.max(...selected.map(({ col }) => col))
+  const selectedKeySet = new Set(selected.map(({ key }) => key))
+  const clipboardCells: { [key: string]: string } = {}
+
+  selected.forEach(({ key }) => {
+    clipboardCells[key] = sourceCells[key] ?? ""
+  })
+
+  const text = Array.from({ length: maxRow - minRow + 1 }, (_, rowOffset) =>
+    Array.from({ length: maxCol - minCol + 1 }, (_, colOffset) => {
+      const key = `${minRow + rowOffset}-${minCol + colOffset}`
+      return selectedKeySet.has(key) ? (sourceCells[key] ?? "") : ""
+    }).join("\t")
+  ).join("\n")
+
+  return {
+    clipboard: { cells: clipboardCells, minRow, minCol, maxRow, maxCol },
+    text,
+  }
+}
+
+const isEditableShortcutTarget = (target: EventTarget | null) =>
+  target instanceof Element && Boolean(target.closest("input, textarea, select, [contenteditable='true']"))
+
 export default function TableEditorPage() {
   const router = useRouter()
   const params = useParams()
@@ -161,6 +211,7 @@ export default function TableEditorPage() {
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectionStart, setSelectionStart] = useState<{ row: number; col: number } | null>(null)
   const [editingCell, setEditingCell] = useState<{ row: number; col: number } | null>(null)
+  const [rowsToAdd, setRowsToAdd] = useState("1")
   const [mergedCells, setMergedCells] = useState<{ [key: string]: { rowSpan: number; colSpan: number } }>({})
   const [sortColumn, setSortColumn] = useState<number | null>(null)
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc")
@@ -194,6 +245,7 @@ export default function TableEditorPage() {
   const [colFieldType, setColFieldType] = useState<{ [key: number]: string }>({ 0: "Text" })
   const [hiddenCols, setHiddenCols] = useState<Set<number>>(new Set())
   const colMenuRef = useRef<HTMLDivElement>(null)
+  const [rowMenuOpen, setRowMenuOpen] = useState<number | null>(null)
 
   // Email campaign configuration and delivery state
   const [emailCampaigns, setEmailCampaigns] = useState<Record<number, EmailCampaignConfig>>({})
@@ -245,12 +297,41 @@ export default function TableEditorPage() {
   const resizingRef = useRef<{ col?: number; row?: number; startPos: number; startSize: number } | null>(null)
   const editInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
-  const clipboardRef = useRef<{ cells: { [key: string]: string }; minRow: number; minCol: number; maxRow: number; maxCol: number } | null>(null)
+  const clipboardRef = useRef<SpreadsheetClipboard | null>(null)
+  const undoStackRef = useRef<Array<{
+    cells: { [key: string]: string }
+    numRows: number
+    numCols: number
+    fullCells?: { [key: string]: string }
+    fullFormatting?: { [key: string]: CellFormatting }
+    fullRowHeights?: { [key: number]: number }
+  }>>([])
   const selectedCellsRef = useRef(selectedCells)
   const selectedCellRef = useRef(selectedCell)
   const cellsRef = useRef(cells)
   const editingCellRef = useRef(editingCell)
-  const pastePendingRef = useRef(false)
+  const numRowsRef = useRef(numRows)
+  const numColsRef = useRef(numCols)
+  const handleCutRef = useRef<() => void>(() => {})
+  const handleUndoRef = useRef<() => void>(() => {})
+
+  const pushUndoSnapshot = useCallback((
+    before: { [key: string]: string },
+    fullCells?: { [key: string]: string },
+    fullFormatting?: { [key: string]: CellFormatting },
+    fullRowHeights?: { [key: number]: number }
+  ) => {
+    if (Object.keys(before).length === 0 && !fullCells) return
+    undoStackRef.current.push({
+      cells: before,
+      numRows: numRowsRef.current,
+      numCols: numColsRef.current,
+      fullCells,
+      fullFormatting,
+      fullRowHeights,
+    })
+    if (undoStackRef.current.length > 100) undoStackRef.current.shift()
+  }, [])
 
   // Initialize local state from Convex data
   // Wait for both spreadsheet metadata AND columnNames query to be ready
@@ -329,11 +410,13 @@ export default function TableEditorPage() {
   }, [sync])
 
   const setNumRows = useCallback((rows: number) => {
+    numRowsRef.current = rows
     setNumRowsLocal(rows)
     sync.setMetadata({ numRows: rows })
   }, [sync])
 
   const setNumCols = useCallback((cols: number) => {
+    numColsRef.current = cols
     setNumColsLocal(cols)
     sync.setMetadata({ numCols: cols })
   }, [sync])
@@ -508,46 +591,147 @@ export default function TableEditorPage() {
     }
   }, [editingCell])
 
-  // Function ref that always has fresh values
-  const handlePasteRef = useRef<() => void>(() => {})
-  
-  // Update the paste function whenever cells changes
+  // Function ref that always has fresh values and can paste either system TSV
+  // text or the internal cell clipboard.
+  const handlePasteRef = useRef<(plainText?: string) => void>(() => {})
+
   useEffect(() => {
-    handlePasteRef.current = () => {
-      if (!clipboardRef.current || !selectedCellRef.current) return
-      
-      const { cells: clipboardCells, minRow, minCol } = clipboardRef.current
-      const { row: pasteRow, col: pasteCol } = selectedCellRef.current
-      
-      console.log('INSIDE handlePasteRef - cells:', cells)
-      const rowOffset = pasteRow - minRow
-      const colOffset = pasteCol - minCol
-      
-      const newCells = { ...cells }  // Use current cells state, not ref
-      Object.entries(clipboardCells).forEach(([key, value]) => {
-        const [origRow, origCol] = key.split('-').map(Number)
-        const newRow = origRow + rowOffset
-        const newCol = origCol + colOffset
-        
-        if (newRow >= 0 && newCol >= 0) {
-          newCells[`${newRow}-${newCol}`] = value
-        }
-      })
-      
-      console.log('Pasted cells:', newCells)
-      setCells(newCells)
+    handlePasteRef.current = (plainText?: string) => {
+      const destination = selectedCellRef.current
+      if (!destination) return
+
+      const updates: { [key: string]: string } = {}
+      let requiredRows = numRowsRef.current
+      let requiredCols = numColsRef.current
+
+      if (plainText !== undefined) {
+        const lines = plainText.replace(/\r/g, "").split("\n")
+        if (lines.length > 1 && lines.at(-1) === "") lines.pop()
+
+        lines.forEach((line, rowOffset) => {
+          line.split("\t").forEach((value, colOffset) => {
+            const row = destination.row + rowOffset
+            const col = destination.col + colOffset
+            updates[`${row}-${col}`] = value
+            requiredRows = Math.max(requiredRows, row + 1)
+            requiredCols = Math.max(requiredCols, col + 1)
+          })
+        })
+      } else if (clipboardRef.current) {
+        const { cells: clipboardCells, minRow, minCol } = clipboardRef.current
+        const rowOffset = destination.row - minRow
+        const colOffset = destination.col - minCol
+
+        Object.entries(clipboardCells).forEach(([key, value]) => {
+          const [sourceRow, sourceCol] = key.split("-").map(Number)
+          const row = sourceRow + rowOffset
+          const col = sourceCol + colOffset
+          if (row < 0 || col < 0) return
+
+          updates[`${row}-${col}`] = value
+          requiredRows = Math.max(requiredRows, row + 1)
+          requiredCols = Math.max(requiredCols, col + 1)
+        })
+      }
+
+      if (Object.keys(updates).length === 0) return
+
+      const before = Object.fromEntries(
+        Object.keys(updates).map((key) => [key, cellsRef.current[key] ?? ""])
+      )
+      pushUndoSnapshot(before)
+      setCells((previous) => ({ ...previous, ...updates }))
+
+      if (requiredRows > numRowsRef.current) setNumRows(requiredRows)
+      if (requiredCols > numColsRef.current) setNumCols(requiredCols)
     }
-  }, [cells])  // Update whenever cells changes
+  }, [pushUndoSnapshot, setCells, setNumCols, setNumRows])
+
   useEffect(() => {
     selectedCellsRef.current = selectedCells
     selectedCellRef.current = selectedCell
     cellsRef.current = cells
     editingCellRef.current = editingCell
-  }, [selectedCells, selectedCell, cells, editingCell])
+    numRowsRef.current = numRows
+    numColsRef.current = numCols
+  }, [selectedCells, selectedCell, cells, editingCell, numRows, numCols])
+
+  useEffect(() => {
+    handleCutRef.current = () => {
+      const selectedKeys = selectedCellsRef.current
+      if (selectedKeys.size === 0) return
+
+      const before = Object.fromEntries(
+        Array.from(selectedKeys, (key) => [key, cellsRef.current[key] ?? ""])
+      )
+      const cleared = Object.fromEntries(Array.from(selectedKeys, (key) => [key, ""]))
+
+      pushUndoSnapshot(before)
+      setCells((previous) => ({ ...previous, ...cleared }))
+    }
+
+    handleUndoRef.current = () => {
+      const snapshot = undoStackRef.current.pop()
+      if (!snapshot) return
+
+      let restored: { [key: string]: string }
+      let convexUpdates: { [key: string]: string }
+
+      if (snapshot.fullCells) {
+        restored = { ...snapshot.fullCells }
+        const allKeys = new Set([
+          ...Object.keys(cellsRef.current),
+          ...Object.keys(snapshot.fullCells),
+        ])
+        convexUpdates = Object.fromEntries(
+          Array.from(allKeys, (key) => [key, snapshot.fullCells?.[key] ?? ""])
+        )
+      } else {
+        restored = { ...cellsRef.current }
+        Object.entries(snapshot.cells).forEach(([key, value]) => {
+          if (value === "") delete restored[key]
+          else restored[key] = value
+        })
+        convexUpdates = snapshot.cells
+      }
+
+      cellsRef.current = restored
+      setCellsLocal(restored)
+      void sync.setCellsBatch(convexUpdates)
+      if (snapshot.fullFormatting) {
+        const previousFormatting = cellFormatting
+        setCellFormattingState(snapshot.fullFormatting)
+        void (async () => {
+          for (const key of Object.keys(previousFormatting)) {
+            const [row, col] = key.split("-").map(Number)
+            await sync.setCellFormatting(row, col, {})
+          }
+          for (const [key, formatting] of Object.entries(snapshot.fullFormatting ?? {})) {
+            const [row, col] = key.split("-").map(Number)
+            await sync.setCellFormatting(row, col, formatting)
+          }
+        })()
+      }
+      if (snapshot.fullRowHeights) {
+        setRowHeightsLocal(snapshot.fullRowHeights)
+        for (let row = 0; row < Math.max(numRowsRef.current, snapshot.numRows); row++) {
+          void sync.setRowHeight(row, snapshot.fullRowHeights[row] ?? 36)
+        }
+      }
+      if (snapshot.numRows !== numRowsRef.current) setNumRows(snapshot.numRows)
+      if (snapshot.numCols !== numColsRef.current) setNumCols(snapshot.numCols)
+      setSelectedCells(new Set())
+      setSelectedCell(null)
+      setEditingCell(null)
+      setRowMenuOpen(null)
+    }
+  })
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!editingCellRef.current && (e.ctrlKey || e.metaKey)) {
+      if (isEditableShortcutTarget(e.target) || editingCellRef.current) return
+
+      if (e.ctrlKey || e.metaKey) {
         if (e.key === 'i' || e.key === 'I') {
           e.preventDefault()
           setShowAIChat(prev => !prev)
@@ -559,53 +743,56 @@ export default function TableEditorPage() {
             }
             return true
           })
-        } else if (e.key === 'c' || e.key === 'C') {
+        } else if ((e.key === 'z' || e.key === 'Z') && !e.shiftKey && undoStackRef.current.length > 0) {
           e.preventDefault()
-          // Inline copy logic
-          console.log('Copy pressed, selectedCells size:', selectedCellsRef.current.size, 'selectedCell:', selectedCellRef.current)
-          if (selectedCellsRef.current.size === 0 || !selectedCellRef.current) {
-            console.log('No cells selected')
-            return
-          }
-
-          const selectedArray = Array.from(selectedCellsRef.current).map((key: any) => {
-            const [row, col] = key.split('-').map(Number)
-            return { row, col }
-          })
-
-          const minRow = Math.min(...selectedArray.map(c => c.row))
-          const maxRow = Math.max(...selectedArray.map(c => c.row))
-          const minCol = Math.min(...selectedArray.map(c => c.col))
-          const maxCol = Math.max(...selectedArray.map(c => c.col))
-
-          const clipboardData: { [key: string]: string } = {}
-          selectedArray.forEach(({ row, col }: any) => {
-            const cellKey = `${row}-${col}`
-            clipboardData[cellKey] = cellsRef.current[cellKey] || ""
-          })
-
-          console.log('Copied cells:', clipboardData)
-          clipboardRef.current = {
-            cells: clipboardData,
-            minRow,
-            minCol,
-            maxRow,
-            maxCol,
-          }
-          console.log('Clipboard stored in ref:', clipboardRef.current)
-          
-          setShowCopyNotification(true)
-          setTimeout(() => setShowCopyNotification(false), 2000)
-        } else if (e.key === 'v' || e.key === 'V') {
-          e.preventDefault()
-          console.log('Paste pressed')
-          handlePasteRef.current()
+          handleUndoRef.current()
         }
       }
     }
 
+    const handleCopy = (event: ClipboardEvent) => {
+      if (isEditableShortcutTarget(event.target) || editingCellRef.current || window.getSelection()?.toString()) return
+
+      const payload = buildClipboardPayload(selectedCellsRef.current, cellsRef.current)
+      if (!payload) return
+
+      event.preventDefault()
+      event.clipboardData?.setData("text/plain", payload.text)
+      clipboardRef.current = payload.clipboard
+      setShowCopyNotification(true)
+      window.setTimeout(() => setShowCopyNotification(false), 2000)
+    }
+
+    const handleCut = (event: ClipboardEvent) => {
+      if (isEditableShortcutTarget(event.target) || editingCellRef.current || window.getSelection()?.toString()) return
+
+      const payload = buildClipboardPayload(selectedCellsRef.current, cellsRef.current)
+      if (!payload) return
+
+      event.preventDefault()
+      event.clipboardData?.setData("text/plain", payload.text)
+      clipboardRef.current = payload.clipboard
+      handleCutRef.current()
+    }
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (isEditableShortcutTarget(event.target) || editingCellRef.current || !selectedCellRef.current) return
+
+      event.preventDefault()
+      const plainText = event.clipboardData?.getData("text/plain")
+      handlePasteRef.current(event.clipboardData ? plainText : undefined)
+    }
+
     document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
+    document.addEventListener('copy', handleCopy)
+    document.addEventListener('cut', handleCut)
+    document.addEventListener('paste', handlePaste)
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown)
+      document.removeEventListener('copy', handleCopy)
+      document.removeEventListener('cut', handleCut)
+      document.removeEventListener('paste', handlePaste)
+    }
   }, [])
 
   const getCellValue = (row: number, col: number): string => {
@@ -614,6 +801,11 @@ export default function TableEditorPage() {
 
   const setCellValue = (row: number, col: number, value: string) => {
     const cellKey = `${row}-${col}`
+    const previousValue = cellsRef.current[cellKey] ?? ""
+    if (previousValue === value) return
+
+    pushUndoSnapshot({ [cellKey]: previousValue })
+    cellsRef.current = { ...cellsRef.current, [cellKey]: value }
     setCellsLocal(prev => ({ ...prev, [cellKey]: value }))
     sync.setCellValue(row, col, value)
   }
@@ -747,6 +939,26 @@ export default function TableEditorPage() {
     return () => document.removeEventListener("mousedown", handler)
   }, [colMenuOpen])
 
+  // Close the row actions menu when focus moves elsewhere on the page.
+  useEffect(() => {
+    if (rowMenuOpen === null) return
+    const handleMouseDown = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      if (!target?.closest("[data-row-actions='true']")) {
+        setRowMenuOpen(null)
+      }
+    }
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setRowMenuOpen(null)
+    }
+    document.addEventListener("mousedown", handleMouseDown)
+    document.addEventListener("keydown", handleEscape)
+    return () => {
+      document.removeEventListener("mousedown", handleMouseDown)
+      document.removeEventListener("keydown", handleEscape)
+    }
+  }, [rowMenuOpen])
+
   useEffect(() => {
     if (!showAddColPanel) return
     const handler = (e: MouseEvent) => {
@@ -821,14 +1033,28 @@ export default function TableEditorPage() {
     setIsInitialized(false)
   }
 
-  const handleAddRow = () => {
-    setNumRows(numRows + 1)
-  }
-
   const handleAddMultipleRows = (count: number) => {
     if (count > 0) {
-      setNumRows(numRows + count)
+      pushUndoSnapshot(
+        {},
+        { ...cellsRef.current },
+        { ...cellFormatting },
+        { ...rowHeights }
+      )
+      setNumRows(numRowsRef.current + count)
     }
+  }
+
+  const handleAddRow = () => {
+    handleAddMultipleRows(1)
+  }
+
+  const handleAddRequestedRows = () => {
+    const count = Number.parseInt(rowsToAdd, 10)
+    if (!Number.isInteger(count) || count < 1 || count > 1000) return
+
+    handleAddMultipleRows(count)
+    setRowsToAdd("1")
   }
 
   const handleAddColumn = () => {
@@ -1120,6 +1346,86 @@ export default function TableEditorPage() {
 
     setSelectedCell({ row, col: 0 })
     setEditingCell(null)
+  }
+
+  const clearRow = (rowIndex: number) => {
+    const before: { [key: string]: string } = {}
+    const cleared: { [key: string]: string } = {}
+
+    for (let col = 0; col < numCols; col++) {
+      const key = `${rowIndex}-${col}`
+      before[key] = cellsRef.current[key] ?? ""
+      cleared[key] = ""
+    }
+
+    pushUndoSnapshot(before)
+    setCells((previous) => ({ ...previous, ...cleared }))
+    setRowMenuOpen(null)
+  }
+
+  const deleteRow = (rowIndex: number) => {
+    if (numRows <= 1) return
+
+    pushUndoSnapshot(
+      {},
+      { ...cellsRef.current },
+      { ...cellFormatting },
+      { ...rowHeights }
+    )
+
+    const newCells: { [key: string]: string } = {}
+    const newFormatting: { [key: string]: CellFormatting } = {}
+    const newRowHeights: { [key: number]: number } = {}
+    const convexBatch: { [key: string]: string } = {}
+
+    for (let row = 0; row < numRows; row++) {
+      for (let col = 0; col < numCols; col++) {
+        const oldKey = `${row}-${col}`
+        convexBatch[oldKey] = ""
+        if (row === rowIndex) continue
+
+        const targetRow = row < rowIndex ? row : row - 1
+        const newKey = `${targetRow}-${col}`
+        const value = cellsRef.current[oldKey] ?? ""
+        if (value) newCells[newKey] = value
+        convexBatch[newKey] = value
+
+        const formatting = cellFormatting[oldKey]
+        if (formatting && Object.keys(formatting).length > 0) {
+          newFormatting[newKey] = formatting
+        }
+      }
+
+      if (row !== rowIndex && rowHeights[row] !== undefined) {
+        newRowHeights[row < rowIndex ? row : row - 1] = rowHeights[row]
+      }
+    }
+
+    cellsRef.current = newCells
+    setCellsLocal(newCells)
+    setCellFormattingState(newFormatting)
+    setRowHeightsLocal(newRowHeights)
+    setNumRows(numRows - 1)
+    setFilteredRows(null)
+    setSelectedCells(new Set())
+    setSelectedCell(null)
+    setEditingCell(null)
+    setRowMenuOpen(null)
+    void sync.setCellsBatch(convexBatch)
+
+    void (async () => {
+      for (const key of Object.keys(cellFormatting)) {
+        const [row, col] = key.split("-").map(Number)
+        await sync.setCellFormatting(row, col, {})
+      }
+      for (const [key, formatting] of Object.entries(newFormatting)) {
+        const [row, col] = key.split("-").map(Number)
+        await sync.setCellFormatting(row, col, formatting)
+      }
+      for (let row = 0; row < numRows; row++) {
+        await sync.setRowHeight(row, newRowHeights[row] ?? 36)
+      }
+    })()
   }
 
   const toggleSelectAllRows = () => {
@@ -2063,7 +2369,7 @@ export default function TableEditorPage() {
         {/* Table container */}
         <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <div className="flex-1 overflow-auto" tabIndex={0} onKeyDown={(e) => {
-            selectedCell && handleCellKeyDown(e as any, selectedCell.row, selectedCell.col);
+            if (selectedCell) handleCellKeyDown(e, selectedCell.row, selectedCell.col)
           }}>
         <div className="inline-block min-w-full">
           <table className="border-collapse">
@@ -2543,14 +2849,60 @@ export default function TableEditorPage() {
               {(filteredRows !== null ? filteredRows : Array.from({ length: numRows }, (_, i) => i)).map((rowIndex) => (
                 <tr key={rowIndex} style={{ height: rowHeights[rowIndex] || 36 }} className="group hover:bg-muted/20">
                   {/* Row number */}
-                  <td className="relative left-0 z-10 border-b border-r border-border bg-muted/80 p-2 text-center text-xs font-medium text-muted-foreground cursor-pointer select-none"
-                      onClick={(event) => handleRowSelect(rowIndex, event)}
+                  <td data-row-actions="true" className={`relative left-0 border-b border-r border-border bg-muted/80 p-0 text-center text-xs font-medium text-muted-foreground select-none ${rowMenuOpen === rowIndex ? "z-40" : "z-10"}`}>
+                    <button
+                      type="button"
+                      className="flex h-full min-h-9 w-full cursor-pointer items-center justify-center gap-0.5 px-1 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+                      onClick={(event) => {
+                        handleRowSelect(rowIndex, event)
+                        if (!event.ctrlKey && !event.metaKey && !event.shiftKey) {
+                          setRowMenuOpen((current) => current === rowIndex ? null : rowIndex)
+                        }
+                      }}
                       onDoubleClick={() => onRowHeaderDoubleClick(rowIndex)}
-                  >
-                    {rowIndex + 1}
+                      aria-label={`Row ${rowIndex + 1} actions`}
+                      aria-haspopup="menu"
+                      aria-expanded={rowMenuOpen === rowIndex}
+                    >
+                      <span>{rowIndex + 1}</span>
+                      <MoreHorizontal className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-70 group-focus-within:opacity-70" aria-hidden="true" />
+                    </button>
+                    {rowMenuOpen === rowIndex && (
+                      <div
+                        role="menu"
+                        aria-label={`Actions for row ${rowIndex + 1}`}
+                        className="absolute left-[calc(100%+4px)] top-1 z-50 w-44 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-lg"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => clearRow(rowIndex)}
+                          className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 text-left text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        >
+                          <Eraser className="h-4 w-4" aria-hidden="true" />
+                          Clear row
+                        </button>
+                        <div className="my-1 border-t border-border" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          onClick={() => deleteRow(rowIndex)}
+                          disabled={numRows <= 1}
+                          title={numRows <= 1 ? "A table must contain at least one row" : "Delete row"}
+                          className="flex min-h-10 w-full items-center gap-2 rounded-md px-3 text-left text-sm text-destructive transition-colors hover:bg-destructive/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          Delete row
+                        </button>
+                      </div>
+                    )}
                     {/* Resize handle */}
                     <div
-                      onMouseDown={(e) => onRowMouseDown(e, rowIndex)}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        onRowMouseDown(e, rowIndex)
+                      }}
                       className="absolute bottom-0 left-0 h-1 w-full cursor-row-resize hover:bg-primary/50 active:bg-primary"
                     />
                   </td>
@@ -2839,15 +3191,43 @@ export default function TableEditorPage() {
       {/* Bottom Bar - Loopster style */}
       <div className="flex items-center justify-between border-t border-border px-3 py-1.5">
         <div className="flex items-center gap-1.5">
-          <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs" onClick={handleAddRow}>
-            <Plus className="h-3.5 w-3.5" />
-            New entry
-            <kbd className="ml-1 inline-flex h-4 items-center rounded border border-border bg-muted px-1 font-mono text-[10px]">N</kbd>
-          </Button>
-          <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs">
+          <div className="flex items-center gap-1 rounded-md border border-transparent focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/30">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1.5 rounded-r-none text-xs"
+              onClick={handleAddRequestedRows}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              New entry
+            </Button>
+            <label htmlFor="rows-to-add" className="sr-only">Number of rows to add</label>
+            <input
+              id="rows-to-add"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={1000}
+              value={rowsToAdd}
+              onChange={(event) => setRowsToAdd(event.target.value)}
+              onBlur={() => {
+                if (!rowsToAdd) setRowsToAdd("1")
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault()
+                  handleAddRequestedRows()
+                }
+              }}
+              aria-label="Number of rows to add"
+              title="Enter a number from 1 to 1000, then press Enter"
+              className="mr-1 h-6 w-14 rounded border border-border bg-background px-1 text-center font-mono text-xs text-foreground outline-none focus:border-ring [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+            />
+          </div>
+          {/* <Button variant="ghost" size="sm" className="gap-1.5 h-7 text-xs">
             <RefreshCw className="h-3.5 w-3.5" />
             Auto scroll off
-          </Button>
+          </Button> */}
         </div>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <span>
@@ -2857,9 +3237,9 @@ export default function TableEditorPage() {
           <Button variant="ghost" size="sm" className="h-6 gap-1 bg-primary/10 text-primary text-xs px-2">
             🪡 Main
           </Button>
-          <Button variant="ghost" size="icon" className="h-6 w-6">
+          {/* <Button variant="ghost" size="icon" className="h-6 w-6">
             <Plus className="h-3 w-3" />
-          </Button>
+          </Button> */}
         </div>
       </div>
         </div>

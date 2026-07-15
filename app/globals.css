@@ -1714,6 +1714,83 @@
   stroke: currentColor;
 }
 
+/* Smooth landing-page pointer follower. The native cursor remains available. */
+.smooth-cursor-layer {
+  display: none;
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+
+.smooth-cursor-ring,
+.smooth-cursor-glow {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: 999px;
+  opacity: 0;
+  will-change: transform;
+  transition: opacity 180ms ease;
+}
+
+.smooth-cursor-ring {
+  width: 2.6rem;
+  height: 2.6rem;
+}
+
+.smooth-cursor-ring::before {
+  content: "";
+  position: absolute;
+  inset: 0.425rem;
+  border-radius: inherit;
+  border: 1px solid color-mix(in oklab, var(--gm-amber) 72%, transparent);
+  background: color-mix(in oklab, var(--gm-amber) 7%, transparent);
+  box-shadow: 0 0 1.5rem var(--gm-amber-soft), inset 0 0 0.75rem var(--gm-amber-soft);
+  transition: transform 180ms ease, background-color 180ms ease, border-color 180ms ease;
+}
+
+.smooth-cursor-glow {
+  width: 8rem;
+  height: 8rem;
+  background: radial-gradient(circle, var(--gm-amber-soft), transparent 68%);
+  filter: blur(0.2rem);
+}
+
+.smooth-cursor-ring[data-visible="true"] {
+  opacity: 1;
+}
+
+.smooth-cursor-glow[data-visible="true"] {
+  opacity: 0.55;
+}
+
+.smooth-cursor-ring[data-interactive="true"] {
+  opacity: 1;
+}
+
+.smooth-cursor-ring[data-interactive="true"]::before {
+  border-color: var(--gm-amber);
+  background: var(--gm-amber-soft);
+  transform: scale(1.48);
+}
+
+.smooth-cursor-ring[data-pressed="true"]::before {
+  transform: scale(0.72);
+}
+
+@media (pointer: fine) {
+  .smooth-cursor-layer {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .smooth-cursor-layer {
+    display: none;
+  }
+}
+
 .landing-page .workflow-check-in span:last-child,
 .landing-page .workflow-check-in-delay-1 span:last-child,
 .landing-page .workflow-check-in-delay-2 span:last-child,

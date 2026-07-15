@@ -63,12 +63,12 @@ function SummaryCard({
   icon: typeof WalletCards
 }) {
   return (
-    <article className="rounded-[26px] border border-border/70 bg-card/92 p-5 shadow-[0_22px_55px_-40px_rgba(15,23,42,0.45)]">
+    <article className="min-w-0 rounded-[22px] border border-border/70 bg-card/92 p-4 shadow-[0_22px_55px_-40px_rgba(15,23,42,0.45)] sm:rounded-[26px] sm:p-5">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">{label}</p>
         <Icon className="h-4 w-4 text-primary" />
       </div>
-      <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-foreground">{value}</p>
+      <p className="mt-3 break-words text-2xl font-semibold tracking-[-0.04em] text-foreground sm:text-3xl">{value}</p>
       <p className="mt-2 text-sm text-muted-foreground">{helper}</p>
     </article>
   )
@@ -98,8 +98,8 @@ function HorizontalBarChart({
               <p className="text-sm font-medium text-foreground">{row.label}</p>
               {row.sublabel ? <p className="mt-1 text-xs text-muted-foreground">{row.sublabel}</p> : null}
             </div>
-            <div className="text-right">
-              <p className="text-xl font-semibold tracking-[-0.03em] text-foreground">{formatCredits(row.value)}</p>
+            <div className="min-w-0 shrink-0 text-right">
+              <p className="text-lg font-semibold tracking-[-0.03em] text-foreground sm:text-xl">{formatCredits(row.value)}</p>
               {row.footer ? <p className="text-xs text-muted-foreground">{row.footer}</p> : null}
             </div>
           </div>
@@ -124,11 +124,11 @@ function ChartShell({
   children: React.ReactNode
 }) {
   return (
-    <section className="rounded-[30px] border border-border/70 bg-card/92 p-6 shadow-[0_28px_75px_-50px_rgba(15,23,42,0.45)]">
+    <section className="min-w-0 overflow-hidden rounded-[24px] border border-border/70 bg-card/92 p-4 shadow-[0_28px_75px_-50px_rgba(15,23,42,0.45)] sm:rounded-[30px] sm:p-6">
       <div className="flex items-start justify-between gap-4 border-b border-border/60 pb-5">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">{eyebrow}</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{title}</h2>
+          <h2 className="mt-2 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">{title}</h2>
         </div>
         <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-primary/15 bg-primary/10 text-primary">
           <Icon className="h-5 w-5" />
@@ -171,8 +171,8 @@ function WalletMixRadialChart({
         innerRadius="22%"
         outerRadius="94%"
         defaultSelectedDataKey={segments[0]?.key ?? null}
-        className="h-[360px] w-full max-w-[460px] [aspect-ratio:auto]"
-        chartProps={{ margin: { top: 24, right: 34, bottom: 42, left: 34 } }}
+        className="h-[300px] min-w-0 w-full max-w-[460px] [aspect-ratio:auto] sm:h-[360px]"
+        chartProps={{ margin: { top: 20, right: 14, bottom: 38, left: 14 } }}
       >
         <PolarAngleAxis type="number" domain={[0, 100]} tick={false} />
         <RadialTooltip variant="frosted-glass" roundness="xl" defaultIndex={0} />
@@ -228,9 +228,9 @@ function TrendChart({
   }
 
   return (
-    <div className="overflow-hidden rounded-[28px] border border-border/70 bg-background p-4 shadow-[0_28px_80px_-62px_var(--gm-amber)]">
+    <div className="min-w-0 overflow-hidden rounded-[22px] border border-border/70 bg-background p-2 shadow-[0_28px_80px_-62px_var(--gm-amber)] sm:rounded-[28px] sm:p-4">
       <div>
-        <div className="mb-2 flex justify-end gap-4 text-sm text-muted-foreground">
+        <div className="mb-2 flex flex-wrap justify-end gap-x-4 gap-y-2 text-xs text-muted-foreground sm:text-sm">
           <span className="inline-flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-[3px] bg-[var(--gm-amber)]" />
             Balance
@@ -250,12 +250,12 @@ function TrendChart({
           xDataKey="label"
           brushHeight={54}
           brushFormatLabel={(value) => String(value)}
-          className="h-[390px] rounded-[20px]"
-          chartProps={{ margin: { top: 22, right: 22, bottom: 14, left: 8 } }}
+          className="h-[320px] min-w-0 rounded-[18px] sm:h-[390px] sm:rounded-[20px]"
+          chartProps={{ margin: { top: 18, right: 8, bottom: 12, left: 0 } }}
         >
           <Grid strokeOpacity={0.36} />
           <XAxis dataKey="label" interval="preserveStartEnd" tickMargin={16} />
-          <YAxis tickFormatter={(value) => formatCredits(Number(value))} width={64} />
+          <YAxis tickFormatter={(value) => formatCredits(Number(value))} width={48} />
           <Legend variant="rounded-square" isClickable />
           <Tooltip variant="frosted-glass" roundness="xl" defaultIndex={chartData.length - 1} />
           <Line dataKey="balance" animationType="left-to-right" glowing isClickable enableBufferLine>
@@ -354,7 +354,7 @@ export default function UsagePage() {
   }))
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen w-full overflow-x-hidden bg-background text-foreground">
       <div className="hidden md:block">
         <AppSidebar />
       </div>
@@ -374,35 +374,35 @@ export default function UsagePage() {
           <div className="absolute right-0 top-24 h-80 w-80 rounded-full bg-amber-500/8 blur-3xl" />
         </div>
 
-        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
-          <div className="flex w-full items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+        <header className="flex min-h-16 shrink-0 items-center justify-between border-b border-border bg-background px-3 py-2 sm:px-4 md:px-8">
+          <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:gap-4">
+            <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted md:hidden"
                 aria-label="Open navigation"
               >
                 <Menu className="h-5 w-5" />
               </button>
               <BackToTablesButton />
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Usage</p>
-                <h1 className="text-lg font-semibold text-foreground">Credit analytics</h1>
+              <div className="min-w-0">
+                <p className="mb-0.5 truncate text-[10px] font-medium uppercase tracking-widest text-muted-foreground sm:text-xs">Usage</p>
+                <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">Credit analytics</h1>
               </div>
             </div>
-            <ThemeToggle />
+            <div className="shrink-0"><ThemeToggle /></div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto px-4 py-6 md:px-6 md:py-8">
-          <section className="mb-6 overflow-hidden rounded-[32px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.94))] p-6 text-white shadow-[0_35px_90px_-45px_rgba(15,118,110,0.45)] md:p-8">
+        <main className="min-w-0 flex-1 overflow-auto px-3 py-4 sm:px-4 sm:py-6 md:px-6 md:py-8">
+          <section className="mb-6 min-w-0 overflow-hidden rounded-[24px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.94))] p-4 text-white shadow-[0_35px_90px_-45px_rgba(15,118,110,0.45)] sm:rounded-[32px] sm:p-6 md:p-8">
             <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-50/90">
                   <BarChart3 className="h-3.5 w-3.5" />
                   Usage monitoring
                 </div>
-                <h2 className="mt-5 max-w-2xl text-3xl font-semibold tracking-[-0.04em] text-white md:text-4xl">
+                <h2 className="mt-5 max-w-2xl text-2xl font-semibold tracking-[-0.04em] text-white sm:text-3xl md:text-4xl">
                   Every credit movement is visualized so you can spot spend patterns, balance trends, and package impact at a glance.
                 </h2>
               </div>
@@ -413,7 +413,7 @@ export default function UsagePage() {
                     <p className="text-sm text-emerald-50/75">Latest balance</p>
                     <WalletCards className="h-4 w-4 text-emerald-50/75" />
                   </div>
-                  <p className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">
+                  <p className="mt-3 break-words text-3xl font-semibold tracking-[-0.05em] text-white sm:text-4xl">
                     {formatCredits(summary?.balanceCredits ?? 0)}
                   </p>
                 </div>
@@ -423,7 +423,7 @@ export default function UsagePage() {
                     <p className="text-sm text-emerald-50/75">Total spent</p>
                     <Activity className="h-4 w-4 text-emerald-50/75" />
                   </div>
-                  <p className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">
+                  <p className="mt-3 break-words text-3xl font-semibold tracking-[-0.05em] text-white sm:text-4xl">
                     {formatCredits(summary?.totalSpentCredits ?? 0)}
                   </p>
                 </div>

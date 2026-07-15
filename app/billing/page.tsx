@@ -151,7 +151,7 @@ function BillingPageContent() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
+    <div className="flex min-h-screen w-full overflow-x-hidden bg-background text-foreground">
       <div className="hidden md:block">
         <AppSidebar />
       </div>
@@ -171,27 +171,27 @@ function BillingPageContent() {
           <div className="absolute right-[-8%] top-[16rem] h-[18rem] w-[18rem] rounded-full bg-[radial-gradient(circle,_rgba(14,165,233,0.14),_transparent_60%)] blur-3xl" />
         </div>
 
-        <header className="border-b border-border bg-background px-4 md:px-8 h-16 flex items-center justify-between shrink-0">
-          <div className="flex w-full items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+        <header className="flex min-h-16 shrink-0 items-center justify-between border-b border-border bg-background px-3 py-2 sm:px-4 md:px-8">
+          <div className="flex w-full min-w-0 items-center justify-between gap-2 sm:gap-4">
+            <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="md:hidden h-8 w-8 flex items-center justify-center rounded-md text-muted-foreground hover:bg-muted transition-colors"
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted md:hidden"
                 aria-label="Open navigation"
               >
                 <Menu className="h-5 w-5" />
               </button>
               <BackToTablesButton />
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-widest mb-0.5">Billing</p>
-                <h1 className="text-lg font-semibold text-foreground">Wallet and payments</h1>
+              <div className="min-w-0">
+                <p className="mb-0.5 truncate text-[10px] font-medium uppercase tracking-widest text-muted-foreground sm:text-xs">Billing</p>
+                <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">Wallet and payments</h1>
               </div>
             </div>
-            <ThemeToggle />
+            <div className="shrink-0"><ThemeToggle /></div>
           </div>
         </header>
 
-        <main className="relative flex-1 overflow-auto px-4 py-6 md:px-6 md:py-8">
+        <main className="relative min-w-0 flex-1 overflow-auto px-3 py-4 sm:px-4 sm:py-6 md:px-6 md:py-8">
           {checkoutError === "package-active" && (
             <div className="mb-6 rounded-[24px] border border-amber-500/25 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
               This package is already active on your account. You can buy it again after its billing period ends.
@@ -208,14 +208,14 @@ function BillingPageContent() {
             </div>
           )}
 
-          <section className="overflow-hidden rounded-[32px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.94))] p-6 text-white shadow-[0_35px_90px_-45px_rgba(15,118,110,0.45)] md:p-8">
+          <section className="min-w-0 overflow-hidden rounded-[24px] border border-border/70 bg-[linear-gradient(135deg,rgba(15,23,42,0.98),rgba(15,118,110,0.94))] p-4 text-white shadow-[0_35px_90px_-45px_rgba(15,118,110,0.45)] sm:rounded-[32px] sm:p-6 md:p-8">
             <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr] lg:items-center">
               <div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-50/90">
                   <ShieldCheck className="h-3.5 w-3.5" />
                   Secure checkout via Polar
                 </div>
-                <h2 className="mt-5 max-w-2xl text-3xl font-semibold tracking-[-0.04em] text-white md:text-4xl">
+                <h2 className="mt-5 max-w-2xl text-2xl font-semibold tracking-[-0.04em] text-white sm:text-3xl md:text-4xl">
                   Buy credits from the available packages in one place.
                 </h2>
                 <p className="mt-4 max-w-2xl text-sm leading-7 text-emerald-50/80 md:text-base">
@@ -225,7 +225,7 @@ function BillingPageContent() {
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                   <Button
                     size="lg"
-                    className="h-12 bg-white text-slate-950 hover:bg-white/92"
+                    className="h-auto min-h-12 w-full whitespace-normal bg-white px-4 py-3 text-center text-slate-950 hover:bg-white/92 sm:w-auto"
                     asChild={Boolean(featuredPackage)}
                     disabled={!featuredPackage}
                   >
@@ -247,7 +247,7 @@ function BillingPageContent() {
                     <p className="text-sm text-emerald-50/75">Available credits</p>
                     <WalletCards className="h-4 w-4 text-emerald-50/75" />
                   </div>
-                  <p className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">
+                  <p className="mt-3 break-words text-3xl font-semibold tracking-[-0.05em] text-white sm:text-4xl">
                     {formatCredits(summary?.balanceCredits ?? 0)}
                   </p>
                   <p className="mt-2 text-sm text-emerald-50/80">Spend these across chat, agents, enrichment, and scraping.</p>
@@ -258,7 +258,7 @@ function BillingPageContent() {
                     <p className="text-sm text-emerald-50/75">Credits purchased</p>
                     <Sparkles className="h-4 w-4 text-emerald-50/75" />
                   </div>
-                  <p className="mt-3 text-4xl font-semibold tracking-[-0.05em] text-white">
+                  <p className="mt-3 break-words text-3xl font-semibold tracking-[-0.05em] text-white sm:text-4xl">
                     {formatCredits(summary?.totalPurchasedCredits ?? 0)}
                   </p>
                   <p className="mt-2 text-sm text-emerald-50/80">
@@ -271,13 +271,13 @@ function BillingPageContent() {
             </div>
           </section>
 
-          <section id="packages" className="mt-6 rounded-[32px] border border-border/70 bg-card/92 p-6 shadow-[0_30px_80px_-52px_rgba(15,23,42,0.45)] md:p-7">
+          <section id="packages" className="mt-6 min-w-0 rounded-[24px] border border-border/70 bg-card/92 p-4 shadow-[0_30px_80px_-52px_rgba(15,23,42,0.45)] sm:rounded-[32px] sm:p-6 md:p-7">
             <div className="flex flex-col gap-4 border-b border-border/60 pb-5 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Packages</p>
-                <h3 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">Available credit plans</h3>
+                <h3 className="mt-2 text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Available credit plans</h3>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs text-muted-foreground">
+              <div className="inline-flex w-fit max-w-full items-center gap-2 rounded-full border border-border/70 bg-background/80 px-3 py-1.5 text-xs text-muted-foreground">
                 <Clock3 className="h-3.5 w-3.5" />
                 Packages update live
               </div>
@@ -294,7 +294,7 @@ function BillingPageContent() {
                   <article
                     key={pkg.id}
                     className={cn(
-                      "relative flex flex-col overflow-hidden rounded-[28px] border p-6 shadow-[0_26px_70px_-48px_rgba(15,23,42,0.45)] transition-all duration-300",
+                      "relative min-w-0 flex flex-col overflow-hidden rounded-[24px] border p-4 shadow-[0_26px_70px_-48px_rgba(15,23,42,0.45)] transition-all duration-300 sm:rounded-[28px] sm:p-6",
                       pkg.isLockedForUser ? "opacity-60 saturate-75" : "hover:-translate-y-1 hover:border-primary/20",
                       pkg.isFeatured
                         ? "border-primary/20 bg-[linear-gradient(180deg,rgba(37,99,235,0.08),rgba(255,255,255,0.96))] dark:bg-[linear-gradient(180deg,rgba(37,99,235,0.16),rgba(8,11,19,0.96))]"
@@ -307,9 +307,9 @@ function BillingPageContent() {
                       </span>
                     )}
                     <div>
-                      <p className="text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">{pkg.name}</p>
-                      <div className="mt-4 flex items-end gap-2">
-                        <span className="text-4xl font-semibold tracking-[-0.05em] text-foreground">
+                      <p className="break-words pr-24 text-sm font-semibold uppercase tracking-[0.16em] text-muted-foreground">{pkg.name}</p>
+                      <div className="mt-4 flex flex-wrap items-end gap-x-2 gap-y-1">
+                        <span className="break-all text-3xl font-semibold tracking-[-0.05em] text-foreground sm:text-4xl">
                           {formatMoneyFromCents(pkg.salePriceCents)}
                         </span>
                         <span className="pb-1 text-sm text-muted-foreground">one-time</span>
@@ -342,7 +342,7 @@ function BillingPageContent() {
 
                     <div className="mt-6 pt-2">
                       <Button
-                        className="w-full"
+                        className="h-auto min-h-11 w-full whitespace-normal py-2.5 text-center"
                         variant={pkg.isFeatured ? "default" : "outline"}
                         asChild={Boolean(pkg.polarProductId && !pkg.isLockedForUser)}
                         disabled={!pkg.polarProductId || pkg.isLockedForUser}
