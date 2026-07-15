@@ -7,14 +7,14 @@ import { useRouter } from "next/navigation"
 import { useMutation, useQuery } from "convex/react"
 import {
   ArrowRight,
-  // Bot,
+  Bot,
   Check,
   DatabaseZap,
   FileSpreadsheet,
   Globe2,
-  // MailCheck,
+  MailCheck,
   Menu,
-  // MessageSquareText,
+  MessageSquareText,
   Sparkles,
   UploadCloud,
   X,
@@ -24,7 +24,7 @@ import * as XLSX from "xlsx"
 import { AppFooter } from "@/components/app-footer"
 import { BrandIcon, BrandLogo } from "@/components/brand-assets"
 import { LandingWorkflowSection } from "@/components/landing-workflow-section"
-// import ScrollStack, { ScrollStackItem } from "@/components/ScrollStack"
+import ScrollStack, { ScrollStackItem } from "@/components/ScrollStack"
 import { formatPackagePeriod, parsePackageDescription } from "@/lib/package-period"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { Button } from "@/components/ui/button"
@@ -38,7 +38,7 @@ interface ParsedCSV {
   rows: string[][]
 }
 
-/* interface Agent {
+interface Agent {
   badge: string
   title: string
   description?: string
@@ -89,7 +89,7 @@ const AGENTS: Agent[] = [
     icon: Bot,
     featured: true,
   },
-] */
+]
 
 const SAMPLE_ROWS = [
   ["Desk Lamp", "Office", "Energy-efficient workspace lighting"],
@@ -98,7 +98,7 @@ const SAMPLE_ROWS = [
   ["Water Bottle", "Accessories", "Reusable insulated container"],
 ]
 
-/* const RIBBON_ITEMS = [
+const RIBBON_ITEMS = [
   "CSV & Excel",
   "LinkedIn profiles",
   "Google Maps",
@@ -107,12 +107,12 @@ const SAMPLE_ROWS = [
   "Web research automation",
   "AI-powered enrichment",
   "Lead intelligence",
-] */
+]
 
 const NAV_LINKS = [
   { label: "Import", href: "#import", onClick: true },
   { label: "How it works", href: "#workflow" },
-  // { label: "Agents", href: "#agents" },
+  { label: "Agents", href: "#agents" },
   { label: "Pricing", href: "#pricing" },
 ]
 
@@ -190,7 +190,7 @@ function SectionHeading({
   )
 }
 
-/* function AgentMiniVisual({ variant }: { variant: number }) {
+function AgentMiniVisual({ variant }: { variant: number }) {
   if (variant === 0) {
     return (
       <div className="agent-mini-visual">
@@ -332,8 +332,6 @@ function AgentStackContent({ agent, index }: { agent: Agent; index: number }) {
   )
 }
 
-*/
-
 function HeroPreview() {
   return (
     <div className="landing-float relative">
@@ -422,7 +420,7 @@ function HeroPreview() {
   )
 }
 
-/* function HeroRibbon() {
+function HeroRibbon() {
   const items = [...RIBBON_ITEMS, ...RIBBON_ITEMS]
 
   return (
@@ -443,7 +441,7 @@ function HeroPreview() {
       </div>
     </div>
   )
-} */
+}
 
 export default function LandingPage() {
   const router = useRouter()
@@ -685,7 +683,7 @@ export default function LandingPage() {
             </div>
           </div>
 
-          {/* <HeroRibbon /> */}
+          <HeroRibbon />
         </section>
 
         <section ref={importSectionRef} id="import" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
@@ -917,12 +915,13 @@ export default function LandingPage() {
 
         <LandingWorkflowSection />
 
-        {/* <section id="agents" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
+        <section id="agents" className="relative overflow-hidden px-4 py-20 sm:px-6 md:py-28">
           <div className="absolute inset-x-0 top-0 -z-10 h-40 bg-gradient-to-b from-muted/30 to-transparent" />
           <div className="mx-auto max-w-6xl">
             <SectionHeading
               label="AI agents"
               title="Five agents. Every data workflow covered."
+              description=""
             />
 
             <div className="mt-14 h-[28rem] overflow-hidden max-md:h-[21rem]">
@@ -944,7 +943,7 @@ export default function LandingPage() {
               </ScrollStack>
             </div>
           </div>
-        </section> */}
+        </section>
 
         <section id="pricing" className="border-t border-border/70 bg-muted/15 px-4 py-20 sm:px-6 md:py-28">
           <div className="mx-auto max-w-5xl">
