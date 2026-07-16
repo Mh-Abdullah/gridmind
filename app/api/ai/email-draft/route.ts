@@ -35,9 +35,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "OpenAI API key not configured" }, { status: 503 })
   }
 
-  const parsed = EmailDraftRequestSchema.safeParse(await request.json())
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: "Request body must be valid JSON" }, { status: 400 })
+  }
+
+  const parsed = EmailDraftRequestSchema.safeParse(body)
   if (!parsed.success) {
-    return NextResponse.json({ error: "Invalid email draft request" }, { status: 400 })
+    const issue = parsed.error.issues[0]
+    const field = issue?.path.length ? issue.path.join(".") : "request body"
+    return NextResponse.json(
+      { error: `Invalid email draft request: ${field} ${issue?.message ?? "is invalid"}` },
+      { status: 400 }
+    )
   }
 
   const { prompt, columns, sampleRows } = parsed.data

@@ -1301,8 +1301,33 @@ export default function TableEditorPage() {
     setEmailNotice(null)
 
     try {
-      const columns = Array.from({ length: numCols }, (_, index) => colNames[index] ?? getColumnLabel(index))
-      const sampleRows = Array.from({ length: Math.min(numRows, 5) }, (_, rowIndex) => getEmailRowData(rowIndex))
+      // Keep the model context within the API limits. Put the campaign column first so
+      // it is still available when a very wide spreadsheet has to be truncated.
+      const columnIndexes = [
+        emailComposerCol,
+        ...Array.from({ length: numCols }, (_, index) => index).filter((index) => index !== emailComposerCol),
+      ].slice(0, 100)
+      const usedColumnNames = new Set<string>()
+      const emailColumns = columnIndexes.map((index) => {
+        const fallback = getColumnLabel(index)
+        const requestedName = (colNames[index] ?? fallback).trim().slice(0, 100) || fallback
+        let name = requestedName
+        let duplicateNumber = 1
+        while (usedColumnNames.has(name.toLowerCase())) {
+          duplicateNumber += 1
+          const suffix = ` (${fallback}${duplicateNumber > 2 ? ` ${duplicateNumber}` : ""})`
+          name = `${requestedName.slice(0, 100 - suffix.length)}${suffix}`
+        }
+        usedColumnNames.add(name.toLowerCase())
+        return { index, name }
+      })
+      const columns = emailColumns.map(({ name }) => name)
+      const sampleRows = Array.from({ length: Math.min(numRows, 5) }, (_, rowIndex) => (
+        Object.fromEntries(emailColumns.map(({ index, name }) => [
+          name,
+          getCellValue(rowIndex, index).slice(0, 2000),
+        ]))
+      ))
       const response = await fetch("/api/ai/email-draft", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
