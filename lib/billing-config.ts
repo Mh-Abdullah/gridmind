@@ -75,14 +75,14 @@ export const DEFAULT_USAGE_PRICING: BillingActionDefinition[] = [
   {
     actionKey: "generate_email",
     label: "AI Email Generation",
-    creditsCost: 1,
+    creditsCost: 2,
     internalCostCents: 2,
     markupMultiplier: DEFAULT_BILLING_MARKUP,
   },
   {
     actionKey: "send_email",
     label: "Email Delivery",
-    creditsCost: 3,
+    creditsCost: 1,
     internalCostCents: 1,
     markupMultiplier: DEFAULT_BILLING_MARKUP,
   },
@@ -112,6 +112,16 @@ export function getEffectiveCreditsCost(input: {
 }
 
 function applyActionCreditCap(actionKey: string | undefined, creditsCost: number) {
+  // Email pricing is a product contract rather than an adjustable usage estimate:
+  // one draft costs 2 credits and each delivered recipient row costs 1 credit.
+  const fixedEmailCosts: Record<string, number> = {
+    generate_email: 2,
+    send_email: 1,
+  }
+  if (actionKey && fixedEmailCosts[actionKey] !== undefined) {
+    return fixedEmailCosts[actionKey]
+  }
+
   const caps: Record<string, number> = {
     chat: 1,
     agent: 2,
@@ -122,8 +132,6 @@ function applyActionCreditCap(actionKey: string | undefined, creditsCost: number
     create_table_local_search: 1,
     create_table_google_search: 1,
     generate_context: 1,
-    generate_email: 1,
-    send_email: 3,
   }
 
   const cap = actionKey ? caps[actionKey] : undefined

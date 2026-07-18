@@ -1333,13 +1333,13 @@ export default function TableEditorPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: emailPrompt, columns, sampleRows }),
       })
-      const result = await response.json() as { subject?: string; body?: string; creditsCharged?: number; error?: string }
+      const result = await response.json() as { subject?: string; body?: string; error?: string }
       if (!response.ok || !result.subject || !result.body) {
         throw new Error(result.error || "AI could not create an email draft")
       }
       setEmailSubject(result.subject)
       setEmailBody(result.body)
-      setEmailNotice({ type: "success", message: `Email draft generated for ${result.creditsCharged ?? 2} credits.` })
+      setEmailNotice({ type: "success", message: "Email draft generated. Review and edit it before enabling the run button." })
     } catch (error) {
       setEmailNotice({ type: "error", message: error instanceof Error ? error.message : "Failed to generate email" })
     } finally {
@@ -1514,12 +1514,9 @@ export default function TableEditorPage() {
       ? selectedRows
       : Array.from({ length: numRows }, (_, rowIndex) => rowIndex)
 
-    const seenEmails = new Set<string>()
     const messages = targetRows.flatMap((rowIndex) => {
       const email = getCellValue(rowIndex, colIndex).trim()
-      const normalizedEmail = email.toLowerCase()
-      if (!isLikelyEmail(email) || seenEmails.has(normalizedEmail)) return []
-      seenEmails.add(normalizedEmail)
+      if (!isLikelyEmail(email)) return []
       const rowData = getEmailRowData(rowIndex)
       return [{
         rowIndex,
@@ -1540,28 +1537,25 @@ export default function TableEditorPage() {
     }
 
     const scope = selectedCells.size > 0 ? "selected rows" : "all rows"
-    const sendCreditCost = messages.length * 3
-    if (!window.confirm(`Send ${messages.length} personalized email${messages.length === 1 ? "" : "s"} to ${scope}? This will cost ${sendCreditCost} credits (3 per row).`)) return
+    if (!window.confirm(`Send ${messages.length} personalized email${messages.length === 1 ? "" : "s"} to ${scope}?`)) return
 
     setSendingEmailCols((previous) => new Set(previous).add(colIndex))
     setEmailNotice(null)
 
     try {
       let sentCount = 0
-      let chargedCredits = 0
       for (let start = 0; start < messages.length; start += 100) {
         const response = await fetch("/api/email/send-batch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ runId: crypto.randomUUID(), messages: messages.slice(start, start + 100) }),
         })
-        const result = await response.json() as { sentCount?: number; creditsCharged?: number; error?: string }
+        const result = await response.json() as { sentCount?: number; error?: string }
         if (!response.ok) throw new Error(result.error || "Email delivery failed")
         sentCount += result.sentCount ?? 0
-        chargedCredits += result.creditsCharged ?? 0
       }
 
-      setEmailNotice({ type: "success", message: `Sent ${sentCount} personalized email${sentCount === 1 ? "" : "s"} for ${chargedCredits} credits.` })
+      setEmailNotice({ type: "success", message: `Sent ${sentCount} personalized email${sentCount === 1 ? "" : "s"}.` })
     } catch (error) {
       setEmailNotice({ type: "error", message: error instanceof Error ? error.message : "Email delivery failed" })
     } finally {
