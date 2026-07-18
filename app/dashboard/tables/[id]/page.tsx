@@ -2973,6 +2973,8 @@ export default function TableEditorPage() {
                         colSpan={mergeInfo.colSpan}
                         style={{
                           width,
+                          minWidth: width,
+                          maxWidth: width,
                           height: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "auto" : height,
                           minHeight: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? height : undefined,
                           backgroundColor: bgColor,
@@ -2992,6 +2994,7 @@ export default function TableEditorPage() {
                         onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
                         onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
                         title={cellValue}
+                        aria-expanded={isSelected}
                       >
                         {isEditing ? (
                           colColumnType[colIndex] === "User Input - File" ? (
@@ -3099,9 +3102,9 @@ export default function TableEditorPage() {
                           <div 
                             style={{
                               width: "100%",
-                              height: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "auto" : "100%",
+                              height: isSelected ? "auto" : "100%",
                               display: "flex",
-                              alignItems: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "flex-start" : "center",
+                              alignItems: isSelected ? "flex-start" : "center",
                               justifyContent: colFieldType[colIndex] === "Number"
                                 ? "flex-end"
                                 : formatting.alignment === "center" ? "center" : formatting.alignment === "right" ? "flex-end" : "flex-start",
@@ -3110,31 +3113,28 @@ export default function TableEditorPage() {
                               fontWeight: formatting.bold ? "bold" : "normal",
                               fontStyle: formatting.italic ? "italic" : "normal",
                               textDecoration: formatting.underline ? "underline" : "none",
-                              // Scrape Website / Read File: clamped (3 lines) by default, expanded when selected
-                              ...((colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? (
-                                isSelected ? {
-                                  whiteSpace: "pre-wrap",
-                                  overflow: "auto",
-                                  textOverflow: "unset",
-                                  wordBreak: "break-word",
-                                } : {
-                                  display: "-webkit-box",
-                                  WebkitLineClamp: 3,
-                                  WebkitBoxOrient: "vertical",
-                                  overflow: "hidden",
-                                  whiteSpace: "normal",
-                                  wordBreak: "break-word",
-                                  textOverflow: "ellipsis",
-                                }
-                              ) : {
-                                whiteSpace: "nowrap",
+                              // Keep every column compact. Selecting a cell reveals its
+                              // complete value by growing only the row, never the column.
+                              ...(isSelected ? {
+                                whiteSpace: "pre-wrap",
+                                overflow: "visible",
+                                textOverflow: "clip",
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
+                              } : {
+                                display: "-webkit-box",
+                                WebkitLineClamp: 2,
+                                WebkitBoxOrient: "vertical",
                                 overflow: "hidden",
+                                whiteSpace: "normal",
+                                overflowWrap: "anywhere",
+                                wordBreak: "break-word",
                                 textOverflow: "ellipsis",
                               }),
                               paddingLeft: formatting.alignment === "left" ? `${paddingLeft}px` : "8px",
                               paddingRight: (formatting.alignment === "right" || colFieldType[colIndex] === "Number") ? `${paddingLeft}px` : "8px",
-                              paddingTop: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "6px" : "0px",
-                              paddingBottom: (colColumnType[colIndex] === "Scrape Website" || colColumnType[colIndex] === "Read File") ? "6px" : "0px",
+                              paddingTop: "6px",
+                              paddingBottom: "6px",
                               boxSizing: "border-box",
                               userSelect: "none",
                               WebkitUserSelect: "none",
@@ -3162,7 +3162,15 @@ export default function TableEditorPage() {
                               <a
                                 href={`mailto:${cellValue.trim()}`}
                                 onClick={(e) => e.stopPropagation()}
-                                style={{ color: "var(--primary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                                style={{
+                                  color: "var(--primary)",
+                                  textDecoration: "underline",
+                                  overflow: isSelected ? "visible" : "hidden",
+                                  overflowWrap: "anywhere",
+                                  textOverflow: isSelected ? "clip" : "ellipsis",
+                                  whiteSpace: isSelected ? "normal" : "nowrap",
+                                  maxWidth: "100%",
+                                }}
                               >
                                 {cellValue}
                               </a>
@@ -3172,7 +3180,15 @@ export default function TableEditorPage() {
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 onClick={(e) => e.stopPropagation()}
-                                style={{ color: "var(--primary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}
+                                style={{
+                                  color: "var(--primary)",
+                                  textDecoration: "underline",
+                                  overflow: isSelected ? "visible" : "hidden",
+                                  overflowWrap: "anywhere",
+                                  textOverflow: isSelected ? "clip" : "ellipsis",
+                                  whiteSpace: isSelected ? "normal" : "nowrap",
+                                  maxWidth: "100%",
+                                }}
                               >
                                 {cellValue}
                               </a>
