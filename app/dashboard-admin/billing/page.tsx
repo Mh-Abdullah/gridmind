@@ -18,7 +18,6 @@ export default function AdminBillingPage() {
   const billingOverview = useQuery(api.billing.getAdminOverview, isAdmin ? {} : "skip");
   const billingUsers = billingOverview?.users ?? [];
   const packages = billingOverview?.packages ?? [];
-  const usagePricing = billingOverview?.usagePricing ?? [];
 
   useEffect(() => {
     if (!loading && !user) {
@@ -72,10 +71,10 @@ export default function AdminBillingPage() {
         <main className="flex-1 overflow-auto p-4 md:p-6">
           <div className="mb-8">
             <h2 className="text-2xl md:text-3xl font-bold text-foreground mb-2">Billing Control Center</h2>
-            <p className="text-muted-foreground">Manage packages, Polar sync, user credit assignment, and runtime pricing.</p>
+            <p className="text-muted-foreground">Manage packages, Polar sync, and user credit assignment.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
             <div className="bg-card border border-border rounded-lg p-6">
               <p className="text-sm text-muted-foreground mb-2">Live Packages</p>
               <p className="text-3xl font-bold text-foreground">{packages.length}</p>
@@ -87,10 +86,6 @@ export default function AdminBillingPage() {
             <div className="bg-card border border-border rounded-lg p-6">
               <p className="text-sm text-muted-foreground mb-2">Credits In Wallets</p>
               <p className="text-3xl font-bold text-foreground">{billingUsers.reduce((sum, item) => sum + item.balanceCredits, 0)}</p>
-            </div>
-            <div className="bg-card border border-border rounded-lg p-6">
-              <p className="text-sm text-muted-foreground mb-2">Usage Rules</p>
-              <p className="text-3xl font-bold text-foreground">{usagePricing.length}</p>
             </div>
           </div>
 

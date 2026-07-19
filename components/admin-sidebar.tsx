@@ -3,11 +3,8 @@
 import * as React from "react"
 import {
   LayoutDashboard,
-  Users,
-  FileText,
   Wallet,
   BarChart3,
-  Shield,
   LogOut,
   ChevronDown,
 } from "lucide-react"
@@ -34,11 +31,8 @@ export function AdminSidebar({ className }: AdminSidebarProps) {
 
   const adminItems = [
     { icon: LayoutDashboard, label: "Dashboard", href: "/dashboard-admin" },
-    { icon: Users, label: "Users", href: "/dashboard-admin/users" },
     { icon: Wallet, label: "Billing", href: "/dashboard-admin/billing" },
     { icon: BarChart3, label: "Analytics", href: "/dashboard-admin/analytics" },
-    { icon: FileText, label: "Reports", href: "/dashboard-admin/reports" },
-    { icon: Shield, label: "Security", href: "/dashboard-admin/security" },
   ]
 
   return (

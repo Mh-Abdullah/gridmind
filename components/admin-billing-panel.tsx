@@ -57,7 +57,6 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
   const upsertPackage = useMutation(api.billing.upsertPackage)
   const deletePackage = useMutation(api.billing.deletePackage)
   const grantManualCredits = useMutation(api.billing.grantManualCredits)
-  const upsertUsagePricing = useMutation(api.billing.upsertUsagePricing)
   const updateBillingSettings = useMutation(api.billing.updateBillingSettings)
 
   const [packageForm, setPackageForm] = useState<PackageFormState>(emptyPackageForm)
@@ -65,12 +64,10 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
   const [manualCreditAmount, setManualCreditAmount] = useState("")
   const [manualCreditNote, setManualCreditNote] = useState("")
   const [initialCreditsDraft, setInitialCreditsDraft] = useState("")
-  const [pricingDrafts, setPricingDrafts] = useState<Record<string, { creditsCost: string; internalCostCents: string; markupMultiplier: string; isActive: boolean }>>({})
   const [savingPackage, setSavingPackage] = useState(false)
   const [deletingPackageId, setDeletingPackageId] = useState<string | null>(null)
   const [syncingPackageId, setSyncingPackageId] = useState<string | null>(null)
   const [grantingManualCredits, setGrantingManualCredits] = useState(false)
-  const [savingPricingKey, setSavingPricingKey] = useState<string | null>(null)
   const [savingInitialCredits, setSavingInitialCredits] = useState(false)
 
   const visiblePackages = useMemo(
@@ -91,18 +88,6 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
   useEffect(() => {
     if (!overview) return
 
-    setPricingDrafts((current) => {
-      const next = { ...current }
-      for (const rule of overview.usagePricing) {
-        next[rule.actionKey] = {
-          creditsCost: String(rule.creditsCost),
-          internalCostCents: String(rule.internalCostCents),
-          markupMultiplier: String(rule.markupMultiplier),
-          isActive: rule.isActive,
-        }
-      }
-      return next
-    })
     setInitialCreditsDraft(String(overview.settings?.initialCredits ?? FREE_TIER_CREDITS))
   }, [overview])
 
@@ -232,28 +217,6 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
       alert(error instanceof Error ? error.message : "Failed to delete package")
     } finally {
       setDeletingPackageId(null)
-    }
-  }
-
-  const handleSavePricing = async (actionKey: string, label: string) => {
-    const draft = pricingDrafts[actionKey]
-    if (!draft) return
-
-    setSavingPricingKey(actionKey)
-    try {
-      await upsertUsagePricing({
-        adminUserId: adminUserId as never,
-        actionKey,
-        label,
-        creditsCost: Number(draft.creditsCost),
-        internalCostCents: Number(draft.internalCostCents),
-        markupMultiplier: Number(draft.markupMultiplier),
-        isActive: draft.isActive,
-      })
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Failed to save usage pricing")
-    } finally {
-      setSavingPricingKey(null)
     }
   }
 
@@ -583,98 +546,6 @@ export function AdminBillingPanel({ adminUserId }: { adminUserId: string }) {
         </div>
       </section>
 
-      <section className="rounded-lg border border-border bg-card p-6">
-        <div className="mb-4">
-          <h3 className="text-xl font-bold text-foreground">Usage Pricing Rules</h3>
-          <p className="text-sm text-muted-foreground">
-            This is where your runtime credit burn happens. These values are per usage unit, so row-based tools multiply the credit cost by the number of rows processed.
-          </p>
-        </div>
-
-        <div className="space-y-4">
-          {overview.usagePricing.map((rule) => {
-            const draft = pricingDrafts[rule.actionKey]
-            if (!draft) return null
-
-            const liveCustomerCents = Math.round(Number(draft.internalCostCents || 0) * Number(draft.markupMultiplier || 1))
-
-            return (
-              <div key={rule.actionKey} className="grid gap-4 rounded-lg border border-border bg-background p-4 lg:grid-cols-[1.2fr_repeat(3,0.7fr)_auto_auto]">
-                <div>
-                  <p className="font-medium text-foreground">{rule.label}</p>
-                  <p className="text-xs text-muted-foreground">{rule.actionKey}</p>
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel htmlFor={`${rule.actionKey}-credits`}>Credits Per Unit</FieldLabel>
-                  <Input
-                    id={`${rule.actionKey}-credits`}
-                    type="number"
-                    value={draft.creditsCost}
-                    onChange={(event) =>
-                      setPricingDrafts((current) => ({
-                        ...current,
-                        [rule.actionKey]: { ...current[rule.actionKey], creditsCost: event.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel htmlFor={`${rule.actionKey}-internal`}>Internal Cost Per Unit</FieldLabel>
-                  <Input
-                    id={`${rule.actionKey}-internal`}
-                    type="number"
-                    value={draft.internalCostCents}
-                    onChange={(event) =>
-                      setPricingDrafts((current) => ({
-                        ...current,
-                        [rule.actionKey]: { ...current[rule.actionKey], internalCostCents: event.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <FieldLabel htmlFor={`${rule.actionKey}-markup`}>Markup</FieldLabel>
-                  <Input
-                    id={`${rule.actionKey}-markup`}
-                    type="number"
-                    step="0.1"
-                    value={draft.markupMultiplier}
-                    onChange={(event) =>
-                      setPricingDrafts((current) => ({
-                        ...current,
-                        [rule.actionKey]: { ...current[rule.actionKey], markupMultiplier: event.target.value },
-                      }))
-                    }
-                  />
-                </div>
-                <div className="flex items-center text-sm text-muted-foreground">
-                  {formatMoneyFromCents(liveCustomerCents)}
-                </div>
-                <label className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <input
-                    type="checkbox"
-                    checked={draft.isActive}
-                    onChange={(event) =>
-                      setPricingDrafts((current) => ({
-                        ...current,
-                        [rule.actionKey]: { ...current[rule.actionKey], isActive: event.target.checked },
-                      }))
-                    }
-                  />
-                  Active
-                </label>
-                <Button
-                  variant="outline"
-                  onClick={() => handleSavePricing(rule.actionKey, rule.label)}
-                  disabled={savingPricingKey === rule.actionKey}
-                >
-                  {savingPricingKey === rule.actionKey ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            )
-          })}
-        </div>
-      </section>
     </div>
   )
 }
