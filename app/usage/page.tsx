@@ -354,7 +354,7 @@ export default function UsagePage() {
   }))
 
   return (
-    <div className="flex min-h-screen w-full overflow-x-hidden bg-background text-foreground">
+    <div className="flex min-h-screen w-full overflow-x-clip bg-background text-foreground">
       <div className="hidden md:block">
         <AppSidebar />
       </div>
