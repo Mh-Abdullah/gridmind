@@ -569,9 +569,12 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       }
     }
 
-    const asksForRowEnrichment = /\b(email(?:s| addresses?)?|phone(?:s| numbers?)?|website(?:s)?|domain(?:s)?|address(?:es)?|contact(?:s| details?)?|opening hours|social (?:media|profiles?)|linkedin|enrich|add (?:a |the )?(?:new )?column)\b/i.test(prompt)
-    const enrichAllRows = !hasSelection && hasExistingData && asksForRowEnrichment
-    const mode = hasSelection || enrichAllRows ? "enrich" : "generate"
+    // A populated sheet is an enrichment target by default. A selection narrows
+    // the scope to those rows; without one, every populated row is included.
+    // Keep generation available when the user explicitly asks for a new dataset.
+    const asksForNewDataset =
+      /\b(?:create|generate|build|make)\b[\s\S]{0,60}\b(?:new\s+)?(?:table|list|dataset|spreadsheet)\b/i.test(prompt)
+    const mode = hasSelection || (hasExistingData && !asksForNewDataset) ? "enrich" : "generate"
 
     // Build request body
     let requestBody: Record<string, unknown>
