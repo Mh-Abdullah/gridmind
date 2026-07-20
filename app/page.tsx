@@ -359,8 +359,8 @@ function HeroPreview() {
         </div>
 
         <div className="grid gap-0 lg:grid-cols-[minmax(0,1fr)_220px]">
-          <div className="overflow-x-auto">
-            <table className="min-w-[430px] text-sm">
+          <div className="overflow-hidden">
+            <table className="w-full table-fixed text-sm">
               <thead className="bg-muted/50 text-[11px] uppercase tracking-[0.16em] text-muted-foreground">
                 <tr>
                   {["Product", "Category", "Summary"].map((header) => (
