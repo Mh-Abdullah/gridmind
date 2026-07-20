@@ -9,12 +9,33 @@ export default defineSchema({
     password: v.string(), // hashed password
     avatar: v.optional(v.string()),
     role: v.string(), // "user" or "admin"
+    emailVerifiedAt: v.optional(v.number()),
     polarCustomerId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_email", ["email"])
     .index("by_polarCustomerId", ["polarCustomerId"]),
+
+  passwordResetOtps: defineTable({
+    email: v.string(),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    attempts: v.number(),
+    consumedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_email_createdAt", ["email", "createdAt"]),
+
+  pendingRegistrations: defineTable({
+    email: v.string(),
+    name: v.string(),
+    password: v.string(),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    attempts: v.number(),
+    consumedAt: v.optional(v.number()),
+    createdAt: v.number(),
+  }).index("by_email_createdAt", ["email", "createdAt"]),
 
   // Spreadsheet documents - stores the main table metadata
   spreadsheets: defineTable({

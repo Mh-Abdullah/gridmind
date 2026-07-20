@@ -2,18 +2,26 @@ import { NextRequest, NextResponse } from "next/server";
 import { convexClient } from "@/lib/convex-server";
 import { api } from "@/convex/_generated/api";
 import { comparePassword, generateToken } from "@/lib/auth";
+import { normalizeEmail } from "@/lib/password-reset";
+import { z } from "zod";
+
+const LoginSchema = z.object({
+  email: z.string().trim().email().max(320),
+  password: z.string().min(1).max(128),
+});
 
 export async function POST(request: NextRequest) {
   try {
-    const { email, password } = await request.json();
+    const parsed = LoginSchema.safeParse(await request.json());
 
-    // Validation
-    if (!email || !password) {
+    if (!parsed.success) {
       return NextResponse.json(
-        { error: "Email and password are required" },
+        { error: "Enter a valid registered email and password." },
         { status: 400 }
       );
     }
+    const email = normalizeEmail(parsed.data.email);
+    const { password } = parsed.data;
 
     // Find user in Convex
     const user = await convexClient.query(api.users.getUserByEmail, { email });
@@ -22,6 +30,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Invalid email or password" },
         { status: 401 }
+      );
+    }
+
+    if (user.role === "user" && password.length < 8) {
+      return NextResponse.json(
+        { error: "User passwords must contain at least 8 characters. Use Forgot password to set a new password." },
+        { status: 400 }
       );
     }
 

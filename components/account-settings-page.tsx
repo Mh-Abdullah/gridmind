@@ -108,8 +108,8 @@ export function AccountSettingsPage({ mode }: AccountSettingsPageProps) {
     setPasswordError(null)
     setPasswordMessage(null)
 
-    if (newPassword.length < 4) {
-      setPasswordError("New password must be at least 4 characters long.")
+    if (newPassword.length < 8) {
+      setPasswordError("New password must be at least 8 characters long.")
       return
     }
 
@@ -374,8 +374,11 @@ export function AccountSettingsPage({ mode }: AccountSettingsPageProps) {
                     value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)}
                     autoComplete="new-password"
+                    minLength={8}
+                    maxLength={128}
                     className="h-11 rounded-2xl"
                   />
+                  <p className="text-xs text-muted-foreground">Use at least 8 characters.</p>
                 </div>
 
                 <div className="space-y-2">
@@ -388,6 +391,8 @@ export function AccountSettingsPage({ mode }: AccountSettingsPageProps) {
                     value={confirmPassword}
                     onChange={(event) => setConfirmPassword(event.target.value)}
                     autoComplete="new-password"
+                    minLength={8}
+                    maxLength={128}
                     className="h-11 rounded-2xl"
                   />
                 </div>

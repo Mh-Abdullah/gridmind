@@ -46,6 +46,18 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = () => {
+    const accountEmail = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(accountEmail)) {
+      setError("Enter your registered user email first, then select Forgot password.");
+      return;
+    }
+
+    setError("");
+    sessionStorage.setItem("password-reset-email", accountEmail);
+    router.push("/forgot-password");
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -81,31 +93,44 @@ export default function LoginPage() {
         <h1 className="text-3xl font-bold mb-6 text-center text-foreground">Login</h1>
 
         {error && (
-          <div className="bg-destructive/20 border border-destructive text-destructive px-4 py-3 rounded mb-4">
+          <div role="alert" className="bg-destructive/20 border border-destructive text-destructive px-4 py-3 rounded mb-4">
             {error}
           </div>
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-foreground">Email</label>
+            <label htmlFor="email" className="block text-sm font-medium text-foreground">Email</label>
             <input
+              id="email"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="email"
               className="w-full px-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="your@email.com"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-foreground">Password</label>
+            <div className="flex items-center justify-between gap-4">
+              <label htmlFor="password" className="block text-sm font-medium text-foreground">Password</label>
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                Forgot password?
+              </button>
+            </div>
             <input
+              id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="current-password"
               className="w-full px-4 py-2 border border-border rounded-lg bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               placeholder="••••••••"
             />

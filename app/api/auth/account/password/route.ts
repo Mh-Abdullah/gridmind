@@ -24,8 +24,8 @@ export async function PATCH(request: NextRequest) {
       )
     }
 
-    if (newPassword.length < 4) {
-      return NextResponse.json({ error: "New password must be at least 4 characters" }, { status: 400 })
+    if (newPassword.length < 8) {
+      return NextResponse.json({ error: "New password must be at least 8 characters" }, { status: 400 })
     }
 
     const userRecord = await convexClient.query(api.users.getUserById, {
