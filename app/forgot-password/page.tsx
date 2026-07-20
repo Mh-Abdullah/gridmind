@@ -246,7 +246,7 @@ export default function ForgotPasswordPage() {
                   aria-describedby="otp-help"
                 />
                 <p id="otp-help" className="mt-1 text-xs text-muted-foreground">
-                  Enter the six-digit code. It expires in 10 minutes.
+                  Enter the six-digit code. It expires in 2 minutes.
                 </p>
               </div>
               <div>

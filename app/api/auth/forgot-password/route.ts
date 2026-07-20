@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
           "",
           `Your verification code is: ${otp}`,
           "",
-          "This code expires in 10 minutes. If you did not request this, you can ignore this email.",
+          "This code expires in 2 minutes. If you did not request this, you can ignore this email.",
         ].join("\n"),
       }),
       signal: AbortSignal.timeout(30_000),
