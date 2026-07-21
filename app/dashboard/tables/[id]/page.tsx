@@ -3,6 +3,7 @@
 import type React from "react"
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import { createPortal } from "react-dom"
 import { useRouter, useParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -43,8 +44,6 @@ import {
   GitMerge,
   Globe,
   FileText,
-  Regex,
-  Building2,
   Wand2,
   Mail,
   Play,
@@ -256,6 +255,7 @@ export default function TableEditorPage() {
   const [emailBody, setEmailBody] = useState("")
   const [isGeneratingEmail, setIsGeneratingEmail] = useState(false)
   const [sendingEmailCols, setSendingEmailCols] = useState<Set<number>>(new Set())
+  const [normalizingUrlCols, setNormalizingUrlCols] = useState<Set<number>>(new Set())
   const [emailNotice, setEmailNotice] = useState<{ type: "success" | "error"; message: string } | null>(null)
 
   // Add-column panel
@@ -277,6 +277,10 @@ export default function TableEditorPage() {
   const [newColSourceCol, setNewColSourceCol] = useState(0)
   const [newColRegex, setNewColRegex] = useState("")
   const [isGeneratingCol, setIsGeneratingCol] = useState(false)
+  const [newColError, setNewColError] = useState<string | null>(null)
+  const [newColProgress, setNewColProgress] = useState<string | null>(null)
+  const aiColumnAbortRef = useRef<AbortController | null>(null)
+  const aiColumnAbortReasonRef = useRef<"cancelled" | "timeout" | null>(null)
 
   // Delete All confirmation
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false)
@@ -962,13 +966,48 @@ export default function TableEditorPage() {
 
   useEffect(() => {
     if (!showAddColPanel) return
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const previousBodyOverflow = document.body.style.overflow
     const handler = (e: MouseEvent) => {
       if (addColPanelRef.current && !addColPanelRef.current.contains(e.target as Node)) {
         setShowAddColPanel(false)
       }
     }
+    const handleDialogKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setShowAddColPanel(false)
+        setNewColStep("browse")
+        return
+      }
+      if (e.key === "Tab" && addColPanelRef.current) {
+        const focusable = Array.from(addColPanelRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        ))
+        if (focusable.length === 0) return
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault()
+          last.focus()
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    document.body.style.overflow = "hidden"
     document.addEventListener("mousedown", handler)
-    return () => document.removeEventListener("mousedown", handler)
+    document.addEventListener("keydown", handleDialogKeyDown)
+    return () => {
+      document.body.style.overflow = previousBodyOverflow
+      document.removeEventListener("mousedown", handler)
+      document.removeEventListener("keydown", handleDialogKeyDown)
+      if (aiColumnAbortRef.current) {
+        aiColumnAbortReasonRef.current = "cancelled"
+        aiColumnAbortRef.current.abort()
+      }
+      previouslyFocused?.focus()
+    }
   }, [showAddColPanel])
 
   const handleCellKeyDown = (e: React.KeyboardEvent, row: number, col: number) => {
@@ -1070,6 +1109,8 @@ export default function TableEditorPage() {
     setNewColConfigPrompt("")
     setNewColSourceCol(0)
     setNewColRegex("")
+    setNewColError(null)
+    setNewColProgress(null)
     setShowAddColPanel(true)
   }
 
@@ -1108,39 +1149,77 @@ export default function TableEditorPage() {
     }
   }
 
-  // Read an SSE stream from /api/ai/agent and resolve with the result payload
-  const readAgentSSE = (response: Response): Promise<{ changes?: {row:number;col:number;value:string}[]; formatting?: unknown[]; summary?: string; newNumRows?: number; newNumCols?: number } | null> =>
-    new Promise((resolve) => {
-      const reader = response.body?.getReader()
-      if (!reader) { resolve(null); return }
-      const decoder = new TextDecoder()
-      let result: ReturnType<typeof readAgentSSE> extends Promise<infer T> ? T : never = null
-      const pump = async () => {
-        try {
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            for (const line of decoder.decode(value).split('\n')) {
-              if (!line.startsWith('data: ')) continue
-              const raw = line.slice(6).trim()
-              if (raw === '[DONE]') break
-              try {
-                const evt = JSON.parse(raw)
-                if (evt.type === 'result') result = evt.data
-              } catch { /* skip */ }
-            }
-          }
-        } finally {
-          reader.releaseLock()
-          resolve(result)
-        }
+  type AgentColumnResult = {
+    changes?: { row: number; col: number; value: string }[]
+    formatting?: unknown[]
+    summary?: string
+    newNumRows?: number
+    newNumCols?: number
+  }
+
+  // Read both successful results and server-sent errors, including events split across chunks.
+  const readAgentSSE = async (
+    response: Response,
+    onProgress?: (message: string) => void
+  ): Promise<{ data: AgentColumnResult | null; error: string | null }> => {
+    const reader = response.body?.getReader()
+    if (!reader) return { data: null, error: `The AI service returned an empty response (${response.status}).` }
+
+    const decoder = new TextDecoder()
+    let buffer = ""
+    let data: AgentColumnResult | null = null
+    let error: string | null = null
+
+    const processLine = (line: string) => {
+      if (!line.startsWith("data: ")) return
+      const raw = line.slice(6).trim()
+      if (!raw || raw === "[DONE]") return
+      try {
+        const event = JSON.parse(raw) as { type?: string; content?: string; data?: AgentColumnResult }
+        if (event.type === "result" && event.data) data = event.data
+        if (event.type === "error") error = event.content || "The AI service could not complete this request."
+        if (event.type === "thinking" && event.content) onProgress?.(event.content)
+      } catch {
+        // Wait for complete SSE lines; ignore malformed events from upstream.
       }
-      pump()
-    })
+    }
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split("\n")
+        buffer = lines.pop() ?? ""
+        lines.forEach(processLine)
+      }
+      buffer += decoder.decode()
+      if (buffer) processLine(buffer)
+    } finally {
+      reader.releaseLock()
+    }
+
+    return { data, error }
+  }
 
   const generateAIColumnFromPrompt = async () => {
     if (!newColAIPrompt.trim()) return
+    setNewColError(null)
+    setNewColProgress("Connecting to the AI service...")
     setIsGeneratingCol(true)
+    const controller = new AbortController()
+    aiColumnAbortRef.current = controller
+    aiColumnAbortReasonRef.current = null
+    let stallTimer: ReturnType<typeof setTimeout> | null = null
+    const resetStallTimer = () => {
+      if (stallTimer) clearTimeout(stallTimer)
+      stallTimer = setTimeout(() => {
+        aiColumnAbortReasonRef.current = "timeout"
+        controller.abort()
+      }, 90_000)
+    }
+    resetStallTimer()
+
     try {
       // Build spreadsheet context
       const cells: { [key: string]: string } = {}
@@ -1155,9 +1234,25 @@ export default function TableEditorPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt: agentPrompt, cells, numRows, numCols }),
+        signal: controller.signal,
       })
-      if (!res.ok) throw new Error("AI request failed")
-      const result = await readAgentSSE(res)
+      const agentResponse = await readAgentSSE(res, (message) => {
+        setNewColProgress(message)
+        resetStallTimer()
+      })
+      if (agentResponse.error) throw new Error(agentResponse.error)
+      if (!res.ok) {
+        const fallbackMessage = res.status === 401
+          ? "Your session has expired. Sign in again and retry."
+          : res.status === 402
+            ? "You do not have enough credits for this AI action."
+            : res.status === 429
+              ? "Too many AI requests. Wait a moment and retry."
+              : `The AI service is unavailable (${res.status}). Please retry.`
+        throw new Error(fallbackMessage)
+      }
+      const result = agentResponse.data
+      if (!result?.changes?.length) throw new Error("The AI returned no column values. Try a more specific instruction.")
       if (result?.changes?.length) {
         const changes = result.changes
         // Derive column name from prompt (first 4 words)
@@ -1177,14 +1272,31 @@ export default function TableEditorPage() {
         })
         setCells(prev => ({ ...prev, ...updates }))
         await sync.setCellsBatch(updates)
+        setShowAddColPanel(false)
+        setNewColStep("browse")
       }
     } catch (e) {
-      console.error("AI column generation failed", e)
+      const abortReason = aiColumnAbortReasonRef.current
+      const message = e instanceof Error && e.name === "AbortError"
+        ? abortReason === "timeout"
+          ? "The AI service stopped responding for 90 seconds. Please retry with a more specific instruction or fewer rows."
+          : "Generation was cancelled."
+        : e instanceof Error
+          ? e.message
+          : "The AI service could not complete this request. Please retry."
+      setNewColError(message)
     } finally {
+      if (stallTimer) clearTimeout(stallTimer)
+      if (aiColumnAbortRef.current === controller) aiColumnAbortRef.current = null
+      aiColumnAbortReasonRef.current = null
       setIsGeneratingCol(false)
-      setShowAddColPanel(false)
-      setNewColStep("browse")
+      setNewColProgress(null)
     }
+  }
+
+  const cancelAIColumnGeneration = () => {
+    aiColumnAbortReasonRef.current = "cancelled"
+    aiColumnAbortRef.current?.abort()
   }
 
   const runColumn = async (colIdx: number, colType: string, prompt: string, sourceCol: number, regex: string = "") => {
@@ -1244,6 +1356,20 @@ export default function TableEditorPage() {
 
   const runNormalizeColumn = (colIdx: number, colType: string, sourceCol: number) =>
     runColumn(colIdx, colType, "", sourceCol)
+
+  const normalizeUrlsInPlace = async (colIndex: number) => {
+    setNormalizingUrlCols((previous) => new Set(previous).add(colIndex))
+    try {
+      await runNormalizeColumn(colIndex, "Normalize Domain", colIndex)
+    } finally {
+      setNormalizingUrlCols((previous) => {
+        const next = new Set(previous)
+        next.delete(colIndex)
+        return next
+      })
+      setColMenuOpen(null)
+    }
+  }
 
   // Open column header menu
   const openColMenu = (colIndex: number) => {
@@ -2567,6 +2693,22 @@ export default function TableEditorPage() {
                             Filter
                           </button>
 
+                          {colFieldType[colIndex] === "URL" && (
+                            <button
+                              type="button"
+                              onClick={() => void normalizeUrlsInPlace(colIndex)}
+                              disabled={normalizingUrlCols.has(colIndex)}
+                              className="flex w-full items-center gap-2.5 border-b border-border px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/10 disabled:cursor-wait disabled:opacity-60"
+                            >
+                              {normalizingUrlCols.has(colIndex) ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Link2 className="h-3.5 w-3.5" />
+                              )}
+                              {normalizingUrlCols.has(colIndex) ? "Normalizing URLs..." : "Normalize domain"}
+                            </button>
+                          )}
+
                           {colFieldType[colIndex] === "Email" && (
                             <button
                               onClick={() => openEmailComposer(colIndex)}
@@ -2634,97 +2776,137 @@ export default function TableEditorPage() {
                 })}
                 {/* Add column button with full functional panel */}
                 <th
-                  className={`relative min-w-24 border-b border-r border-dashed border-primary/40 bg-background p-0 text-left cursor-pointer transition-colors ${showAddColPanel ? 'bg-primary/10 z-30' : 'hover:bg-primary/5 z-0'}`}
-                  onClick={() => !showAddColPanel && handleAddColumn()}
+                  className={`relative min-w-24 border-b border-r border-dashed border-primary/40 bg-background p-0 text-left transition-colors ${showAddColPanel ? 'bg-primary/10 z-30' : 'z-0'}`}
                 >
-                  <div className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-primary">
+                  <button
+                    type="button"
+                    aria-haspopup="dialog"
+                    aria-expanded={showAddColPanel}
+                    onClick={() => !showAddColPanel && handleAddColumn()}
+                    className="flex min-h-9 w-full items-center gap-1 px-3 py-2 text-xs font-medium text-primary transition-colors hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                  >
                     <Plus className="h-3.5 w-3.5" />
                     Add
-                  </div>
+                  </button>
 
-                  {showAddColPanel && (
+                  {showAddColPanel && createPortal(
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/45 p-3 backdrop-blur-[1px] sm:p-6">
                     <div
                       ref={addColPanelRef}
-                      className="absolute left-0 top-full z-50 w-80 rounded-b-lg border border-border bg-background shadow-2xl"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="add-column-dialog-title"
+                      className="flex max-h-[calc(100dvh-1.5rem)] w-full max-w-[26rem] flex-col overflow-hidden rounded-xl border border-border bg-background text-left text-foreground shadow-2xl sm:max-h-[min(42rem,calc(100dvh-3rem))]"
                       onMouseDown={(e) => e.stopPropagation()}
                     >
                       {/* Header */}
-                      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                        <span className="text-xs font-semibold">
+                      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-2">
+                        <span id="add-column-dialog-title" className="text-sm font-semibold">
                           {newColStep === "configure" ? `Configure: ${newColColumnType}` : "Add Column"}
                         </span>
-                        <button onClick={() => { setShowAddColPanel(false); setNewColStep("browse") }} className="text-muted-foreground hover:text-foreground">
-                          <X className="h-3.5 w-3.5" />
+                        <button
+                          type="button"
+                          aria-label="Close add column dialog"
+                          onClick={() => { setShowAddColPanel(false); setNewColStep("browse") }}
+                          className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          <X className="h-4 w-4" />
                         </button>
                       </div>
 
+                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+
                       {/* Column name input (always visible) */}
-                      <div className="px-3 pt-3 pb-2">
-                        <label className="text-[11px] text-muted-foreground">Column name</label>
+                      <div className="px-4 pb-3 pt-4">
+                        <label htmlFor="new-column-name" className="block text-xs font-medium text-foreground">Column name</label>
                         <input
+                          id="new-column-name"
                           autoFocus={newColStep === "browse"}
                           placeholder={newColStep === "configure" ? newColColumnType : "e.g. Email, Company..."}
                           value={newColName}
                           onChange={(e) => setNewColName(e.target.value)}
                           onKeyDown={(e) => { if (e.key === 'Escape') { setShowAddColPanel(false); setNewColStep("browse") } }}
-                          className="mt-1 w-full rounded border border-border bg-background px-3 py-1.5 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                          className="mt-1.5 min-h-11 w-full rounded-md border border-border bg-background px-3 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus:border-primary focus:ring-2 focus:ring-primary/20"
                         />
                       </div>
 
                       {newColStep === "browse" ? (
                         <>
                           {/* Generate with AI */}
-                          <div className="px-3 pb-2">
-                            <label className="text-[11px] text-muted-foreground">Generate with AI</label>
+                          <div className="px-4 pb-3">
+                            <label htmlFor="new-column-ai-prompt" className="block text-xs font-medium text-foreground">Generate with AI</label>
                             <textarea
+                              id="new-column-ai-prompt"
                               rows={2}
                               placeholder="Describe what values to generate for each row..."
                               value={newColAIPrompt}
-                              onChange={(e) => setNewColAIPrompt(e.target.value)}
-                              className="mt-1 w-full resize-none rounded border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary placeholder:text-muted-foreground/50"
+                              disabled={isGeneratingCol}
+                              onChange={(e) => {
+                                setNewColAIPrompt(e.target.value)
+                                if (newColError) setNewColError(null)
+                              }}
+                              aria-describedby={newColError ? "new-column-ai-error" : undefined}
+                              aria-invalid={Boolean(newColError)}
+                              className="mt-1.5 w-full resize-none rounded-md border border-border bg-background px-3 py-2.5 text-sm outline-none transition-shadow focus:border-primary focus:ring-2 focus:ring-primary/20 placeholder:text-muted-foreground disabled:cursor-wait disabled:opacity-60"
                             />
                             <button
-                              onClick={generateAIColumnFromPrompt}
-                              disabled={!newColAIPrompt.trim() || isGeneratingCol}
-                              className="mt-2 flex w-full items-center justify-center gap-1.5 rounded bg-foreground px-3 py-1.5 text-xs font-semibold text-background hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+                              type="button"
+                              onClick={isGeneratingCol ? cancelAIColumnGeneration : generateAIColumnFromPrompt}
+                              disabled={!newColAIPrompt.trim() && !isGeneratingCol}
+                              className={`mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-md px-3 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 ${isGeneratingCol ? "border border-border bg-muted text-foreground hover:bg-muted/70" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
                             >
                               {isGeneratingCol ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
-                              {isGeneratingCol ? "Generating..." : "Generate with AI"}
+                              {isGeneratingCol ? "Cancel generation" : "Generate with AI"}
                             </button>
+                            {isGeneratingCol && newColProgress && (
+                              <p className="mt-2 text-xs leading-relaxed text-muted-foreground" role="status" aria-live="polite">
+                                {newColProgress}
+                              </p>
+                            )}
+                            {newColError && (
+                              <div
+                                id="new-column-ai-error"
+                                role="alert"
+                                className="mt-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-relaxed text-destructive"
+                              >
+                                <CircleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                                <span>{newColError}</span>
+                              </div>
+                            )}
                           </div>
 
                           {/* Divider */}
-                          <div className="flex items-center gap-2 px-3 pb-2">
+                          <div className="flex items-center gap-3 px-4 pb-3">
                             <div className="flex-1 h-px bg-border" />
-                            <span className="text-[10px] text-muted-foreground">or choose type</span>
+                            <span className="text-[11px] font-medium text-muted-foreground">or choose a type</span>
                             <div className="flex-1 h-px bg-border" />
                           </div>
 
                           {/* Search */}
-                          <div className="px-3 pb-2">
+                          <div className="px-4 pb-3">
                             <div className="relative">
                               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
                               <input
                                 placeholder="Search column types..."
                                 value={newColSearch}
                                 onChange={(e) => setNewColSearch(e.target.value)}
-                                className="w-full rounded border border-border bg-muted/30 pl-8 pr-3 py-1.5 text-xs outline-none focus:border-primary focus:ring-1 focus:ring-primary"
+                                className="min-h-10 w-full rounded-md border border-border bg-muted/30 pl-8 pr-3 text-sm outline-none transition-shadow focus:border-primary focus:ring-2 focus:ring-primary/20"
                               />
                             </div>
                           </div>
 
                           {/* Tabs */}
-                          <div className="flex border-b border-border px-3">
+                          <div className="grid grid-cols-[0.55fr_1fr_1.15fr_0.8fr] border-b border-border px-2" role="tablist" aria-label="Column type categories">
                             {["All", "Data Tools", "Enrichments", "Exports"].map(tab => (
-                              <button key={tab} onClick={() => setNewColTab(tab)}
-                                className={`mr-4 pb-2 pt-1 text-xs font-medium transition-colors border-b-2 -mb-px ${newColTab === tab ? "border-foreground text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+                              <button key={tab} onClick={() => setNewColTab(tab)} role="tab" aria-selected={newColTab === tab}
+                                className={`-mb-px min-h-10 min-w-0 border-b-2 px-1 text-[11px] font-medium transition-colors sm:text-xs ${newColTab === tab ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
                                 {tab}
                               </button>
                             ))}
                           </div>
 
                           {/* Type list */}
-                          <div className="max-h-52 overflow-y-auto">
+                          <div className="pb-2">
                             {(newColTab === "All" || newColTab === "Data Tools") && (
                               <>
                                 <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">User Input</div>
@@ -2733,7 +2915,7 @@ export default function TableEditorPage() {
                                   { label: "User Input – File", icon: <FileText className="h-4 w-4" />, type: "User Input - File" },
                                 ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
                                   <button key={item.label} onClick={() => confirmAddColumn(item.type)}
-                                    className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
+                                    className="flex min-h-11 w-full items-center gap-3 border-b border-border/50 px-4 py-2 text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                                     <span className="text-muted-foreground shrink-0">{item.icon}</span>
                                     <span className="flex-1 text-left">{item.label}</span>
                                   </button>
@@ -2748,7 +2930,7 @@ export default function TableEditorPage() {
                                   { label: "AI with Web Access", icon: <Globe className="h-4 w-4" />, type: "AI Web", desc: "AI with live web search" },
                                 ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
                                   <button key={item.label} onClick={() => confirmAddColumn(item.type)}
-                                    className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
+                                    className="flex min-h-11 w-full items-center gap-3 border-b border-border/50 px-4 py-2 text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                                     <span className="text-muted-foreground shrink-0">{item.icon}</span>
                                     <div className="flex-1 text-left">
                                       <div>{item.label}</div>
@@ -2763,14 +2945,11 @@ export default function TableEditorPage() {
                               <>
                                 <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground bg-muted/20">Tools</div>
                                 {[
-                                  { label: "Normalize Company Name", icon: <Building2 className="h-4 w-4" />, type: "Normalize Company", credit: "Free" },
-                                  { label: "Normalize Domain", icon: <Link2 className="h-4 w-4" />, type: "Normalize Domain", credit: "Free" },
                                   { label: "Scrape Website", icon: <Globe className="h-4 w-4" />, type: "Scrape Website", credit: "~0.02" },
-                                  { label: "Run Regex", icon: <span className="text-xs font-mono font-bold">(.*)</span>, type: "Regex", credit: "Free" },
                                   { label: "Read File (PDF, Image)", icon: <FileText className="h-4 w-4" />, type: "Read File", credit: "~1" },
                                 ].filter(i => !newColSearch || i.label.toLowerCase().includes(newColSearch.toLowerCase())).map(item => (
                                   <button key={item.label} onClick={() => confirmAddColumn(item.type)}
-                                    className="flex w-full items-center gap-3 px-3 py-2 text-sm hover:bg-muted/40 transition-colors border-b border-border/50">
+                                    className="flex min-h-11 w-full items-center gap-3 border-b border-border/50 px-4 py-2 text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                                     <span className="text-muted-foreground shrink-0">{item.icon}</span>
                                     <span className="flex-1 text-left">{item.label}</span>
                                     <span className={`text-[11px] shrink-0 ${item.credit === "Free" ? "text-foreground font-medium" : "text-muted-foreground"}`}>{item.credit}</span>
@@ -2861,6 +3040,9 @@ export default function TableEditorPage() {
                         </div>
                       )}
                     </div>
+                    </div>
+                    </div>,
+                    document.body
                   )}
                 </th>
               </tr>

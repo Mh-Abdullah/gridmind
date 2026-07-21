@@ -157,11 +157,25 @@ export async function POST(request: NextRequest) {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Billing failed"
+    const publicMessage = message.includes("Authentication required")
+      ? "Your session has expired. Sign in again and retry."
+      : message.includes("Not enough credits")
+        ? message
+        : "Unable to verify AI credits right now. Please retry."
+
+    if (!message.includes("Authentication required") && !message.includes("Not enough credits")) {
+      console.error("[Agent API] Credit validation failed:", error)
+    }
+
     return new Response(
-      `data: ${JSON.stringify({ type: "error", content: message })}\n\ndata: [DONE]\n\n`,
+      `data: ${JSON.stringify({ type: "error", content: publicMessage })}\n\ndata: [DONE]\n\n`,
       {
-        status: message.includes("Authentication required") ? 401 : message.includes("Not enough credits") ? 402 : 500,
-        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+        status: 200,
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        },
       }
     )
   }
@@ -192,6 +206,7 @@ export async function POST(request: NextRequest) {
 
         const result = await agent.generate({
           prompt: buildAgentPrompt(context),
+          abortSignal: request.signal,
           onStepFinish: ({ toolCalls, toolResults }) => {
             sendStepUpdates(send, toolCalls, toolResults)
           },
