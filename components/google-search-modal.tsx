@@ -7,12 +7,12 @@ import { useAuth } from "@/lib/auth-context"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { useRouter } from "next/navigation"
-import { X, Loader2, Search, ExternalLink, Zap, Wand2 } from "lucide-react"
+import { X, Loader2, Search, ExternalLink, Wand2 } from "lucide-react"
 
 const EXAMPLE_QUERIES = [
   { label: "Software Engineers from London", query: "site:linkedin.com/in + Software Engineers from London" },
   { label: "Social Media Agencies in New York", query: "site:clutch.co + Social Media Agencies in New York" },
-  { label: "Shopify Stores Selling Pet Products", query: "site:linkedin.com + Shopify Stores Selling Pet Products" },
+  { label: "Shopify Stores Selling Pet Products", query: "site:myshopify.com + Shopify Stores Selling Pet Products" },
   { label: "Recently Funded Startups in Germany", query: "site:crunchbase.com + Recently Funded Startups in Germany" },
   { label: "Marketing Job Openings in San Francisco", query: "site:linkedin.com/jobs + Marketing Job Openings in San Francisco" },
   { label: "Competitor Case Studies in AI SaaS", query: "site:g2.com + Competitor Case Studies in AI SaaS" },
@@ -40,6 +40,18 @@ interface SearchResult {
   position: number
 }
 
+const RESULT_COLUMNS: Array<{ key: keyof SearchResult; label: string }> = [
+  { key: "title", label: "Title" },
+  { key: "url", label: "URL" },
+  { key: "snippet", label: "Snippet" },
+  { key: "displayedLink", label: "Displayed Link" },
+  { key: "position", label: "Position" },
+]
+
+function hasValue(value: SearchResult[keyof SearchResult]) {
+  return typeof value === "number" ? value > 0 : value.trim().length > 0
+}
+
 interface Props {
   onClose: () => void
 }
@@ -52,10 +64,6 @@ export default function GoogleSearchModal({ onClose }: Props) {
   const [numResults, setNumResults] = useState(10)
   const [language, setLanguage] = useState("English")
   const [country, setCountry] = useState("United States")
-
-  const [scrapeWebsite, setScrapeWebsite] = useState(true)
-  const [extractEntities, setExtractEntities] = useState(false)
-  const [extractEmail, setExtractEmail] = useState(false)
 
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState("")
@@ -76,6 +84,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
     if (!query.trim()) return
     setIsSearching(true)
     setSearchError("")
+    setResults([])
     try {
       const res = await fetch("/api/google-search", {
         method: "POST",
@@ -116,6 +125,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
       }
 
       setQuery(data.query)
+      setResults([])
     } catch {
       setQueryBuilderError("Query Builder could not connect. Please try again.")
     } finally {
@@ -147,32 +157,31 @@ export default function GoogleSearchModal({ onClose }: Props) {
 
       const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name })
 
-      const columns = [
-        "Title", "URL", "Snippet", "Displayed Link",
-        ...(scrapeWebsite ? ["Website Content"] : []),
-        ...(extractEntities ? ["Entity 1", "Entity 2", "Entity 3"] : []),
-        ...(extractEmail ? ["Email"] : []),
-      ]
+      const populatedColumns = RESULT_COLUMNS.filter(({ key }) =>
+        rows.some((row) => hasValue(row[key])),
+      )
 
-      const names = columns.map((col, ci) => ({ colIndex: ci, name: col }))
-      await updateColumnNames({ spreadsheetId, names })
+      const names = populatedColumns.map((column, colIndex) => ({
+        colIndex,
+        name: column.label,
+      }))
+      if (names.length > 0) await updateColumnNames({ spreadsheetId, names })
 
       const cells: { cellKey: string; value: string }[] = []
       rows.forEach((r, ri) => {
-        const vals: string[] = [
-          r.title, r.url, r.snippet, r.displayedLink,
-          ...(scrapeWebsite ? [""] : []),
-          ...(extractEntities ? ["", "", ""] : []),
-          ...(extractEmail ? [""] : []),
-        ]
-        vals.forEach((val, ci) => { if (val) cells.push({ cellKey: `${ri}-${ci}`, value: val }) })
+        populatedColumns.forEach(({ key }, ci) => {
+          const value = r[key]
+          if (hasValue(value)) {
+            cells.push({ cellKey: `${ri}-${ci}`, value: String(value) })
+          }
+        })
       })
 
       if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
       await updateMetadata({
         spreadsheetId,
         numRows: Math.max(rows.length, 1),
-        numCols: columns.length,
+        numCols: Math.max(populatedColumns.length, 1),
       })
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
@@ -186,7 +195,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
       console.error("Failed to create table:", err)
       setIsCreating(false)
     }
-  }, [user, results, query, scrapeWebsite, extractEntities, extractEmail, consumeCredits, createSpreadsheet, updateColumnNames, batchUpdateCells, updateMetadata, router, refundCreditTransaction])
+  }, [user, results, query, consumeCredits, createSpreadsheet, updateColumnNames, batchUpdateCells, updateMetadata, router, refundCreditTransaction])
 
   const rowCount = results.length > 0 ? results.length : numResults
 
@@ -209,6 +218,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
                 key={example.label}
                 onClick={() => {
                   setQuery(example.query)
+                  setResults([])
                   setSearchError("")
                   setQueryBuilderError("")
                 }}
@@ -231,7 +241,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
           <div className="flex shrink-0 items-start justify-between border-b border-border px-4 pb-3 pt-4 sm:px-6 sm:pb-4 sm:pt-5">
             <div className="min-w-0 pr-2">
               <h3 id="google-search-title" className="text-base font-bold text-foreground">Find with a Google Search</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">Pull search results from Google and enrich them.</p>
+              <p className="text-xs text-muted-foreground mt-0.5">Turn plain language into a targeted search and import the results.</p>
             </div>
             <button
               onClick={onClose}
@@ -252,7 +262,7 @@ export default function GoogleSearchModal({ onClose }: Props) {
                 <button
                   onClick={handleQueryBuilder}
                   disabled={isBuilding || !query.trim()}
-                  className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 disabled:opacity-40 transition-colors"
+                  className="flex min-h-11 items-center gap-1 rounded-md px-2 text-xs text-primary transition-colors hover:bg-primary/5 hover:text-primary/80 disabled:opacity-40"
                 >
                   {isBuilding ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -267,11 +277,12 @@ export default function GoogleSearchModal({ onClose }: Props) {
                 value={query}
                 onChange={(e) => {
                   setQuery(e.target.value)
+                  setResults([])
                   setSearchError("")
                   setQueryBuilderError("")
                 }}
                 onKeyDown={(e) => { if (e.key === "Enter") handleSearch() }}
-                placeholder="site:linkedin.com/in + Software Engineers from London"
+                placeholder="Describe what you want to find, e.g. pet stores on Shopify"
                 aria-describedby={queryBuilderError ? "query-builder-error" : undefined}
                 aria-invalid={queryBuilderError ? true : undefined}
                 className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/40 sm:text-sm"
@@ -326,34 +337,6 @@ export default function GoogleSearchModal({ onClose }: Props) {
                   </select>
                   <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground text-xs">⌄</span>
                 </div>
-              </div>
-            </div>
-
-            {/* Enrichments */}
-            <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <Zap className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs font-semibold text-foreground">Add Enrichments</span>
-              </div>
-              <div className="space-y-2">
-                {[
-                  { id: "scrape", label: "Scrape website content", value: scrapeWebsite, set: setScrapeWebsite },
-                  { id: "entities", label: "Extract entities from listings and create new rows", value: extractEntities, set: setExtractEntities },
-                  { id: "email", label: "Extract email address from the website content", value: extractEmail, set: setExtractEmail },
-                ].map((item) => (
-                  <label
-                    key={item.id}
-                    className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={item.value}
-                      onChange={(e) => item.set(e.target.checked)}
-                      className="h-3.5 w-3.5 mt-0.5 accent-primary cursor-pointer shrink-0"
-                    />
-                    <span className="text-xs text-foreground leading-snug">{item.label}</span>
-                  </label>
-                ))}
               </div>
             </div>
 

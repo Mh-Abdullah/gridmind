@@ -45,7 +45,6 @@ export default function TemplatePreviewPage() {
   const template = PREDEFINED_TEMPLATES.find((t) => t.id === id)
 
   const createSpreadsheet = useMutation(api.spreadsheets.getOrCreateSpreadsheet)
-  const batchUpdateCells = useMutation(api.spreadsheets.updateCellsBatch)
   const updateMetadata = useMutation(api.spreadsheets.updateSpreadsheetMetadata)
   const updateColumnNames = useMutation(api.spreadsheets.updateColumnNamesBatch)
 
@@ -65,19 +64,12 @@ export default function TemplatePreviewPage() {
       const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name: template.title })
 
-      const cells: { cellKey: string; value: string }[] = []
-      template.sampleRows.forEach((row, ri) => {
-        template.columns.forEach((col, ci) => {
-          if (row[col]) cells.push({ cellKey: `${ri}-${ci}`, value: row[col] })
-        })
-      })
-
       const names = template.columns.map((col, ci) => ({ colIndex: ci, name: col }))
       await updateColumnNames({ spreadsheetId, names })
-      if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
       await updateMetadata({
         spreadsheetId,
-        numRows: template.sampleRows.length,
+        // Preview examples are not project data; keep blank rows for real data.
+        numRows: Math.max(template.sampleRows.length, 1),
         numCols: template.columns.length,
       })
 

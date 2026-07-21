@@ -253,12 +253,12 @@ export default function TablesPage() {
     try {
       const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       const spreadsheetId = await createSpreadsheet({ tableId, userId: user.id, name: tpl.title })
-      const cells: { cellKey: string; value: string }[] = []
-      tpl.sampleRows.forEach((row, ri) => tpl.columns.forEach((col, ci) => { if (row[col]) cells.push({ cellKey: `${ri}-${ci}`, value: row[col] }) }))
       const names = tpl.columns.map((col, ci) => ({ colIndex: ci, name: col }))
       await updateColumnNames({ spreadsheetId, names })
-      if (cells.length > 0) await batchUpdateCells({ spreadsheetId, cells })
-      await updateMetadata({ spreadsheetId, numRows: tpl.sampleRows.length, numCols: tpl.columns.length })
+      // Sample rows demonstrate the template in the preview only. A project made
+      // from a template starts blank so Scraper can generate real prompt data
+      // into the template's existing columns.
+      await updateMetadata({ spreadsheetId, numRows: Math.max(tpl.sampleRows.length, 1), numCols: tpl.columns.length })
       router.push(`/dashboard/tables/${tableId}`)
     } catch (err) {
       console.error("Failed to create table:", err)

@@ -22,11 +22,7 @@ import {
   Menu,
   ChevronRight,
   ArrowLeft,
-  Globe,
-  Send,
-  Mic,
   Loader2,
-  ChevronRight as ChevronRightIcon,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 
@@ -157,7 +153,7 @@ ${goals || "N/A"}`
             <div className="space-y-6">
               <div>
                 <h2 className="text-xl font-semibold">Company profile</h2>
-                <p className="text-sm text-muted-foreground mt-1">Tell us more about the type of company you're targeting.</p>
+                <p className="text-sm text-muted-foreground mt-1">Tell us more about the type of company you&apos;re targeting.</p>
               </div>
               <div className="space-y-4">
                 <div className="space-y-2">
@@ -250,7 +246,7 @@ ${goals || "N/A"}`
 
 // ── Add Context Modal ──────────────────────────────────────────────────────────
 
-type AISubView = "picker" | "website" | "website-preview" | "icp"
+type AISubView = "prompt" | "preview"
 
 function AddContextModal({
   onClose,
@@ -264,15 +260,10 @@ function AddContextModal({
   const [activeTab, setActiveTab] = useState<"ai" | "manual">("ai")
 
   // AI sub-view state
-  const [aiView, setAiView] = useState<AISubView>("picker")
-  // Website generator
-  const [websiteUrl, setWebsiteUrl] = useState("")
-  const [websiteLoading, setWebsiteLoading] = useState(false)
-  const [websiteError, setWebsiteError] = useState("")
-  // ICP creator
-  const [icpDescription, setIcpDescription] = useState("")
-  const [icpLoading, setIcpLoading] = useState(false)
-  const [icpError, setIcpError] = useState("")
+  const [aiView, setAiView] = useState<AISubView>("prompt")
+  const [contextPrompt, setContextPrompt] = useState("")
+  const [generationLoading, setGenerationLoading] = useState(false)
+  const [generationError, setGenerationError] = useState("")
   // Preview / save
   const [generatedContent, setGeneratedContent] = useState("")
   const [generatedTitle, setGeneratedTitle] = useState("")
@@ -282,7 +273,6 @@ function AddContextModal({
 
   // Manual entry state
   const [title, setTitle] = useState("")
-  const [icon, setIcon] = useState("")
   const [content, setContent] = useState("")
   const [isCreating, setIsCreating] = useState(false)
   const [manualError, setManualError] = useState("")
@@ -308,49 +298,26 @@ function AddContextModal({
     }
   }
 
-  const handleReadWebsite = async () => {
-    if (!websiteUrl.trim()) return
-    setWebsiteLoading(true)
-    setWebsiteError("")
+  const handleGenerateContext = async () => {
+    if (!contextPrompt.trim()) return
+    setGenerationLoading(true)
+    setGenerationError("")
     try {
       const res = await fetch("/api/ai/context-generator", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "website", websiteUrl: websiteUrl.trim() }),
+        body: JSON.stringify({ type: "prompt", prompt: contextPrompt.trim() }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || "Failed")
       setGeneratedContent(data.content)
       setGeneratedTitle(data.title)
       setGeneratedIcon(data.icon)
-      setAiView("website-preview")
-    } catch (err: any) {
-      setWebsiteError(err.message || "Failed to read website. Try again.")
+      setAiView("preview")
+    } catch (err: unknown) {
+      setGenerationError(err instanceof Error ? err.message : "Failed to generate context. Try again.")
     } finally {
-      setWebsiteLoading(false)
-    }
-  }
-
-  const handleSendICP = async () => {
-    if (!icpDescription.trim()) return
-    setIcpLoading(true)
-    setIcpError("")
-    try {
-      const res = await fetch("/api/ai/context-generator", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "icp", icpDescription: icpDescription.trim() }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || "Failed")
-      setGeneratedContent(data.content)
-      setGeneratedTitle(data.title)
-      setGeneratedIcon(data.icon)
-      setAiView("website-preview") // reuse preview screen for ICP too
-    } catch (err: any) {
-      setIcpError(err.message || "Failed to generate ICP. Try again.")
-    } finally {
-      setIcpLoading(false)
+      setGenerationLoading(false)
     }
   }
 
@@ -364,12 +331,11 @@ function AddContextModal({
       await createContext({
         userId: user.id,
         title: title.trim(),
-        icon: icon.trim() || undefined,
         content: content.trim(),
       })
       onCreated()
       onClose()
-    } catch (err) {
+    } catch {
       setManualError("Failed to create context. Please try again.")
     } finally {
       setIsCreating(false)
@@ -377,11 +343,9 @@ function AddContextModal({
   }
 
   const resetAI = () => {
-    setAiView("picker")
-    setWebsiteUrl("")
-    setWebsiteError("")
-    setIcpDescription("")
-    setIcpError("")
+    setAiView("prompt")
+    setContextPrompt("")
+    setGenerationError("")
     setGeneratedContent("")
     setGeneratedTitle("")
     setGeneratedIcon("")
@@ -437,128 +401,44 @@ function AddContextModal({
           {activeTab === "ai" && (
             <div className="px-6 pb-6">
 
-              {/* Picker — choose tool */}
-              {aiView === "picker" && (
-                <div className="space-y-3">
-                  <p className="text-sm text-muted-foreground">
-                    Create a context from scratch with AI assistance. Pick the generator that matches what you want to define.
-                  </p>
-                  <button
-                    onClick={() => setAiView("website")}
-                    className="w-full text-left rounded-xl border border-border p-4 hover:border-primary/50 hover:bg-muted/30 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 mb-1.5">
-                      <Globe className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">Website Context Generator</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      Scrape a website, extract pain points, infer ICP, and save a polished context document.
-                    </p>
-                  </button>
-                  <button
-                    onClick={() => setAiView("icp")}
-                    className="w-full text-left rounded-xl border border-border p-4 hover:border-primary/50 hover:bg-muted/30 transition-colors"
-                  >
-                    <div className="flex items-center gap-3 mb-1.5">
-                      <Target className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-semibold">ICP Creator</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      Start with your ICP hypothesis, answer 3–5 clarifying questions, and generate segmented ICP profiles with fit signals.
-                    </p>
-                  </button>
-                </div>
-              )}
-
-              {/* Website generator — enter URL */}
-              {aiView === "website" && (
+              {aiView === "prompt" && (
                 <div className="space-y-5">
-                  <button
-                    onClick={() => setAiView("picker")}
-                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    Back
-                  </button>
-                  <p className="text-sm text-muted-foreground leading-relaxed">
-                    Give the workspace more context about your company and goals. The website generator can draft a reusable context document.
-                  </p>
-                  <div className="space-y-1.5">
-                    <label className="text-sm font-semibold">Website URL</label>
-                    <div className="relative">
-                      <span className="absolute left-3 top-1/2 -translate-y-1/2">
-                        <Globe className="h-4 w-4 text-muted-foreground" />
-                      </span>
-                      <Input
-                        className="pl-9"
-                        placeholder="example.com"
-                        value={websiteUrl}
-                        onChange={(e) => setWebsiteUrl(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && handleReadWebsite()}
-                        disabled={websiteLoading}
-                      />
-                    </div>
-                    <p className="text-xs text-muted-foreground">We will scrape the website to extract insights.</p>
+                  <div>
+                    <h3 className="text-base font-semibold">What context should AI create?</h3>
                   </div>
-                  {websiteError && <p className="text-xs text-destructive">{websiteError}</p>}
+                  <div className="space-y-1.5">
+                    <label htmlFor="context-prompt" className="text-sm font-semibold">Context instructions</label>
+                    <textarea
+                      id="context-prompt"
+                      className="min-h-40 w-full resize-y rounded-xl border border-input bg-muted/30 px-4 py-3 text-sm leading-relaxed placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      placeholder="For example: Create a sales context for our B2B analytics platform. Include our target market, main customer pain points, value proposition, differentiators, and preferred tone."
+                      value={contextPrompt}
+                      onChange={(event) => setContextPrompt(event.target.value)}
+                      disabled={generationLoading}
+                      maxLength={4000}
+                      autoFocus
+                    />
+                  </div>
+                  {generationError && <p role="alert" className="text-xs text-destructive">{generationError}</p>}
                   <button
-                    onClick={handleReadWebsite}
-                    disabled={!websiteUrl.trim() || websiteLoading}
-                    className="w-full flex items-center justify-center gap-2 rounded-lg bg-muted hover:bg-muted/80 disabled:opacity-50 disabled:cursor-not-allowed py-3 text-sm font-medium transition-colors"
+                    onClick={handleGenerateContext}
+                    disabled={contextPrompt.trim().length < 10 || generationLoading}
+                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-foreground py-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {websiteLoading ? (
-                      <><Loader2 className="h-4 w-4 animate-spin" /> Reading website...</>
+                    {generationLoading ? (
+                      <><Loader2 className="h-4 w-4 animate-spin" /> Creating context...</>
                     ) : (
-                      <><ChevronRightIcon className="h-4 w-4" /> Read website</>
+                      <><Sparkles className="h-4 w-4" /> Create context</>
                     )}
                   </button>
                 </div>
               )}
 
-              {/* ICP creator — describe customers */}
-              {aiView === "icp" && (
-                <div className="space-y-5">
-                  <div>
-                    <h3 className="text-lg font-semibold">Describe the customers you work for:</h3>
-                    <p className="text-sm text-muted-foreground mt-1">The more specific you are, the better result you&apos;ll get.</p>
-                  </div>
-                  <div className="relative">
-                    <textarea
-                      className="w-full rounded-xl border border-input bg-muted/30 px-4 pt-3 pb-12 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-36 resize-none"
-                      placeholder="E.g., We target Series A SaaS founders in the US with 10-50 employees..."
-                      value={icpDescription}
-                      onChange={(e) => setIcpDescription(e.target.value)}
-                      disabled={icpLoading}
-                    />
-                    <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
-                      <button className="rounded-full p-1.5 hover:bg-muted transition-colors text-muted-foreground">
-                        <Mic className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={handleSendICP}
-                        disabled={!icpDescription.trim() || icpLoading}
-                        className="rounded-full p-1.5 bg-muted hover:bg-muted/80 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                      >
-                        {icpLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  </div>
-                  {icpError && <p className="text-xs text-destructive">{icpError}</p>}
-                  <button
-                    onClick={() => setAiView("picker")}
-                    className="flex items-center gap-1.5 mx-auto text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    <ArrowLeft className="h-4 w-4" />
-                    Back
-                  </button>
-                </div>
-              )}
-
               {/* Preview & save generated content */}
-              {aiView === "website-preview" && (
+              {aiView === "preview" && (
                 <div className="space-y-4">
                   <button
-                    onClick={resetAI}
+                    onClick={() => setAiView("prompt")}
                     className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
                   >
                     <ArrowLeft className="h-4 w-4" />
@@ -591,35 +471,26 @@ function AddContextModal({
           {/* ── MANUAL TAB ── */}
           {activeTab === "manual" && (
             <div className="px-6 pb-6 space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Add any relevant context about your company and your goals. You can reuse this context in all your projects.
-              </p>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Title</label>
+                <label htmlFor="manual-context-title" className="text-sm font-medium">Title</label>
                 <Input
-                  placeholder="My Context"
+                  id="manual-context-title"
+                  placeholder="For example: Lead search rules"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
-                <label className="text-sm font-medium">Icon (URL or Emoji)</label>
-                <Input
-                  placeholder="https://example.com/icon.png or 🎯"
-                  value={icon}
-                  onChange={(e) => setIcon(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Context (Markdown)</label>
+                <label htmlFor="manual-context-rules" className="text-sm font-medium">Rules and context <span className="font-normal text-muted-foreground">(Markdown supported)</span></label>
                 <textarea
+                  id="manual-context-rules"
                   className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring min-h-36 resize-y font-mono"
-                  placeholder="# Context Description..."
+                  placeholder={"# Lead search rules\n\n- Only find B2B SaaS companies.\n- Prioritize verified contact information.\n- Required columns: Name, Contact"}
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                 />
               </div>
-              {manualError && <p className="text-sm text-destructive">{manualError}</p>}
+              {manualError && <p role="alert" className="text-sm text-destructive">{manualError}</p>}
               <Button
                 className="w-full"
                 onClick={handleManualCreate}
@@ -750,7 +621,7 @@ export default function ContextsPage() {
             <ThemeToggle />
             <Button
               size="sm"
-              className="gap-2"
+              className="gap-2 lg:hidden"
               onClick={() => setShowModal(true)}
             >
               <Plus className="h-4 w-4" />
@@ -763,6 +634,15 @@ export default function ContextsPage() {
           {/* Left sidebar panel — tools/templates */}
           <aside className="hidden lg:flex w-56 shrink-0 flex-col border-r border-border bg-muted/30 p-3 gap-1">
             <p className="px-2 py-1 text-xs font-medium text-muted-foreground">Tools</p>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm text-foreground hover:bg-muted transition-colors w-full text-left"
+            >
+              <div className="flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background">
+                <Plus className="h-4 w-4 text-foreground" />
+              </div>
+              Add Context
+            </button>
             <button
               onClick={() => setActiveView("icp-generator")}
               className="flex items-center gap-3 rounded-md px-3 py-2.5 text-sm text-foreground hover:bg-muted transition-colors w-full text-left"

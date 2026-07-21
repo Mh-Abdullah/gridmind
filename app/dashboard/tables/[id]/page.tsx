@@ -53,6 +53,7 @@ import {
   CircleAlert,
   MoreHorizontal,
   Eraser,
+  MapPin,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -3190,7 +3191,12 @@ export default function TableEditorPage() {
                                   maxWidth: "100%",
                                 }}
                               >
-                                {cellValue}
+                                {/^location$/i.test((colNames[colIndex] || "").trim()) ? (
+                                  <span style={{ display: "inline-flex", alignItems: "center", gap: "4px" }}>
+                                    <MapPin aria-hidden="true" size={13} />
+                                    View on map
+                                  </span>
+                                ) : cellValue}
                               </a>
                             ) : colFieldType[colIndex] === "__legacy_boolean__" ? (
                               <span style={{ color: cellValue === "true" ? "var(--primary)" : cellValue === "false" ? "var(--destructive)" : "inherit" }}>
@@ -3461,7 +3467,9 @@ export default function TableEditorPage() {
             selectedCells,
             getCellValue,
             getColumnLabel,
-            getColumnName: (index) => colNames[index] || getColumnLabel(index),
+            // Keep unnamed spreadsheet labels separate from real schema names so
+            // Scraper only locks generation to explicitly named/template columns.
+            getColumnName: (index) => colNames[index] || "",
             getCellFormatting,
           }}
           onApplyFormatting={(formattingChanges) => {
@@ -3582,6 +3590,12 @@ export default function TableEditorPage() {
             })
 
             // Apply changes immediately (preview)
+            // Clear previous/example cells first so a generated dataset truly
+            // replaces the sheet instead of leaving stale values behind.
+            Object.keys(cells).forEach((key) => {
+              const [row, col] = key.split('-').map(Number)
+              setCellValue(row, col, '')
+            })
             setNumCols(newNumCols)
             setNumRows(newNumRows)
             setColNames(newColNames)

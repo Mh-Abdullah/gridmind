@@ -187,7 +187,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
         "Name", "Address", "Phone", "Website", "Category", "Opening Hours",
         ...(scrapeWebsite ? ["Website Content"] : []),
         ...(extractEmail ? ["Email"] : []),
-        "Latitude", "Longitude",
+        "Location",
       ]
       const cells: { cellKey: string; value: string }[] = []
 
@@ -199,8 +199,9 @@ export default function LocalBusinessesModal({ onClose }: Props) {
           b.name, b.address, b.phone, b.website, b.category, b.openingHours,
           ...(scrapeWebsite ? [""] : []),
           ...(extractEmail ? [""] : []),
-          b.lat !== null ? String(b.lat) : "",
-          b.lng !== null ? String(b.lng) : "",
+          b.lat !== null && b.lng !== null
+            ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${b.lat},${b.lng}`)}`
+            : "",
         ]
         vals.forEach((val, ci) => { if (val) cells.push({ cellKey: `${ri}-${ci}`, value: val }) })
       })

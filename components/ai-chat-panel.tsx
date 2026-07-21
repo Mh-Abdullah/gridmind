@@ -557,6 +557,10 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   // Handle Web Scraper agent
   const handleScraperAgent = async (prompt: string, assistantMessageId: string, chatHistory: APIMessage[]) => {
     const hasSelection = Boolean(tableContext?.selectedCells?.size)
+    const existingTemplateColumns = tableContext
+      ? Array.from({ length: tableContext.numCols }, (_, col) => tableContext.getColumnName?.(col)?.trim() || "")
+      : []
+    const hasCompleteNamedSchema = existingTemplateColumns.length > 0 && existingTemplateColumns.every(Boolean)
     let hasExistingData = false
     if (tableContext) {
       for (let row = 0; row < tableContext.numRows && !hasExistingData; row += 1) {
@@ -574,7 +578,10 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     // Keep generation available when the user explicitly asks for a new dataset.
     const asksForNewDataset =
       /\b(?:create|generate|build|make)\b[\s\S]{0,60}\b(?:new\s+)?(?:table|list|dataset|spreadsheet)\b/i.test(prompt)
-    const mode = hasSelection || (hasExistingData && !asksForNewDataset) ? "enrich" : "generate"
+    const asksToReplaceTemplateData =
+      /\b(?:replace|overwrite|remove|clear|regenerate|refill)\b[\s\S]{0,60}\b(?:dummy|sample|example|template|existing|current)\s+(?:data|rows?)\b/i.test(prompt)
+      || /\bfill\b[\s\S]{0,30}\b(?:this|the)\s+template\b/i.test(prompt)
+    const mode = hasSelection || (hasExistingData && !asksForNewDataset && !asksToReplaceTemplateData) ? "enrich" : "generate"
 
     // Build request body
     let requestBody: Record<string, unknown>
@@ -584,6 +591,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         mode: "generate",
         chatHistory,
         businessContext: buildBusinessContext(),
+        existingColumns: hasCompleteNamedSchema ? existingTemplateColumns : [],
         tableInfo: {
           tableId: tableContext?.tableId || "new",
           projectName: tableContext?.projectName || "Untitled",
