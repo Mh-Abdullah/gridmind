@@ -53,6 +53,7 @@ export function useSpreadsheetSync({
   const updateRowHeightMutation = useMutation(api.spreadsheets.updateRowHeight);
   const resetSpreadsheetMutation = useMutation(api.spreadsheets.resetSpreadsheet);
   const updateColumnNamesBatchMutation = useMutation(api.spreadsheets.updateColumnNamesBatch);
+  const updateColumnFieldTypesBatchMutation = useMutation(api.spreadsheets.updateColumnFieldTypesBatch);
 
   // Convex queries - real-time subscriptions
   const spreadsheet = useQuery(
@@ -77,6 +78,10 @@ export function useSpreadsheetSync({
   );
   const columnNames = useQuery(
     api.spreadsheets.getColumnNames,
+    spreadsheetId ? { spreadsheetId } : "skip"
+  );
+  const columnFieldTypes = useQuery(
+    api.spreadsheets.getColumnFieldTypes,
     spreadsheetId ? { spreadsheetId } : "skip"
   );
 
@@ -337,6 +342,7 @@ export function useSpreadsheetSync({
   const stableColumnWidths = useMemo(() => columnWidths ?? {}, [JSON.stringify(columnWidths)]);
   const stableRowHeights = useMemo(() => rowHeights ?? {}, [JSON.stringify(rowHeights)]);
   const stableColumnNames = useMemo(() => columnNames ?? {}, [JSON.stringify(columnNames)]);
+  const stableColumnFieldTypes = useMemo(() => columnFieldTypes ?? {}, [JSON.stringify(columnFieldTypes)]);
 
   // Batch update column names (upsert)
   const setColumnNamesBatch = useCallback(
@@ -355,6 +361,22 @@ export function useSpreadsheetSync({
     [spreadsheetId, updateColumnNamesBatchMutation]
   );
 
+  const setColumnFieldTypesBatch = useCallback(
+    async (fieldTypes: { [key: number]: string }) => {
+      if (!spreadsheetId) return;
+      try {
+        const entries = Object.entries(fieldTypes).map(([colIndex, fieldType]) => ({
+          colIndex: Number(colIndex),
+          fieldType,
+        }));
+        await updateColumnFieldTypesBatchMutation({ spreadsheetId, fieldTypes: entries });
+      } catch (error) {
+        console.error("Failed to save column field types:", error);
+      }
+    },
+    [spreadsheetId, updateColumnFieldTypesBatchMutation]
+  );
+
   return {
     // State
     spreadsheetId,
@@ -369,6 +391,8 @@ export function useSpreadsheetSync({
     rowHeights: stableRowHeights,
     columnNames: stableColumnNames,
     isColumnNamesReady: columnNames !== undefined,
+    columnFieldTypes: stableColumnFieldTypes,
+    isColumnFieldTypesReady: columnFieldTypes !== undefined,
     spreadsheet: spreadsheet ?? null,
 
     // Actions
@@ -380,6 +404,7 @@ export function useSpreadsheetSync({
     setColumnWidth,
     setRowHeight,
     setColumnNamesBatch,
+    setColumnFieldTypesBatch,
     resetAll,
     flushCellUpdates,
   };

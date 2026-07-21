@@ -172,6 +172,14 @@ export const deleteSpreadsheet = mutation({
       await ctx.db.delete(n._id);
     }
 
+    const fieldTypes = await ctx.db
+      .query("columnFieldTypes")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const fieldType of fieldTypes) {
+      await ctx.db.delete(fieldType._id);
+    }
+
     // Delete the spreadsheet itself
     await ctx.db.delete(args.spreadsheetId);
   },
@@ -411,6 +419,14 @@ export const resetSpreadsheet = mutation({
       await ctx.db.delete(n._id)
     }
 
+    const fieldTypes = await ctx.db
+      .query("columnFieldTypes")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", spreadsheetId))
+      .collect()
+    for (const fieldType of fieldTypes) {
+      await ctx.db.delete(fieldType._id)
+    }
+
     // Reset spreadsheet metadata to defaults
     await ctx.db.patch(spreadsheetId, {
       numRows: nextNumRows,
@@ -639,6 +655,57 @@ export const updateColumnNamesBatch = mutation({
           spreadsheetId: args.spreadsheetId,
           colIndex,
           name,
+        });
+      }
+    }
+  },
+});
+
+export const getColumnFieldTypes = query({
+  args: { spreadsheetId: v.id("spreadsheets") },
+  handler: async (ctx, args) => {
+    const fieldTypes = await ctx.db
+      .query("columnFieldTypes")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+
+    const result: { [key: number]: string } = {};
+    for (const fieldType of fieldTypes) result[fieldType.colIndex] = fieldType.fieldType;
+    return result;
+  },
+});
+
+export const updateColumnFieldTypesBatch = mutation({
+  args: {
+    spreadsheetId: v.id("spreadsheets"),
+    fieldTypes: v.array(v.object({ colIndex: v.number(), fieldType: v.string() })),
+  },
+  handler: async (ctx, args) => {
+    const retainedColumns = new Set(args.fieldTypes.map(({ colIndex }) => colIndex));
+    const storedFieldTypes = await ctx.db
+      .query("columnFieldTypes")
+      .withIndex("by_spreadsheet", (q) => q.eq("spreadsheetId", args.spreadsheetId))
+      .collect();
+    for (const stored of storedFieldTypes) {
+      if (!retainedColumns.has(stored.colIndex)) await ctx.db.delete(stored._id);
+    }
+
+    for (const { colIndex, fieldType } of args.fieldTypes) {
+      const existing = await ctx.db
+        .query("columnFieldTypes")
+        .withIndex("by_spreadsheet_col", (q) =>
+          q.eq("spreadsheetId", args.spreadsheetId).eq("colIndex", colIndex)
+        )
+        .first();
+
+      if (existing) {
+        if (fieldType === "") await ctx.db.delete(existing._id);
+        else await ctx.db.patch(existing._id, { fieldType });
+      } else if (fieldType !== "") {
+        await ctx.db.insert("columnFieldTypes", {
+          spreadsheetId: args.spreadsheetId,
+          colIndex,
+          fieldType,
         });
       }
     }

@@ -102,6 +102,15 @@ export default defineSchema({
     .index("by_spreadsheet", ["spreadsheetId"])
     .index("by_spreadsheet_col", ["spreadsheetId", "colIndex"]),
 
+  // Explicit field types override automatic value detection (for example File vs URL).
+  columnFieldTypes: defineTable({
+    spreadsheetId: v.id("spreadsheets"),
+    colIndex: v.number(),
+    fieldType: v.string(),
+  })
+    .index("by_spreadsheet", ["spreadsheetId"])
+    .index("by_spreadsheet_col", ["spreadsheetId", "colIndex"]),
+
   // Contexts - reusable knowledge pieces
   contexts: defineTable({
     userId: v.string(),

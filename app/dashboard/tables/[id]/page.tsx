@@ -53,6 +53,7 @@ import {
   MoreHorizontal,
   Eraser,
   MapPin,
+  ExternalLink,
 } from "lucide-react"
 
 const getColumnLabel = (index: number): string => {
@@ -132,6 +133,39 @@ interface EmailCampaignConfig {
   prompt: string
   subject: string
   body: string
+}
+
+const getEmbeddedFileType = (value: string): string => {
+  const mimeType = value.match(/^data:([^;,]+)/i)?.[1] ?? "application/octet-stream"
+  const subtype = mimeType.split("/").pop() ?? "file"
+  const labels: Record<string, string> = {
+    pdf: "PDF",
+    jpeg: "JPG",
+    png: "PNG",
+    gif: "GIF",
+    webp: "WEBP",
+    plain: "TXT",
+    csv: "CSV",
+  }
+  return labels[subtype.toLowerCase()] ?? subtype.toUpperCase()
+}
+
+const openEmbeddedFile = (dataUrl: string) => {
+  const match = dataUrl.match(/^data:([^;,]+)(?:;[^,]*)?;base64,([\s\S]*)$/)
+  if (!match) throw new Error("This embedded file has an invalid format.")
+
+  const binary = window.atob(match[2])
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+
+  const objectUrl = URL.createObjectURL(new Blob([bytes], { type: match[1] }))
+  const openedWindow = window.open(objectUrl, "_blank")
+  if (!openedWindow) {
+    URL.revokeObjectURL(objectUrl)
+    throw new Error("Your browser blocked the file viewer. Allow pop-ups and try again.")
+  }
+  openedWindow.opener = null
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
 }
 
 interface SpreadsheetClipboard {
@@ -341,7 +375,7 @@ export default function TableEditorPage() {
   // Initialize local state from Convex data
   // Wait for both spreadsheet metadata AND columnNames query to be ready
   useEffect(() => {
-    if (!isInitialized && sync.spreadsheet && sync.isColumnNamesReady) {
+    if (!isInitialized && sync.spreadsheet && sync.isColumnNamesReady && sync.isColumnFieldTypesReady) {
       setCellsLocal(sync.cells)
       setCellFormattingState(sync.cellFormatting as { [key: string]: CellFormatting })
       setColumnWidthsLocal(sync.columnWidths)
@@ -353,9 +387,12 @@ export default function TableEditorPage() {
       if (Object.keys(sync.columnNames).length > 0) {
         setColNames(sync.columnNames)
       }
+      if (Object.keys(sync.columnFieldTypes).length > 0) {
+        setColFieldType(sync.columnFieldTypes)
+      }
       setIsInitialized(true)
     }
-  }, [sync.spreadsheet, sync.cells, sync.columnNames, sync.isColumnNamesReady, isInitialized])
+  }, [sync.spreadsheet, sync.cells, sync.columnNames, sync.columnFieldTypes, sync.isColumnNamesReady, sync.isColumnFieldTypesReady, isInitialized])
 
   useEffect(() => {
     if (!isInitialized) return
@@ -366,14 +403,24 @@ export default function TableEditorPage() {
 
       for (let colIndex = 0; colIndex < numCols; colIndex++) {
         const colValues = Array.from({ length: numRows }, (_, rowIndex) => getCellValue(rowIndex, colIndex))
-        const detectedType = detectColumnFieldType(colNames[colIndex] || getColumnLabel(colIndex), colValues)
+        const isFileColumn = prev[colIndex] === "File" ||
+          colColumnType[colIndex] === "User Input - File" ||
+          colValues.some(value => /^data:(?:application|image)\//i.test(value))
+        const detectedType = isFileColumn
+          ? "File"
+          : detectColumnFieldType(colNames[colIndex] || getColumnLabel(colIndex), colValues)
         next[colIndex] = detectedType
         if ((prev[colIndex] ?? "Text") !== detectedType) changed = true
       }
 
       return changed ? next : prev
     })
-  }, [cells, colNames, isInitialized, numCols, numRows])
+  }, [cells, colColumnType, colNames, isInitialized, numCols, numRows])
+
+  useEffect(() => {
+    if (!isInitialized || Object.keys(colFieldType).length === 0) return
+    void sync.setColumnFieldTypesBatch(colFieldType)
+  }, [colFieldType, isInitialized, sync.setColumnFieldTypesBatch])
 
   useEffect(() => {
     try {
@@ -1131,7 +1178,10 @@ export default function TableEditorPage() {
     const newColIdx = numCols
     setColNames(prev => ({ ...prev, [newColIdx]: colName || colType }))
     setColColumnType(prev => ({ ...prev, [newColIdx]: colType }))
-    setColFieldType(prev => ({ ...prev, [newColIdx]: newColFieldType }))
+    setColFieldType(prev => ({
+      ...prev,
+      [newColIdx]: colType === "User Input - File" ? "File" : newColFieldType,
+    }))
     setNumCols(numCols + 1)
     setShowAddColPanel(false)
     setNewColStep("browse")
@@ -2548,7 +2598,9 @@ export default function TableEditorPage() {
                       className={`flex items-center gap-1.5 px-3 py-2 w-full cursor-pointer hover:bg-muted/40 transition-colors ${isMenuOpen ? 'bg-primary/10' : ''}`}
                       onClick={() => isMenuOpen ? setColMenuOpen(null) : openColMenu(colIndex)}
                     >
-                      {colFieldType[colIndex] === "Email" ? (
+                      {colFieldType[colIndex] === "File" ? (
+                        <FileText className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
+                      ) : colFieldType[colIndex] === "Email" ? (
                         <Mail className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
                       ) : (
                         <Type className={`h-3.5 w-3.5 shrink-0 ${isMenuOpen ? 'text-primary' : 'text-muted-foreground'}`} />
@@ -2616,6 +2668,7 @@ export default function TableEditorPage() {
                                     className="w-full rounded border border-border bg-background px-2 py-1.5 text-xs appearance-none pr-6 cursor-pointer"
                                   >
                                     <option value="User Input">User Input</option>
+                                    <option value="User Input - File">User Input - File</option>
                                     <option value="AI Agent">AI Agent</option>
                                     <option value="Formula">Formula</option>
                                   </select>
@@ -2635,6 +2688,7 @@ export default function TableEditorPage() {
                                     <option value="Number">Number</option>
                                     <option value="Email">Email</option>
                                     <option value="URL">URL</option>
+                                    <option value="File">File</option>
                                     <option value="Date &amp; Time">Date &amp; Time</option>
                                   </select>
                                   <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
@@ -3135,6 +3189,7 @@ export default function TableEditorPage() {
                     const height = rowHeights[rowIndex] || 36
                     const formatting = getCellFormatting(rowIndex, colIndex)
                     const cellValue = getCellValue(rowIndex, colIndex)
+                    const isFileField = colFieldType[colIndex] === "File" || colColumnType[colIndex] === "User Input - File"
                     const fontSize = formatting.fontSize || 14
                     const charWidth = fontSize * 0.6 // Approximate character width (roughly 60% of font size)
                     const paddingLeft = 2 + charWidth // Base padding + one character width
@@ -3176,11 +3231,11 @@ export default function TableEditorPage() {
                         onDoubleClick={() => handleCellDoubleClick(rowIndex, colIndex)}
                         onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
                         onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
-                        title={cellValue}
+                        title={isFileField ? undefined : cellValue}
                         aria-expanded={isSelected}
                       >
                         {isEditing ? (
-                          colColumnType[colIndex] === "User Input - File" ? (
+                          isFileField ? (
                             <div
                               style={{ display: "flex", alignItems: "center", width: "100%", height: "100%", paddingLeft: "8px", paddingRight: "4px", gap: "4px", boxSizing: "border-box" }}
                             >
@@ -3196,6 +3251,7 @@ export default function TableEditorPage() {
                               />
                               <button
                                 title="Upload file"
+                                aria-label="Upload file"
                                 style={{ cursor: "pointer", display: "flex", alignItems: "center", padding: "2px 3px", borderRadius: "3px", background: "none", border: "none", color: "var(--muted-foreground)", flexShrink: 0, fontSize: "14px" }}
                                 onMouseDown={(e) => { e.preventDefault(); e.stopPropagation() }}
                                 onClick={(e) => {
@@ -3204,7 +3260,7 @@ export default function TableEditorPage() {
                                   cellFileInputRef.current?.click()
                                 }}
                               >
-                                📁
+                                <Upload className="h-3.5 w-3.5" />
                               </button>
                             </div>
                           ) : colFieldType[colIndex] === "__legacy_boolean__" ? (
@@ -3323,22 +3379,43 @@ export default function TableEditorPage() {
                               WebkitUserSelect: "none",
                             }}
                           >
-                            {colColumnType[colIndex] === "User Input - File" ? (
+                            {isFileField ? (
                               cellValue ? (
                                 cellValue.startsWith("data:") ? (
-                                  <span style={{ color: "var(--primary)", display: "flex", alignItems: "center", gap: "4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
-                                    📎 {(cellValue.match(/data:([^;]+)/)?.[1] ?? "file").split("/").pop()?.toUpperCase()}
-                                  </span>
+                                  <button
+                                    type="button"
+                                    title={`Open ${getEmbeddedFileType(cellValue)} file`}
+                                    aria-label={`Open ${getEmbeddedFileType(cellValue)} file in a new tab`}
+                                    onClick={(event) => {
+                                      event.stopPropagation()
+                                      try {
+                                        openEmbeddedFile(cellValue)
+                                      } catch (error) {
+                                        window.alert(error instanceof Error ? error.message : "Could not open this file.")
+                                      }
+                                    }}
+                                    onDoubleClick={(event) => event.stopPropagation()}
+                                    className="flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  >
+                                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{getEmbeddedFileType(cellValue)}</span>
+                                    <ExternalLink className="h-3 w-3 shrink-0" />
+                                  </button>
                                 ) : /^https?:\/\//i.test(cellValue) ? (
-                                  <a href={cellValue} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "var(--primary)", textDecoration: "underline", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
-                                    📎 {cellValue.split("/").pop()?.split("?")[0] ?? cellValue}
+                                  <a href={cellValue} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()} className="flex min-w-0 max-w-full items-center gap-1.5 rounded-sm text-primary underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{cellValue.split("/").pop()?.split("?")[0] || "Open file"}</span>
+                                    <ExternalLink className="h-3 w-3 shrink-0" />
                                   </a>
                                 ) : (
-                                  <span>📎 {cellValue}</span>
+                                  <span className="flex min-w-0 items-center gap-1.5">
+                                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="truncate">{cellValue}</span>
+                                  </span>
                                 )
                               ) : (
                                 <span style={{ color: "var(--muted-foreground)", display: "flex", alignItems: "center", gap: "4px", fontSize: "11px" }}>
-                                  📁 Double-click to upload
+                                  <Upload className="h-3.5 w-3.5" /> Double-click to upload
                                 </span>
                               )
                             ) : colFieldType[colIndex] === "Email" && cellValue && isLikelyEmail(cellValue) ? (
