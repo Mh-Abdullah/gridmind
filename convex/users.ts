@@ -434,6 +434,14 @@ export const deleteAccountCascade = mutation({
       await ctx.db.delete(context._id);
     }
 
+    const chatSessions = await ctx.db
+      .query("chatSessions")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .collect();
+    for (const session of chatSessions) {
+      await ctx.db.delete(session._id);
+    }
+
     const creditAccounts = await ctx.db
       .query("creditAccounts")
       .withIndex("by_userId", (q) => q.eq("userId", userId))

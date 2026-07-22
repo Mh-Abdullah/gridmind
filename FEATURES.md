@@ -68,7 +68,7 @@
 - A chat panel lives inside the spreadsheet editor.
 - You can ask questions about your data in plain English — e.g. *"What is the average of column B?"* or *"Are there any duplicates in the email column?"*
 - The AI is given the full context of your spreadsheet so its answers are specific to your data.
-- **Chat history** — conversations are saved per sheet (in browser storage) so you can pick up where you left off.
+- **Chat history** — conversations are saved per user and sheet in Convex, with a browser fallback, so they follow you across devices.
 - **Multiple sessions** — you can start new chat sessions and browse old ones.
 - **Streaming replies** — answers appear word-by-word as the AI types them.
 - **Thinking steps** — the AI shows its reasoning steps before giving a final answer.

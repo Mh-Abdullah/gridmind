@@ -1,17 +1,15 @@
 "use client"
 
 import type React from "react"
-import { useState, useRef, useEffect, useCallback } from "react"
+import { useState, useRef, useEffect, useCallback, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { useAuth } from "@/lib/auth-context"
-import { useQuery } from "convex/react"
+import { useMutation, useQuery } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { BrandIcon, BrandLogo } from "@/components/brand-assets"
+import { BrandIcon } from "@/components/brand-assets"
 import {
   X,
-  Send,
   Copy,
   Check,
   RotateCcw,
@@ -21,7 +19,6 @@ import {
   Maximize2,
   Minimize2,
   Trash2,
-  Settings,
   MessageSquare,
   Plus,
   AtSign,
@@ -58,6 +55,15 @@ interface ChatSession {
   tableId: string
 }
 
+interface StoredChatSession {
+  sessionId: string
+  title: string
+  messages: Array<Omit<Message, "timestamp"> & { timestamp: number }>
+  createdAt: number
+  updatedAt: number
+  tableId: string
+}
+
 // Helper to get storage key for a table
 const getChatStorageKey = (tableId: string) => `gridmind-chat-history-${tableId}`
 
@@ -80,7 +86,7 @@ const deserializeSession = (data: string): ChatSession => {
     ...parsed,
     createdAt: new Date(parsed.createdAt),
     updatedAt: new Date(parsed.updatedAt),
-    messages: parsed.messages.map((m: any) => ({
+    messages: parsed.messages.map((m: Omit<Message, "timestamp"> & { timestamp: string }) => ({
       ...m,
       timestamp: new Date(m.timestamp),
     })),
@@ -113,6 +119,25 @@ const saveChatSessions = (tableId: string, sessions: ChatSession[]) => {
     console.error('Failed to save chat sessions:', e)
   }
 }
+
+const fromStoredSession = (session: StoredChatSession): ChatSession => ({
+  id: session.sessionId,
+  title: session.title,
+  tableId: session.tableId,
+  createdAt: new Date(session.createdAt),
+  updatedAt: new Date(session.updatedAt),
+  messages: session.messages.map((message) => ({
+    ...message,
+    timestamp: new Date(message.timestamp),
+  })),
+})
+
+const toStoredMessages = (messages: Message[]) => messages.map((message) => ({
+  ...message,
+  timestamp: message.timestamp instanceof Date
+    ? message.timestamp.getTime()
+    : new Date(message.timestamp).getTime(),
+}))
 
 // Generate title from first user message
 const generateTitle = (messages: Message[]): string => {
@@ -264,7 +289,15 @@ function ThinkingBox({
 }
 
 export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onApplyFormatting, onAddColumns, onGenerateTable, pendingChanges, onKeepChanges, onUndoChanges }: AIChatPanelProps) {
-  const { user } = useAuth()
+  const { user, loading: authLoading } = useAuth()
+  const tableId = tableContext?.tableId || 'default'
+
+  const storedChatSessions = useQuery(
+    api.chatSessions.listByTable,
+    user?.id && tableContext?.tableId ? { userId: user.id, tableId } : "skip"
+  )
+  const upsertChatSession = useMutation(api.chatSessions.upsert)
+  const removeChatSession = useMutation(api.chatSessions.remove)
 
   // Load user's saved contexts so the AI knows about the business/ICP
   const userContexts = useQuery(
@@ -287,12 +320,12 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     const parts = active.map(c => `### ${c.title}\n${c.content}`)
     return `The user has attached the following business contexts to this conversation:\n\n${parts.join("\n\n---\n\n")}`
   }
-  const welcomeMessage: Message = {
+  const welcomeMessage: Message = useMemo(() => ({
     id: "welcome",
     role: "assistant",
     content: "Hi! I'm your AI assistant for this workspace. I can help you with:\n\n- **Analyzing data** in your spreadsheet\n- **Generating formulas** and calculations\n- **Suggesting improvements** to your data\n- **Answering questions** about your content\n\nHow can I help you today?",
     timestamp: new Date(),
-  }
+  }), [])
 
   const [messages, setMessages] = useState<Message[]>([welcomeMessage])
   const [inputValue, setInputValue] = useState("")
@@ -308,12 +341,18 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([])
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
+  const chatSessionsRef = useRef<ChatSession[]>([])
+
+  useEffect(() => {
+    chatSessionsRef.current = chatSessions
+  }, [chatSessions])
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
-  const tableId = tableContext?.tableId || 'default'
+  const hydratedChatKeyRef = useRef<string | null>(null)
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Close context picker on outside click
   useEffect(() => {
@@ -327,41 +366,76 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     return () => document.removeEventListener("mousedown", handler)
   }, [showContextPicker])
 
-  // Load chat sessions on mount
+  const persistSession = useCallback(async (session: ChatSession) => {
+    if (!user?.id || !tableContext?.tableId) return
+
+    await upsertChatSession({
+      userId: user.id,
+      tableId,
+      sessionId: session.id,
+      title: session.title,
+      messages: toStoredMessages(session.messages),
+      createdAt: session.createdAt.getTime(),
+      updatedAt: session.updatedAt.getTime(),
+    })
+  }, [tableContext?.tableId, tableId, upsertChatSession, user?.id])
+
+  // Hydrate from Convex once per user/table. Existing browser history is imported
+  // only when the database has no conversations for this table.
   useEffect(() => {
-    const sessions = loadChatSessions(tableId)
-    setChatSessions(sessions)
-    
-    // If there are existing sessions, load the most recent one
-    if (sessions.length > 0) {
-      const mostRecent = sessions[0]
-      setCurrentSessionId(mostRecent.id)
-      setMessages(mostRecent.messages)
-    } else {
-      // Create a new session
-      const newSession: ChatSession = {
-        id: Date.now().toString(),
-        title: 'New Chat',
-        messages: [welcomeMessage],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        tableId,
+    const hydrationKey = `${user?.id || 'anonymous'}:${tableId}`
+    if (hydratedChatKeyRef.current === hydrationKey || authLoading) return
+    if (user?.id && tableContext?.tableId && storedChatSessions === undefined) return
+
+    const remoteSessions = (storedChatSessions || []).map((session) =>
+      fromStoredSession(session as StoredChatSession)
+    )
+    const localSessions = loadChatSessions(tableId)
+    const migrationKey = `gridmind-chat-history-migrated-${user?.id || 'anonymous'}-${tableId}`
+    const canImportLocal = typeof window !== 'undefined' && !localStorage.getItem(migrationKey)
+    const sessions = remoteSessions.length > 0
+      ? remoteSessions
+      : canImportLocal && localSessions.length > 0
+        ? localSessions
+        : []
+
+    const initialSessions = sessions.length > 0 ? sessions : [{
+      id: Date.now().toString(),
+      title: 'New Chat',
+      messages: [welcomeMessage],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      tableId,
+    }]
+
+    hydratedChatKeyRef.current = hydrationKey
+    setChatSessions(initialSessions)
+    setCurrentSessionId(initialSessions[0].id)
+    setMessages(initialSessions[0].messages)
+    saveChatSessions(tableId, initialSessions)
+
+    if (user?.id && tableContext?.tableId) {
+      if (remoteSessions.length === 0) {
+        void Promise.all(initialSessions.map((session) => persistSession(session)))
+          .then(() => localStorage.setItem(migrationKey, '1'))
+          .catch((error) => console.error('Failed to import chat history:', error))
+      } else {
+        localStorage.setItem(migrationKey, '1')
       }
-      setCurrentSessionId(newSession.id)
-      setChatSessions([newSession])
-      saveChatSessions(tableId, [newSession])
     }
-  }, [tableId])
+  }, [authLoading, persistSession, storedChatSessions, tableContext?.tableId, tableId, user?.id, welcomeMessage])
 
   // Save current session when messages change
   useEffect(() => {
     if (!currentSessionId || messages.length === 0) return
+    const hydrationKey = `${user?.id || 'anonymous'}:${tableId}`
+    if (hydratedChatKeyRef.current !== hydrationKey) return
     
     // Don't save if only welcome message and no user messages
     const hasUserMessage = messages.some(m => m.role === 'user')
     if (!hasUserMessage && messages.length === 1 && messages[0].id.startsWith('welcome')) return
 
-    const updatedSessions = chatSessions.map(session => {
+    const updatedSessions = chatSessionsRef.current.map(session => {
       if (session.id === currentSessionId) {
         return {
           ...session,
@@ -375,7 +449,28 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     
     setChatSessions(updatedSessions)
     saveChatSessions(tableId, updatedSessions)
-  }, [messages, currentSessionId, tableId])
+
+    const updatedSession = updatedSessions.find((session) => session.id === currentSessionId)
+    if (!updatedSession || !user?.id) return
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    const isStreaming = updatedSession.messages.some((message) => message.isStreaming)
+    if (isStreaming) {
+      saveTimerRef.current = setTimeout(() => {
+        void persistSession(updatedSession).catch((error) =>
+          console.error('Failed to save chat session:', error)
+        )
+      }, 500)
+    } else {
+      void persistSession(updatedSession).catch((error) =>
+        console.error('Failed to save chat session:', error)
+      )
+    }
+  }, [messages, currentSessionId, persistSession, tableId, user?.id])
+
+  useEffect(() => () => {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+  }, [])
 
   // Create a new chat session
   const createNewChat = () => {
@@ -395,6 +490,9 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     setMessages(newSession.messages)
     setInputValue("")
     setShowHistory(false)
+    void persistSession(newSession).catch((error) =>
+      console.error('Failed to save chat session:', error)
+    )
   }
 
   // Switch to a different chat session
@@ -413,6 +511,13 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
     const updatedSessions = chatSessions.filter(s => s.id !== sessionId)
     setChatSessions(updatedSessions)
     saveChatSessions(tableId, updatedSessions)
+    if (user?.id && tableContext?.tableId) {
+      void removeChatSession({
+        userId: user.id,
+        tableId,
+        sessionId,
+      }).catch((error) => console.error('Failed to delete chat session:', error))
+    }
     
     // If we deleted the current session, switch to another or create new
     if (sessionId === currentSessionId) {
@@ -420,7 +525,22 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
         setCurrentSessionId(updatedSessions[0].id)
         setMessages(updatedSessions[0].messages)
       } else {
-        createNewChat()
+        const now = new Date()
+        const newSession: ChatSession = {
+          id: now.getTime().toString(),
+          title: 'New Chat',
+          messages: [{ ...welcomeMessage, id: 'welcome-' + now.getTime(), timestamp: now }],
+          createdAt: now,
+          updatedAt: now,
+          tableId,
+        }
+        setChatSessions([newSession])
+        setCurrentSessionId(newSession.id)
+        setMessages(newSession.messages)
+        saveChatSessions(tableId, [newSession])
+        void persistSession(newSession).catch((error) =>
+          console.error('Failed to save chat session:', error)
+        )
       }
     }
   }
@@ -994,7 +1114,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
                       : m
                   ))
                 }
-              } catch (e) {
+              } catch {
                 // Non-JSON data, append as is
                 fullContent += data
                 setMessages(prev => prev.map(m => 
@@ -1028,13 +1148,6 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
       ))
     } finally {
       setIsLoading(false)
-    }
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage()
     }
   }
 
@@ -1473,7 +1586,7 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
           {/* Text input */}
           <div className="p-3 pb-2">
             <textarea
-              ref={inputRef as any}
+              ref={inputRef}
               placeholder="Describe what to build"
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}

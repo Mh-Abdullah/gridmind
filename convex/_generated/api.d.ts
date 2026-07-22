@@ -9,6 +9,7 @@
  */
 
 import type * as billing from "../billing.js";
+import type * as chatSessions from "../chatSessions.js";
 import type * as contexts from "../contexts.js";
 import type * as spreadsheets from "../spreadsheets.js";
 import type * as users from "../users.js";
@@ -21,6 +22,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   billing: typeof billing;
+  chatSessions: typeof chatSessions;
   contexts: typeof contexts;
   spreadsheets: typeof spreadsheets;
   users: typeof users;

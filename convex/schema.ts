@@ -122,6 +122,29 @@ export default defineSchema({
   })
     .index("by_userId", ["userId"]),
 
+  // AI chat conversations, synced across browsers and devices.
+  chatSessions: defineTable({
+    userId: v.string(),
+    tableId: v.string(),
+    sessionId: v.string(),
+    title: v.string(),
+    messages: v.array(v.object({
+      id: v.string(),
+      role: v.union(v.literal("user"), v.literal("assistant"), v.literal("system")),
+      content: v.string(),
+      timestamp: v.number(),
+      isStreaming: v.optional(v.boolean()),
+      thinkingSteps: v.optional(v.array(v.string())),
+      activeStep: v.optional(v.string()),
+      isThinkingDone: v.optional(v.boolean()),
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_user_table", ["userId", "tableId"])
+    .index("by_user_table_session", ["userId", "tableId", "sessionId"]),
+
   billingPackages: defineTable({
     name: v.string(),
     slug: v.string(),

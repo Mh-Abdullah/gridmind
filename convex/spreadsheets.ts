@@ -127,6 +127,9 @@ export const getSpreadsheetsByUser = query({
 export const deleteSpreadsheet = mutation({
   args: { spreadsheetId: v.id("spreadsheets") },
   handler: async (ctx, args) => {
+    const spreadsheet = await ctx.db.get(args.spreadsheetId);
+    if (!spreadsheet) return;
+
     // Delete all cells
     const cells = await ctx.db
       .query("cells")
@@ -178,6 +181,16 @@ export const deleteSpreadsheet = mutation({
       .collect();
     for (const fieldType of fieldTypes) {
       await ctx.db.delete(fieldType._id);
+    }
+
+    const chatSessions = await ctx.db
+      .query("chatSessions")
+      .withIndex("by_user_table", (q) =>
+        q.eq("userId", spreadsheet.userId).eq("tableId", spreadsheet.tableId)
+      )
+      .collect();
+    for (const session of chatSessions) {
+      await ctx.db.delete(session._id);
     }
 
     // Delete the spreadsheet itself
