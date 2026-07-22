@@ -88,9 +88,18 @@ function HorizontalBarChart({
   }
 
   const max = Math.max(...rows.map((row) => row.value), 1)
+  const hasOverflow = rows.length > 4
 
   return (
-    <div className="space-y-4">
+    <div
+      aria-label={hasOverflow ? "Spend by action list" : undefined}
+      tabIndex={hasOverflow ? 0 : undefined}
+      className={cn(
+        "space-y-4",
+        hasOverflow &&
+          "max-h-[29rem] overflow-y-auto overscroll-contain pr-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+      )}
+    >
       {rows.map((row) => (
         <article key={`${row.label}-${row.sublabel ?? ""}`} className="rounded-[22px] border border-border/65 bg-background/70 p-4">
           <div className="flex items-start justify-between gap-3">

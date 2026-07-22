@@ -133,14 +133,14 @@ export default function GoogleSearchModal({ onClose }: Props) {
     }
   }, [query])
 
-  const handleCreate = useCallback(async (withData: boolean) => {
+  const handleCreate = useCallback(async () => {
     if (!user?.id) return
     setIsCreating(true)
     let billingTransactionId: string | null = null
     try {
       const name = query.trim() || "Google Search"
       const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      const rows = withData ? results : []
+      const rows = results
 
       if (rows.length > 0) {
         const billing = await consumeCredits({
@@ -384,16 +384,8 @@ export default function GoogleSearchModal({ onClose }: Props) {
                   )}
                 </Button>
                 <Button
-                  variant="outline"
-                  className="h-auto min-h-11 whitespace-normal px-3 py-2 text-xs sm:min-h-9 sm:px-4"
-                  onClick={() => handleCreate(false)}
-                  disabled={isCreating || isSearching}
-                >
-                  {isCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create Project"}
-                </Button>
-                <Button
-                  className="col-span-2 h-auto min-h-11 gap-1 whitespace-normal px-3 py-2 text-xs sm:min-h-9 sm:px-4"
-                  onClick={() => handleCreate(true)}
+                  className="h-auto min-h-11 gap-1 whitespace-normal px-3 py-2 text-xs sm:min-h-9 sm:px-4"
+                  onClick={handleCreate}
                   disabled={isCreating || isSearching || results.length === 0}
                 >
                   {isCreating ? (

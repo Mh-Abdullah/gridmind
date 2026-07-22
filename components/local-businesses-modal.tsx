@@ -8,7 +8,7 @@ import { useAuth } from "@/lib/auth-context"
 import { useMutation } from "convex/react"
 import { api } from "@/convex/_generated/api"
 import { useRouter } from "next/navigation"
-import { X, Loader2, MapPin, Search, ExternalLink, Zap } from "lucide-react"
+import { X, Loader2, MapPin, Search, ExternalLink } from "lucide-react"
 import type { BusinessMarker, MapBounds } from "./local-businesses-map"
 
 // Dynamically import map (Leaflet is client-only)
@@ -87,9 +87,6 @@ export default function LocalBusinessesModal({ onClose }: Props) {
   const [searchText, setSearchText] = useState("")
   const [maxResults, setMaxResults] = useState(10)
 
-  const [scrapeWebsite, setScrapeWebsite] = useState(true)
-  const [extractEmail, setExtractEmail] = useState(true)
-
   const [isSearching, setIsSearching] = useState(false)
   const [searchError, setSearchError] = useState("")
   const [businesses, setBusinesses] = useState<Business[]>([])
@@ -156,7 +153,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
     }
   }, [center, radiusKm, mapBounds, businessType, searchText, searchMode, maxResults])
 
-  const handleCreate = useCallback(async (withData: boolean) => {
+  const handleCreate = useCallback(async () => {
     if (!user?.id) return
     setIsCreating(true)
     let billingTransactionId: string | null = null
@@ -166,7 +163,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
         : searchText || "Businesses"
       const name = `${typeLabel} — ${locationInput || "Local"}`
       const tableId = `table-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-      const rows = withData ? businesses : []
+      const rows = businesses
 
       if (rows.length > 0) {
         const billing = await consumeCredits({
@@ -185,8 +182,6 @@ export default function LocalBusinessesModal({ onClose }: Props) {
 
       const columns = [
         "Name", "Address", "Phone", "Website", "Category", "Opening Hours",
-        ...(scrapeWebsite ? ["Website Content"] : []),
-        ...(extractEmail ? ["Email"] : []),
         "Location",
       ]
       const cells: { cellKey: string; value: string }[] = []
@@ -197,8 +192,6 @@ export default function LocalBusinessesModal({ onClose }: Props) {
       rows.forEach((b, ri) => {
         const vals: string[] = [
           b.name, b.address, b.phone, b.website, b.category, b.openingHours,
-          ...(scrapeWebsite ? [""] : []),
-          ...(extractEmail ? [""] : []),
           b.lat !== null && b.lng !== null
             ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${b.lat},${b.lng}`)}`
             : "",
@@ -224,7 +217,7 @@ export default function LocalBusinessesModal({ onClose }: Props) {
       console.error("Failed to create table:", err)
       setIsCreating(false)
     }
-  }, [user, businesses, businessType, searchText, searchMode, locationInput, scrapeWebsite, extractEmail, consumeCredits, createSpreadsheet, updateColumnNames, batchUpdateCells, updateMetadata, router, refundCreditTransaction])
+  }, [user, businesses, businessType, searchText, searchMode, locationInput, consumeCredits, createSpreadsheet, updateColumnNames, batchUpdateCells, updateMetadata, router, refundCreditTransaction])
 
   const businessMarkers: BusinessMarker[] = businesses.map((b) => ({
     name: b.name,
@@ -287,7 +280,6 @@ export default function LocalBusinessesModal({ onClose }: Props) {
           {/* Map */}
           <LocalBusinessesMap
             center={center}
-            radiusKm={radiusKm}
             businesses={businessMarkers}
             onMapClick={(lat, lng) => setCenter([lat, lng])}
             onBoundsChange={setMapBounds}
@@ -407,33 +399,6 @@ export default function LocalBusinessesModal({ onClose }: Props) {
               />
             </div>
 
-            {/* Enrichments */}
-            <div>
-              <div className="flex items-center gap-1.5 mb-2">
-                <Zap className="h-3.5 w-3.5 text-primary" />
-                <span className="text-xs font-semibold text-foreground">Add Enrichments</span>
-              </div>
-              <div className="space-y-2">
-                {[
-                  { id: "scrape", label: "Scrape website content", value: scrapeWebsite, set: setScrapeWebsite },
-                  { id: "email", label: "Extract email address from the website content", value: extractEmail, set: setExtractEmail },
-                ].map((item) => (
-                  <label
-                    key={item.id}
-                    className="flex items-start gap-2.5 rounded-lg border border-border px-3 py-2.5 cursor-pointer hover:bg-muted/30 transition-colors"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={item.value}
-                      onChange={(e) => item.set(e.target.checked)}
-                      className="h-3.5 w-3.5 mt-0.5 accent-primary cursor-pointer shrink-0"
-                    />
-                    <span className="text-xs text-foreground leading-snug">{item.label}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
             {/* Results preview */}
             {businesses.length > 0 && (
               <div className="rounded-lg border border-border bg-muted/20 p-3">
@@ -482,18 +447,10 @@ export default function LocalBusinessesModal({ onClose }: Props) {
               <span>Estimated Cost: free</span>
               <span>{businesses.length > 0 ? `${businesses.length} results` : ""}</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div>
               <Button
-                variant="secondary"
-                className="h-auto min-h-11 whitespace-normal py-2 text-xs"
-                onClick={() => handleCreate(false)}
-                disabled={isCreating}
-              >
-                {isCreating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Create Project"}
-              </Button>
-              <Button
-                className="h-auto min-h-11 gap-1 whitespace-normal py-2 text-xs"
-                onClick={() => handleCreate(true)}
+                className="h-auto min-h-11 w-full gap-1 whitespace-normal py-2 text-xs"
+                onClick={handleCreate}
                 disabled={isCreating || businesses.length === 0}
               >
                 {isCreating ? (

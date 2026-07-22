@@ -1,14 +1,15 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react"
+import { createLeafletContext, LeafletContext, type LeafletContextInterface } from "@react-leaflet/core"
 import {
-  MapContainer,
   TileLayer,
   Marker,
   Popup,
   useMap,
   useMapEvents,
 } from "react-leaflet"
+import { Map as LeafletMap, type MapOptions } from "leaflet"
 import type L from "leaflet"
 // leaflet.css is imported by the parent modal component
 
@@ -31,10 +32,62 @@ export interface MapBounds {
 
 interface Props {
   center: [number, number]
-  radiusKm: number
   businesses?: BusinessMarker[]
   onMapClick?: (lat: number, lng: number) => void
   onBoundsChange?: (bounds: MapBounds) => void
+}
+
+interface StableMapContainerProps extends MapOptions {
+  children: ReactNode
+  className?: string
+  style?: CSSProperties
+}
+
+// React 19 replays effects in development. React-Leaflet's MapContainer can
+// remove its Leaflet instance during that replay, before its child layers mount.
+function StableMapContainer({
+  center,
+  zoom,
+  children,
+  className,
+  style,
+  ...options
+}: StableMapContainerProps) {
+  const mapInstanceRef = useRef<LeafletMap | null>(null)
+  const [context, setContext] = useState<LeafletContextInterface | null>(null)
+
+  const mapRef = useCallback((node: HTMLDivElement | null) => {
+    if (!node || mapInstanceRef.current) return
+
+    const map = new LeafletMap(node, options)
+    mapInstanceRef.current = map
+    if (center != null && zoom != null) map.setView(center, zoom)
+    setContext(createLeafletContext(map))
+  // Map creation options are intentionally immutable after the first mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      const map = mapInstanceRef.current
+      if (!map) return
+
+      // Strict-mode effect replay leaves the container connected. A real
+      // unmount disconnects it, at which point Leaflet can be safely removed.
+      queueMicrotask(() => {
+        if (mapInstanceRef.current === map && !map.getContainer().isConnected) {
+          map.remove()
+          mapInstanceRef.current = null
+        }
+      })
+    }
+  }, [])
+
+  return (
+    <div ref={mapRef} className={className} style={style}>
+      {context ? <LeafletContext value={context}>{children}</LeafletContext> : null}
+    </div>
+  )
 }
 
 // Syncs map view to center prop changes
@@ -73,12 +126,16 @@ function ClickHandler({ onClick }: { onClick?: (lat: number, lng: number) => voi
   return null
 }
 
-export default function LocalBusinessesMap({ center, radiusKm, businesses = [], onMapClick, onBoundsChange }: Props) {
+export default function LocalBusinessesMap({ center, businesses = [], onMapClick, onBoundsChange }: Props) {
   const [icons, setIcons] = useState<{ default: InstanceType<typeof L.Icon>; result: InstanceType<typeof L.Icon> } | null>(null)
 
   // Initialize Leaflet icons client-side only — avoids Turbopack running Leaflet before the DOM exists
   useEffect(() => {
+    let active = true
+
     import("leaflet").then((L) => {
+      if (!active) return
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       delete (L.Icon.Default.prototype as any)._getIconUrl
       L.Icon.Default.mergeOptions({
@@ -102,13 +159,17 @@ export default function LocalBusinessesMap({ center, radiusKm, businesses = [], 
 
       setIcons({ default: defaultIcon, result: resultIcon })
     })
+
+    return () => {
+      active = false
+    }
   }, [])
 
   // Don't render the map until icons are ready (prevents the appendChild TypeError)
   if (!icons) return null
 
   return (
-    <MapContainer
+    <StableMapContainer
       center={center}
       zoom={13}
       className="h-full w-full"
@@ -137,6 +198,6 @@ export default function LocalBusinessesMap({ center, radiusKm, businesses = [], 
             </Popup>
           </Marker>
         ))}
-    </MapContainer>
+    </StableMapContainer>
   )
 }
