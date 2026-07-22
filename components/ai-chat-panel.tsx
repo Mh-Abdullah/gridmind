@@ -1605,7 +1605,6 @@ export function AIChatPanel({ isOpen, onClose, tableContext, onApplyChanges, onA
               </div>
               
               {/* Model indicator */}
-              <span className="text-xs text-muted-foreground">GPT-4o</span>
             </div>
             
             <div className="flex items-center gap-1">

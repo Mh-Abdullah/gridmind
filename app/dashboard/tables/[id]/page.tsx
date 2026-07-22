@@ -1201,6 +1201,7 @@ export default function TableEditorPage() {
 
   type AgentColumnResult = {
     changes?: { row: number; col: number; value: string }[]
+    updates?: { [key: string]: string }
     formatting?: unknown[]
     summary?: string
     newNumRows?: number
@@ -1279,11 +1280,30 @@ export default function TableEditorPage() {
           if (v) cells[`${r}-${c}`] = v
         }
       }
-      const agentPrompt = `Add a new column at column index ${numCols} (column ${getColumnLabel(numCols)}). For each row 0 to ${numRows - 1}, generate a value based on this instruction: "${newColAIPrompt}". Use existing column values as context. Return cell changes for every row in the new column.`
-      const res = await fetch("/api/ai/agent", {
+      const normalizedPrompt = newColAIPrompt.trim().toLowerCase()
+      const existingColumns = Array.from({ length: numCols }, (_, index) => ({
+        index,
+        name: (colNames[index] ?? getColumnLabel(index)).toLowerCase(),
+      }))
+      const preferredSourceCol = /email/.test(normalizedPrompt)
+        ? existingColumns.find(column => /website|domain|url/.test(column.name))?.index
+          ?? existingColumns.find(column => /name|company|business/.test(column.name))?.index
+          ?? 0
+        : existingColumns.find(column => /name|company|business/.test(column.name))?.index ?? 0
+
+      const res = await fetch("/api/ai/run-column", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: agentPrompt, cells, numRows, numCols }),
+        body: JSON.stringify({
+          colIdx: numCols,
+          colType: "AI Agent",
+          prompt: newColAIPrompt,
+          sourceCol: preferredSourceCol,
+          cells,
+          headers: Array.from({ length: numCols }, (_, index) => colNames[index] ?? getColumnLabel(index)),
+          numRows,
+          numCols,
+        }),
         signal: controller.signal,
       })
       const agentResponse = await readAgentSSE(res, (message) => {
@@ -1302,11 +1322,24 @@ export default function TableEditorPage() {
         throw new Error(fallbackMessage)
       }
       const result = agentResponse.data
-      if (!result?.changes?.length) throw new Error("The AI returned no column values. Try a more specific instruction.")
-      if (result?.changes?.length) {
-        const changes = result.changes
+      const changes = result?.updates
+        ? Object.entries(result.updates).map(([key, value]) => {
+            const [row, col] = key.split("-").map(Number)
+            return { row, col, value }
+          })
+        : result?.changes ?? []
+      if (!changes.length) throw new Error("The AI returned no column values. Try a more specific instruction.")
+      if (changes.length) {
         // Derive column name from prompt (first 4 words)
-        const autoName = newColAIPrompt.trim().split(/\s+/).slice(0, 4).join(" ")
+        const autoName = /email/.test(normalizedPrompt)
+          ? "Email"
+          : /phone|telephone|mobile/.test(normalizedPrompt)
+            ? "Phone"
+            : /opening hours|business hours|hours/.test(normalizedPrompt)
+              ? "Opening Hours"
+              : /website|url|homepage/.test(normalizedPrompt)
+                ? "Website"
+                : newColAIPrompt.trim().split(/\s+/).slice(0, 4).join(" ")
         const colName = newColName.trim() || autoName
         setColNames(prev => ({ ...prev, [numCols]: colName }))
         setColColumnType(prev => ({ ...prev, [numCols]: "AI Agent" }))
@@ -1353,11 +1386,11 @@ export default function TableEditorPage() {
     const cellsSnapshot: { [key: string]: string } = {}
     for (let r = 0; r < numRows; r++) for (let c = 0; c < numCols; c++) { const v = getCellValue(r, c); if (v) cellsSnapshot[`${r}-${c}`] = v }
 
-    // If cells are selected, scope to those rows only (exclude header row 0)
+    // If cells are selected, scope to those zero-based data rows only.
     const selectedRowSet = new Set<number>()
     for (const key of selectedCells) {
       const row = parseInt(key.split("-")[0], 10)
-      if (row > 0) selectedRowSet.add(row)
+      if (row >= 0) selectedRowSet.add(row)
     }
     const selectedRows = selectedRowSet.size > 0 ? Array.from(selectedRowSet).sort((a, b) => a - b) : undefined
 
@@ -1365,17 +1398,31 @@ export default function TableEditorPage() {
       const res = await fetch("/api/ai/run-column", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ colIdx, colType, prompt, sourceCol, regex, cells: cellsSnapshot, numRows, numCols, selectedRows }),
+        body: JSON.stringify({
+          colIdx,
+          colType,
+          prompt,
+          sourceCol,
+          regex,
+          cells: cellsSnapshot,
+          headers: Array.from({ length: numCols }, (_, index) => colNames[index] ?? getColumnLabel(index)),
+          numRows,
+          numCols,
+          selectedRows,
+        }),
       })
       if (!res.ok) return
       const reader = res.body?.getReader()
       if (!reader) return
       const dec = new TextDecoder()
+      let buffer = ""
       try {
         while (true) {
           const { done, value } = await reader.read()
-          if (done) break
-          for (const line of dec.decode(value).split('\n')) {
+          buffer += dec.decode(value, { stream: !done })
+          const lines = buffer.split('\n')
+          buffer = done ? "" : lines.pop() || ""
+          for (const line of lines) {
             if (!line.startsWith('data: ')) continue
             const raw = line.slice(6).trim()
             if (raw === '[DONE]') break
@@ -1390,6 +1437,7 @@ export default function TableEditorPage() {
               }
             } catch { /* skip malformed */ }
           }
+          if (done) break
         }
       } finally { reader.releaseLock() }
     } catch (e) { console.error("runColumn failed", e) }

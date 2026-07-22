@@ -1,5 +1,5 @@
 ﻿import { NextRequest } from "next/server"
-import { Output, ToolLoopAgent, tool, stepCountIs } from "ai"
+import { Output, ToolLoopAgent, generateText, tool, stepCountIs } from "ai"
 import { openai } from "@ai-sdk/openai"
 import { z } from "zod"
 
@@ -769,15 +769,16 @@ const searchGoogleSerper = tool({
   inputSchema: z.object({
     query: z.string().describe("The search query"),
     num: z.number().optional().describe("Number of results (default 5)"),
+    page: z.number().optional().describe("Result page, starting at 1"),
   }),
-  execute: async ({ query, num = 5 }) => {
+  execute: async ({ query, num = 5, page = 1 }) => {
     const apiKey = process.env.SERPER_API_KEY
     if (!apiKey) return { error: "SERPER_API_KEY not configured — skipping Google Serper", results: [], success: false }
     try {
       const res = await fetch("https://google.serper.dev/search", {
         method: "POST",
         headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ q: query, num }),
+        body: JSON.stringify({ q: query, num, page: Math.max(1, page) }),
         signal: AbortSignal.timeout(10000),
       })
       if (!res.ok) return { error: `Serper HTTP ${res.status}`, results: [], success: false }
@@ -789,6 +790,7 @@ const searchGoogleSerper = tool({
       const results = (data.organic || []).map(r => ({ title: r.title, url: r.link, snippet: r.snippet || "" }))
       return {
         query,
+        page,
         results,
         answerBox: data.answerBox?.answer || data.answerBox?.snippet || null,
         knowledgeGraph: data.knowledgeGraph || null,
@@ -1345,6 +1347,9 @@ function extractRequestedCount(prompt: string): number {
 
 function inferPlaceType(prompt: string): string | null {
   const lower = prompt.toLowerCase()
+  if (/\b(?:resturent|resturents|restuarant|restuarants|restraunt|restraunts)\b/.test(lower)) {
+    return "restaurant"
+  }
   if (/\bcar\s+(?:showrooms?|dealers?|dealerships?)\b/.test(lower)) {
     return "car dealership"
   }
@@ -1374,9 +1379,63 @@ function inferPlaceType(prompt: string): string | null {
   return types.find((type) => lower.includes(type)) || null
 }
 
+function inferPersonType(prompt: string): string | null {
+  const lower = prompt.toLowerCase()
+  const types: Array<[RegExp, string]> = [
+    [/\bactors?\b/, "actor"],
+    [/\bactresses?\b/, "actress"],
+    [/\bcelebrit(?:y|ies)\b/, "celebrity"],
+    [/\binfluencers?\b/, "influencer"],
+    [/\bmusicians?\b|\bsingers?\b/, "musician"],
+    [/\bmodels?\b/, "model"],
+    [/\bathletes?\b|\bsportspeople\b/, "athlete"],
+    [/\bjournalists?\b/, "journalist"],
+    [/\bpoliticians?\b/, "politician"],
+  ]
+  return types.find(([pattern]) => pattern.test(lower))?.[1] || null
+}
+
+function isCompanyListPrompt(prompt: string): boolean {
+  return /\b(?:compan(?:y|ies)|businesses|brands|manufacturers|suppliers|vendors|agencies|startups|firms)\b/i.test(prompt)
+}
+
+function inferCountry(prompt: string): { code: string; name: string; isUK: boolean } | null {
+  const countries: Array<[RegExp, string, string, boolean]> = [
+    [/\b(?:uk|u\.?k\.?|united kingdom|britain|british)\b/i, "gb", "United Kingdom", true],
+    [/\b(?:usa|u\.?s\.?a?\.?|united states|american)\b/i, "us", "United States", false],
+    [/\b(?:uae|united arab emirates|emirati)\b/i, "ae", "United Arab Emirates", false],
+    [/\b(?:pakistan|pakistani)\b/i, "pk", "Pakistan", false],
+    [/\b(?:india|indian)\b/i, "in", "India", false],
+    [/\b(?:germany|german)\b/i, "de", "Germany", false],
+    [/\b(?:france|french)\b/i, "fr", "France", false],
+    [/\b(?:canada|canadian)\b/i, "ca", "Canada", false],
+    [/\b(?:australia|australian)\b/i, "au", "Australia", false],
+    [/\b(?:saudi arabia|saudi)\b/i, "sa", "Saudi Arabia", false],
+    [/\b(?:singapore|singaporean)\b/i, "sg", "Singapore", false],
+    [/\b(?:netherlands|dutch)\b/i, "nl", "Netherlands", false],
+  ]
+  const match = countries.find(([pattern]) => pattern.test(prompt))
+  return match ? { code: match[1], name: match[2], isUK: match[3] } : null
+}
+
+function inferCompanyKeyword(prompt: string): string {
+  const directMatch = prompt.match(/\b(?:sell(?:s|ing)?|manufactur(?:e|es|ing)|mak(?:e|es|ing)|produc(?:e|es|ing)|provid(?:e|es|ing)|offer(?:s|ing)?)\s+(.+?)(?=\s+(?:in|across|within|based|located)\b|[,.]|$)/i)
+  if (directMatch?.[1]) return directMatch[1].trim()
+
+  const industryMatch = prompt.match(/\b(?:companies|businesses|firms|brands)\s+(?:of|for|in the)\s+([a-z][a-z\s&-]{1,60}?)(?=\s+(?:in|based|located|with|that)\b|[,.]|$)/i)
+  if (industryMatch?.[1]) return industryMatch[1].trim()
+
+  return prompt
+    .toLowerCase()
+    .replace(/\b\d{1,3}\b/g, " ")
+    .replace(/\b(?:find|list|get|give|show|me|uk|u k|united kingdom|britain|british|based?|companies|company|businesses|firms|brands|manufacturers|suppliers|vendors|that|which|who|of|in|from)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "company"
+}
+
 function inferLocation(prompt: string): string | null {
   const lower = prompt.toLowerCase()
-  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60}?)(?=\s+(?:that|who|which|want|need|looking|according to|based on|by|with|for|from|using|on)\b|[,.]|$)/i)
+  const inMatch = lower.match(/\b(?:in|at|near)\s+([a-z][a-z\s-]{1,60}?)(?=\s+(?:(?:i|we)\s+want|that|who|which|want|need|looking|according to|based on|by|with|for|from|using|on)\b|[,.]|$)/i)
   if (inMatch) {
     const location = inMatch[1]
       .replace(/\b(with|for|from)\b.*$/i, "")
@@ -1401,6 +1460,7 @@ const GENERATION_FIELD_MATCHERS: Array<{ header: string; pattern: RegExp }> = [
   { header: "Country", pattern: /\bcountr(?:y|ies)\b|\bjurisdiction(?:s)?/i },
   { header: "Status", pattern: /\bstatus(?:es)?\b/i },
   { header: "Rating", pattern: /\brating(?:s)?|\breviews?\b/i },
+  { header: "Instagram", pattern: /\binstagram(?:\s+(?:id|handle|profile))?|\binsta(?:gram)?\b/i },
 ]
 
 function getRequestedGenerationHeaders(prompt: string, rows?: Array<Record<string, string>>): string[] {
@@ -1451,9 +1511,13 @@ function needsStructuredFallback(result: { table: GeneratedTable } | null, promp
 }
 
 function isEntityListPrompt(prompt: string): boolean {
-  if (inferPlaceType(prompt)) return true
+  if (inferPlaceType(prompt) || inferPersonType(prompt)) return true
 
-  return /\b(?:find|list|identify|get|generate|create|build|research)\b[\s\S]{0,100}\b(?:leads?|companies|businesses|brands|people|contacts|suppliers|vendors|agencies|stores|shops|products|prospects|organizations|organisations)\b/i.test(prompt)
+  // A requested count following a list/find verb almost always means the rows
+  // should be the named items, never the pages that mention those items.
+  if (/\b(?:find|list|get|give(?:\s+me)?|show(?:\s+me)?|identify)\b[\s\S]{0,35}\b\d{1,3}\b/i.test(prompt)) return true
+
+  return /\b(?:find|list|identify|get|give(?:\s+me)?|show(?:\s+me)?|generate|create|build|research)\b[\s\S]{0,120}\b(?:leads?|companies|businesses|brands|people|persons?|professionals?|contacts|suppliers|vendors|agencies|stores|shops|products|prospects|organizations|organisations|restaurants?|resturents?|hotels?|actors?|actresses?|celebrities|influencers?)\b/i.test(prompt)
 }
 
 async function runOpenStreetMapFallback(placeType: string, location: string, maxResults: number) {
@@ -1657,18 +1721,324 @@ async function trySimpleWebSearchLastRetry(
   }
 }
 
+function parseInstagramProfile(result: FallbackSearchResult): { name: string; instagram: string } | null {
+  let parsedUrl: URL
+  try { parsedUrl = new URL(result.url) } catch { return null }
+  if (!/(^|\.)instagram\.com$/i.test(parsedUrl.hostname)) return null
+
+  const handle = parsedUrl.pathname.split("/").filter(Boolean)[0]?.replace(/^@/, "")
+  if (!handle || /^(?:p|reel|reels|stories|explore|popular|accounts|direct|about|developer|legal)$/i.test(handle)) return null
+  if (!/^[a-z0-9._]{2,30}$/i.test(handle)) return null
+
+  const name = result.title
+    .replace(/\s*\(@?[a-z0-9._]+\).*$/i, "")
+    .replace(/\s*\(@[a-z0-9._]+\)/i, "")
+    .replace(/\s*[•|\-]\s*Instagram.*$/i, "")
+    .replace(/\s*Instagram.*$/i, "")
+    .replace(/\s+[^\u0000-\u007F].*$/, "")
+    .trim()
+
+  if (/\b(?:celebrities|celebs|actors?|actresses?|stars|fan|fans|dramas?|reels|trends|updates|directory|popular)\b/i.test(name)) return null
+  if (/(?:fanpage|fan_page|fans|updates|directory)/i.test(handle)) return null
+  if (name.toLowerCase().replace(/[^a-z0-9]+/g, "") === handle.toLowerCase().replace(/[^a-z0-9]+/g, "")) return null
+
+  return { name: name && name.length <= 100 ? name : handle, instagram: `@${handle}` }
+}
+
+async function tryDirectPeopleFallback(
+  prompt: string,
+  personType: string,
+  location: string,
+  send: (obj: object) => void
+): Promise<{ table: GeneratedTable; summary: string } | null> {
+  const requestedCount = extractRequestedCount(prompt)
+  const serperTool = searchGoogleSerper as unknown as {
+    execute: (input: { query: string; num?: number; page?: number }) => Promise<{ results?: FallbackSearchResult[] }>
+  }
+  const locationTerm = location || prompt.match(/\b(Pakistan|Pakistani|India|Indian|UK|USA|UAE|Canada|Australia)\b/i)?.[0] || ""
+  const queries = [
+    `${locationTerm} ${personType}s Instagram profiles`,
+    `famous ${locationTerm} ${personType}s Instagram handles`,
+    `top ${locationTerm} ${personType}s on Instagram`,
+    `${locationTerm} ${personType === "actor" ? "actresses" : personType + "s"} Instagram profiles`,
+  ]
+
+  send({ type: "thinking", content: `Finding individual ${personType} profiles${locationTerm ? ` for ${locationTerm}` : ""}` })
+
+  const responses = await Promise.all(queries.map((query) => serperTool.execute({ query, num: 20, page: 1 })))
+  const profiles = new Map<string, { name: string; instagram: string }>()
+  for (const response of responses) {
+    for (const result of response.results || []) {
+      const profile = parseInstagramProfile(result)
+      if (!profile) continue
+      profiles.set(profile.instagram.toLowerCase(), profile)
+      if (profiles.size >= requestedCount) break
+    }
+    if (profiles.size >= requestedCount) break
+  }
+
+  // Search may expose only a few profiles directly. Extract a verified list of
+  // names from relevant source pages, then resolve each name to its own profile.
+  if (profiles.size < requestedCount) {
+    const sourceResults = await runHighQualityFallbackSearch(
+      `top ${requestedCount} ${locationTerm} ${personType}s names list`,
+      10
+    )
+    const scrapeTool = scrapeWebPage as unknown as {
+      execute: (input: { url: string; extractionHint?: string }) => Promise<{ content?: string | null; success?: boolean }>
+    }
+    const sourcePages = await Promise.all(
+      sourceResults
+        .filter((result) => !/(?:instagram|facebook|tiktok|youtube)\.com/i.test(result.url))
+        .slice(0, 5)
+        .map(async (result) => {
+          const scraped = await scrapeTool.execute({
+            url: result.url,
+            extractionHint: `Extract names of ${locationTerm} ${personType}s`,
+          })
+          return `[${result.title}] ${result.snippet}\n${scraped.content || ""}`
+        })
+    )
+    const evidence = sourcePages.join("\n\n").slice(0, 30000)
+
+    if (evidence.trim()) {
+      try {
+        const { text } = await generateText({
+          model: openai("gpt-4o-mini"),
+          system: "Extract person names only from the supplied source text. Never invent a name.",
+          prompt: `Return JSON only: {"names":["Full Name"]}. Extract up to ${requestedCount * 2} distinct ${locationTerm} ${personType} names that appear literally in this source text. Exclude article authors, website names, generic labels, and social-media fan pages.\n\nSOURCE TEXT:\n${evidence}`,
+        })
+        const json = text.match(/\{[\s\S]*\}/)?.[0]
+        const parsed = json ? JSON.parse(json) as { names?: unknown[] } : null
+        const verifiedNames = (parsed?.names || [])
+          .filter((name): name is string => typeof name === "string" && name.trim().split(/\s+/).length >= 2)
+          .map((name) => name.trim())
+          .filter((name, index, all) => all.findIndex((item) => item.toLowerCase() === name.toLowerCase()) === index)
+          .filter((name) => evidence.toLowerCase().includes(name.toLowerCase()))
+          .slice(0, requestedCount)
+
+        const existingNames = new Set(Array.from(profiles.values()).map((profile) => profile.name.toLowerCase()))
+        const missingNames = verifiedNames.filter((name) => !existingNames.has(name.toLowerCase()))
+        const profileLookups = await Promise.all(
+          missingNames.map(async (name) => ({
+            name,
+            response: await serperTool.execute({ query: `${name} official Instagram`, num: 5, page: 1 }),
+          }))
+        )
+
+        for (const lookup of profileLookups) {
+          const nameTokens = lookup.name.toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length > 1)
+          const matchedProfile = (lookup.response.results || [])
+            .map(parseInstagramProfile)
+            .find((profile) => {
+              if (!profile) return false
+              const candidate = profile.name.toLowerCase()
+              const handle = profile.instagram.toLowerCase()
+              const titleMatches = nameTokens.length > 0 && nameTokens.filter((token) => candidate.includes(token)).length >= Math.min(2, nameTokens.length)
+              const handleMatches = nameTokens.some((token) => token.length >= 4 && handle.includes(token))
+              return titleMatches && handleMatches
+            })
+          const profile = matchedProfile
+            ? { name: lookup.name, instagram: matchedProfile.instagram }
+            : { name: lookup.name, instagram: "N/A" }
+          const key = profile.instagram === "N/A" ? `name:${lookup.name.toLowerCase()}` : profile.instagram.toLowerCase()
+          profiles.set(key, profile)
+          if (profiles.size >= requestedCount) break
+        }
+      } catch (error) {
+        console.warn("[Scraper] Could not extract people from source pages", error)
+      }
+    }
+  }
+
+  const rows = Array.from(profiles.values()).slice(0, requestedCount)
+  if (rows.length === 0) return null
+
+  const requestedHeaders = getRequestedGenerationHeaders(prompt)
+  const headers = requestedHeaders.includes("Instagram") ? requestedHeaders : ["Name", "Instagram"]
+  return {
+    table: {
+      headers,
+      rows: rows.map((profile) => headers.map((header) => (
+        header === "Name" ? profile.name : header === "Instagram" ? profile.instagram : "N/A"
+      ))),
+    },
+    summary: `Found ${rows.length} individual ${personType} profile${rows.length === 1 ? "" : "s"}; search-result articles were excluded.`,
+  }
+}
+
+async function tryDirectCompanyFallback(
+  prompt: string,
+  send: (obj: object) => void
+): Promise<{ table: GeneratedTable; summary: string } | null> {
+  const requestedCount = extractRequestedCount(prompt)
+  const keyword = inferCompanyKeyword(prompt)
+  const country = inferCountry(prompt)
+  const searchLimit = Math.min(Math.max(requestedCount * 3, 20), 100)
+
+  send({
+    type: "thinking",
+    content: `Searching verified ${country?.name || "company"} registry records for “${keyword}”`,
+  })
+
+  let records: Array<Record<string, string>> = []
+  if (country?.isUK) {
+    const companiesHouseTool = searchCompaniesHouse as unknown as {
+      execute: (input: { query: string; maxResults?: number }) => Promise<{ results?: Array<Record<string, string>> }>
+    }
+    const response = await companiesHouseTool.execute({ query: keyword, maxResults: searchLimit })
+    records = response.results || []
+  } else {
+    const openCorporatesTool = searchOpenCorporates as unknown as {
+      execute: (input: { query: string; countryCode?: string; maxResults?: number }) => Promise<{ results?: Array<Record<string, string>> }>
+    }
+    const response = await openCorporatesTool.execute({
+      query: keyword,
+      countryCode: country?.code,
+      maxResults: searchLimit,
+    })
+    records = response.results || []
+  }
+
+  const seen = new Set<string>()
+  const normalizedRows = records
+    .filter((record) => {
+      const name = record.name?.trim()
+      if (!name) return false
+      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .sort((a, b) => {
+      const active = (record: Record<string, string>) => /active|registered|live/i.test(record.status || "") ? 1 : 0
+      return active(b) - active(a)
+    })
+    .slice(0, requestedCount)
+    .map((record) => ({
+      Name: record.name || "N/A",
+      Address: record.address || "N/A",
+      Country: country?.name || record.country || "N/A",
+      Status: record.status || "N/A",
+      "Company Number": record.companyNumber || "N/A",
+      Incorporated: record.incorporated || "N/A",
+      "Registry Profile": record.profileUrl || "N/A",
+    }))
+
+  if (normalizedRows.length === 0) return null
+
+  const headers = ["Name", "Company Number", "Address", "Country", "Status", "Incorporated", "Registry Profile"]
+  return {
+    table: {
+      headers,
+      rows: normalizedRows.map((row) => headers.map((header) => row[header as keyof typeof row] || "N/A")),
+    },
+    summary: `Found ${normalizedRows.length} verified ${country?.name || "company"} registry record${normalizedRows.length === 1 ? "" : "s"} matching “${keyword}”.`,
+  }
+}
+
+function looksLikePageTitle(value: string): boolean {
+  return /\b(?:top\s+\d+|best\s+\d*|complete list|full list|directory|updated\s+\w+\s+\d{4}|guide to|how to|near me|search results?|\.pdf\b)\b/i.test(value)
+}
+
+async function tryVerifiedGenericEntityFallback(
+  prompt: string,
+  send: (obj: object) => void
+): Promise<{ table: GeneratedTable; summary: string } | null> {
+  const requestedCount = extractRequestedCount(prompt)
+  const requestedHeaders = getRequestedGenerationHeaders(prompt).filter((header) => header !== "Name")
+  const fallbackHeaders = ["Name", ...requestedHeaders]
+
+  send({ type: "thinking", content: "Researching entities from multiple sources and verifying each row" })
+  const searchResults = await runHighQualityFallbackSearch(prompt, Math.max(10, requestedCount))
+  if (searchResults.length === 0) return null
+
+  const scrapeTool = scrapeWebPage as unknown as {
+    execute: (input: { url: string; extractionHint?: string }) => Promise<{ content?: string | null; success?: boolean }>
+  }
+  const pages = await Promise.all(
+    searchResults.slice(0, 6).map(async (result) => {
+      const scraped = await scrapeTool.execute({
+        url: result.url,
+        extractionHint: `Find the individual entities requested by: ${prompt}`,
+      })
+      return `SOURCE URL: ${result.url}\nTITLE: ${result.title}\nSNIPPET: ${result.snippet}\nCONTENT:\n${scraped.content || ""}`
+    })
+  )
+  const evidence = pages.join("\n\n---\n\n").slice(0, 45000)
+  if (!evidence.trim()) return null
+
+  try {
+    const { text } = await generateText({
+      model: openai("gpt-4o-mini"),
+      system: "You extract concrete entities from supplied evidence. Never use an article title, list-page title, search query, or category label as an entity. Never invent names or values.",
+      prompt: `Request: ${prompt}\n\nReturn JSON only in this shape:\n{"headers":["Name","Another field explicitly requested by the user"],"rows":[{"Name":"exact entity name","Another field explicitly requested by the user":"exact value or N/A"}]}\n\nRules:\n- Name must be the first header. Add columns only for details explicitly requested by the user.\n- Return up to ${requestedCount} distinct concrete entities, not webpages or article titles.\n- Every non-N/A value must appear literally in the evidence.\n- Do not paraphrase, infer, or complete missing values.\n- Exclude headings such as “Top 10...”, “Best...”, “List of...”, directories, PDFs, and search-result titles.\n\nEVIDENCE:\n${evidence}`,
+    })
+    const json = text.match(/\{[\s\S]*\}/)?.[0]
+    const parsed = json ? JSON.parse(json) as { headers?: unknown[]; rows?: unknown[] } : null
+    const modelHeaders = (parsed?.headers || [])
+      .filter((header): header is string => typeof header === "string")
+      .map((header) => header.replace(/\s+/g, " ").trim().slice(0, 60))
+      .filter((header) => header && !/^source (?:summary|title)$/i.test(header))
+      .filter((header, index, all) => all.findIndex((item) => item.toLowerCase() === header.toLowerCase()) === index)
+      .slice(0, 8)
+    const headers = modelHeaders.length > 0
+      ? ["Name", ...modelHeaders.filter((header) => !/^name$/i.test(header))]
+      : fallbackHeaders
+    const seen = new Set<string>()
+    const rows: string[][] = []
+
+    for (const item of parsed?.rows || []) {
+      if (!item || typeof item !== "object") continue
+      const record = item as Record<string, unknown>
+      const name = typeof record.Name === "string" ? record.Name.trim() : ""
+      const key = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+      if (!name || name.length < 2 || looksLikePageTitle(name) || seen.has(key)) continue
+      if (!evidence.toLowerCase().includes(name.toLowerCase())) continue
+
+      seen.add(key)
+      rows.push(headers.map((header) => {
+        const value = typeof record[header] === "string" ? record[header].trim() : "N/A"
+        if (!value || /^n\/?a$/i.test(value)) return "N/A"
+        return evidence.toLowerCase().includes(value.toLowerCase()) ? value : "N/A"
+      }))
+      if (rows.length >= requestedCount) break
+    }
+
+    if (rows.length === 0) return null
+    return {
+      table: { headers, rows },
+      summary: `Found ${rows.length} verified entit${rows.length === 1 ? "y" : "ies"} from source-page evidence; page titles were excluded.`,
+    }
+  } catch (error) {
+    console.warn("[Scraper] Generic entity extraction failed", error)
+    return null
+  }
+}
+
 async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => void): Promise<{ table: GeneratedTable; summary: string } | null> {
   const placeType = inferPlaceType(prompt)
   const location = inferLocation(prompt)
 
-  if (!placeType || !location) return null
+  const personType = inferPersonType(prompt)
+  if (personType) {
+    const people = await tryDirectPeopleFallback(prompt, personType, location || "", send)
+    if (people) return people
+  }
+
+  if (isCompanyListPrompt(prompt) && !placeType) {
+    const companies = await tryDirectCompanyFallback(prompt, send)
+    if (companies) return companies
+  }
+
+  if (!placeType || !location) return tryVerifiedGenericEntityFallback(prompt, send)
 
   const requestedCount = extractRequestedCount(prompt)
   const searchLimit = Math.min(Math.max(requestedCount * 2, requestedCount), 40)
   send({ type: "thinking", content: `🛟 Fallback: directly searching real ${placeType} records in ${location}` })
 
   const [googleResult, osmResult] = await Promise.all([
-    runGooglePlacesFallback(placeType, location, requestedCount),
+    runGooglePlacesFallback(placeType, location, searchLimit),
     runOpenStreetMapFallback(placeType, location, searchLimit),
   ])
 
@@ -1693,7 +2063,7 @@ async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => 
 
   const rows = Array.from(mergedByName.values()).slice(0, requestedCount)
 
-  if (rows.length === 0) return null
+  if (rows.length === 0) return tryVerifiedGenericEntityFallback(prompt, send)
 
   const intentRequested = requiresExplicitPurchaseEvidence(prompt)
   const normalizedRows = rows.map((row) => ({

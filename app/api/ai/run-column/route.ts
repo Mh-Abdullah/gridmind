@@ -11,18 +11,19 @@ interface RunColumnRequest {
   sourceCol?: number
   regex?: string
   cells: { [key: string]: string }
+  headers?: string[]
   numRows: number
   numCols: number
-  /** If provided, only process these specific row indices (1-based, excluding header row 0) */
+  /** If provided, only process these zero-based spreadsheet row indices. */
   selectedRows?: number[]
 }
 
 function getBillableRowCount(numRows: number, selectedRows?: number[]) {
   if (selectedRows && selectedRows.length > 0) {
-    return selectedRows.filter((row) => row > 0 && row < numRows).length
+    return new Set(selectedRows.filter((row) => row >= 0 && row < numRows)).size
   }
 
-  return Math.max(0, numRows - 1)
+  return Math.max(0, numRows)
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬ Helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -86,6 +87,48 @@ function extractTextFromHTML(html: string): string {
   return sections.join("\n\n").trim()
 }
 
+function applyColumnReferences(prompt: string, row: number, cells: Record<string, string>): string {
+  return prompt.replace(/\{\{\s*([A-Z]+)\s*\}\}/gi, (_match, label: string) => {
+    let index = 0
+    for (const char of label.toUpperCase()) index = index * 26 + char.charCodeAt(0) - 64
+    return cells[`${row}-${index - 1}`] || ""
+  })
+}
+
+function cleanExtractedValue(value: string): string {
+  return value
+    .trim()
+    .replace(/^```(?:text)?\s*/i, "")
+    .replace(/```$/, "")
+    .replace(/^(?:answer|value|email|phone|telephone|website|url|opening hours?)\s*:\s*/i, "")
+    .replace(/^['"`]|['"`]$/g, "")
+    .trim()
+}
+
+function getLookupTerms(prompt: string): string {
+  const lower = prompt.toLowerCase()
+  if (/email|e-mail/.test(lower)) return "email contact"
+  if (/phone|telephone|mobile/.test(lower)) return "phone contact"
+  if (/opening hours|business hours|hours/.test(lower)) return "opening hours"
+  if (/website|homepage|\burl\b/.test(lower)) return "official website"
+  if (/linkedin/.test(lower)) return "official LinkedIn"
+  if (/address|location/.test(lower)) return "address"
+  return prompt
+    .replace(/\b(find|get|look up|search for|fetch|retrieve|what is|what are|of each row|of each|for each|for the|of the|please|show me|tell me|give me|i want|all rows)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim() || prompt
+}
+
+function isLikelyOfficialResult(result: SearchResult, entity: string): boolean {
+  if (!result.url) return false
+  let host = ""
+  try { host = new URL(result.url).hostname.toLowerCase().replace(/^www\./, "") } catch { return false }
+  if (/^(?:facebook|instagram|linkedin|tripadvisor|yelp|wikipedia|tiktok|youtube)\./.test(host) || host === "x.com") return false
+  const tokens = entity.toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 2)
+  const haystack = `${host} ${result.title}`.toLowerCase()
+  return tokens.some(token => haystack.includes(token))
+}
+
 function normalizeUrl(raw: string): string | null {
   const value = raw.trim()
   if (!value) return null
@@ -94,9 +137,61 @@ function normalizeUrl(raw: string): string | null {
   return null
 }
 // Direct search Ã¢â‚¬â€ no AI involved, guaranteed to actually hit the web
-async function doSearch(query: string): Promise<{ title: string; snippet: string; url: string }[]> {
+type SearchResult = { title: string; snippet: string; url: string }
+
+async function doSearch(query: string): Promise<SearchResult[]> {
   try {
-    const results: { title: string; snippet: string; url: string }[] = []
+    const results: SearchResult[] = []
+
+    // Prefer Google's index when configured. DuckDuckGo's HTML endpoint is often
+    // blocked in production and was the main reason enrichment returned N/A.
+    if (process.env.SERPER_API_KEY) {
+      try {
+        const serperResponse = await fetch("https://google.serper.dev/search", {
+          method: "POST",
+          headers: {
+            "X-API-KEY": process.env.SERPER_API_KEY,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ q: query, num: 10 }),
+          signal: AbortSignal.timeout(10000),
+        })
+        if (serperResponse.ok) {
+          const data = await serperResponse.json() as {
+            organic?: { title?: string; snippet?: string; link?: string }[]
+            knowledgeGraph?: Record<string, unknown> & { title?: string; description?: string; website?: string }
+            answerBox?: Record<string, unknown>
+          }
+          const knowledge = data.knowledgeGraph
+          if (knowledge) {
+            const details = Object.entries(knowledge)
+              .filter(([key, value]) => !["imageUrl", "attributes"].includes(key) && typeof value !== "object")
+              .map(([key, value]) => `${key}: ${String(value)}`)
+            if (knowledge.attributes && typeof knowledge.attributes === "object") {
+              details.push(...Object.entries(knowledge.attributes as Record<string, unknown>).map(([key, value]) => `${key}: ${String(value)}`))
+            }
+            results.push({
+              title: knowledge.title || query,
+              snippet: [knowledge.description, ...details].filter(Boolean).join(" | "),
+              url: knowledge.website || "",
+            })
+          }
+          if (data.answerBox) {
+            results.push({
+              title: "Google answer",
+              snippet: Object.entries(data.answerBox).map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`).join(" | "),
+              url: "",
+            })
+          }
+          for (const item of data.organic || []) {
+            if (item.link) results.push({ title: item.title || "", snippet: item.snippet || "", url: item.link })
+          }
+          if (results.length > 0) return results.slice(0, 10)
+        }
+      } catch {
+        // Fall through to the free search fallback.
+      }
+    }
     const response = await fetch(
       `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
       {
@@ -177,11 +272,11 @@ async function doScrape(url: string): Promise<string> {
 async function taskNeedsWebSearch(prompt: string, headers: string[]): Promise<boolean> {
   const { text } = await generateText({
     model: openai("gpt-4o-mini"),
-    prompt: `Is this spreadsheet column task a PURE TEXT TRANSFORMATION that can be done using ONLY the data already visible in the row Ã¢â‚¬â€ with no need to look up anything from the internet?
+    prompt: `Is this spreadsheet column task a PURE TEXT TRANSFORMATION that can be done using ONLY the data already visible in the row, with no need to look up anything from the internet?
 
 Pure transformations (reply "transform"): uppercase/lowercase, reformat dates, split/join text, translate language, math calculation, classify text that is fully visible in the row.
 
-Web lookups (reply "web"): finding emails, phone numbers, website URLs, company info, people's names/titles, addresses, descriptions, prices, social media profiles Ã¢â‚¬â€ anything that needs NEW information not already in the row.
+Web lookups (reply "web"): finding emails, phone numbers, website URLs, company info, people's names/titles, addresses, descriptions, prices, or social media profiles; anything that needs NEW information not already in the row.
 
 Column headers: ${headers.join(", ")}
 Task: "${prompt}"
@@ -236,6 +331,8 @@ async function runAIColumn(
   cells: { [key: string]: string },
   numRows: number,
   numCols: number,
+  headers: string[] | undefined,
+  sourceCol: number,
   selectedRows: number[] | undefined,
   send: (obj: object) => void
 ) {
@@ -245,13 +342,13 @@ async function runAIColumn(
   }
 
   const colLabels = Array.from({ length: numCols }, (_, i) => getColLabel(i))
-  const headerValues = Array.from({ length: numCols }, (_, c) => cells[`0-${c}`] || colLabels[c])
+  const headerValues = Array.from({ length: numCols }, (_, c) => headers?.[c] || colLabels[c])
 
   // Determine row scope: selected rows OR all data rows
   const rowsToProcess =
     selectedRows && selectedRows.length > 0
-      ? selectedRows.filter(r => r > 0 && r < numRows)
-      : Array.from({ length: numRows - 1 }, (_, i) => i + 1)
+      ? [...new Set(selectedRows.filter(r => r >= 0 && r < numRows))]
+      : Array.from({ length: numRows }, (_, i) => i)
 
   if (rowsToProcess.length === 0) {
     send({ type: "error", content: "No rows to process." })
@@ -260,7 +357,7 @@ async function runAIColumn(
 
   const scopeLabel = selectedRows && selectedRows.length > 0
     ? `${selectedRows.length} selected row${selectedRows.length > 1 ? "s" : ""}`
-    : `all ${numRows - 1} rows`
+    : `all ${numRows} rows`
 
   // Decide pipeline: web search or pure derivation
   const isWebType = colType === "AI Web"
@@ -268,7 +365,7 @@ async function runAIColumn(
 
   if (!requiresWeb) {
     // Ã¢â€â‚¬Ã¢â€â‚¬ Pure derivation (format, translate, categorize, calculate) Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-    send({ type: "thinking", content: `Ã°Å¸Â§Â  Deriving values for ${scopeLabel}...` })
+    send({ type: "thinking", content: `Deriving values for ${scopeLabel}...` })
 
     let rowContext = ""
     for (const r of rowsToProcess) {
@@ -277,7 +374,10 @@ async function runAIColumn(
         const v = cells[`${r}-${c}`]
         if (v) parts.push(`${colLabels[c]}: "${v}"`)
       }
-      if (parts.length) rowContext += `Row ${r}: ${parts.join(" | ")}\n`
+      if (parts.length) {
+        const rowInstruction = applyColumnReferences(prompt, r, cells)
+        rowContext += `Row ${r}: ${parts.join(" | ")} | Instruction: "${rowInstruction}"\n`
+      }
     }
 
     const { text: fullText } = await generateText({
@@ -294,7 +394,7 @@ ${rowContext || "(none)"}
 
 Return ONLY this JSON (no other text):
 \`\`\`json
-{"updates":[{"row":1,"value":"..."}],"summary":"..."}
+{"updates":[{"row":${rowsToProcess[0]},"value":"..."}],"summary":"..."}
 \`\`\``,
     })
 
@@ -310,13 +410,16 @@ Return ONLY this JSON (no other text):
       return
     }
     const updates: { [key: string]: string } = {}
-    for (const { row, value } of parsed.updates) updates[`${row}-${colIdx}`] = value
+    const allowedRows = new Set(rowsToProcess)
+    for (const { row, value } of parsed.updates) {
+      if (allowedRows.has(row)) updates[`${row}-${colIdx}`] = String(value ?? "")
+    }
     send({ type: "result", data: { success: true, updates, summary: parsed.summary || `Filled ${parsed.updates.length} cells` } })
     return
   }
 
   // Ã¢â€â‚¬Ã¢â€â‚¬ Deterministic per-row web search + validation + retry pipeline Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-  send({ type: "thinking", content: `Ã°Å¸Å’Â Searching the web for ${scopeLabel}...` })
+  send({ type: "thinking", content: `Searching the web for ${scopeLabel}...` })
 
   const updates: { [key: string]: string } = {}
   let found = 0
@@ -324,28 +427,31 @@ Return ONLY this JSON (no other text):
   for (const r of rowsToProcess) {
     // Build entity string from existing row values
     const rowValues: string[] = []
+    const labeledValues: string[] = []
     for (let c = 0; c < numCols; c++) {
       const v = cells[`${r}-${c}`]
-      if (v && c !== colIdx) rowValues.push(v)
+      if (v && c !== colIdx) {
+        rowValues.push(v)
+        labeledValues.push(`${headerValues[c]}: ${v}`)
+      }
     }
     if (!rowValues.length) continue
 
-    const entityStr = rowValues.slice(0, 3).join(" ")
-    send({ type: "thinking", content: `Ã°Å¸â€Â Row ${r}: ${entityStr.slice(0, 50)}` })
+    const sourceValue = cells[`${r}-${sourceCol}`]?.trim()
+    const entityStr = sourceValue || rowValues[0]
+    const resolvedPrompt = applyColumnReferences(prompt, r, cells)
+    send({ type: "thinking", content: `Row ${r + 1}: ${entityStr.slice(0, 50)}` })
 
     let finalValue = "N/A"
 
     // Convert the task description into focused search terms
     // e.g. "find emails of each school" Ã¢â€ â€™ "email contact"
-    const searchTerms = prompt
-      .replace(/\b(find|get|look up|search for|fetch|retrieve|what is|what are|of each row|of each|for each|for the|of the|please|show me|tell me|give me)\b/gi, "")
-      .replace(/\s+/g, " ")
-      .trim() || prompt
+    const searchTerms = getLookupTerms(resolvedPrompt)
 
     // Up to 2 search attempts with different queries
     const queries = [
-      `${entityStr} ${searchTerms}`,
-      `${rowValues[0]} ${searchTerms} official contact`,
+      `"${entityStr}" ${searchTerms}`,
+      `"${entityStr}" ${searchTerms} official`,
     ]
 
     console.log(`[RunColumn] Row ${r}: entity="${entityStr}" task="${prompt}" query="${queries[0]}"`)
@@ -353,18 +459,27 @@ Return ONLY this JSON (no other text):
     for (let attempt = 0; attempt < queries.length; attempt++) {
       const query = queries[attempt]
       if (attempt > 0) {
-        send({ type: "thinking", content: `Ã°Å¸â€â€ž Row ${r}: retrying with refined query...` })
+        send({ type: "thinking", content: `Row ${r + 1}: retrying with a refined search...` })
       }
 
       // Step 1 Ã¢â‚¬â€ always search (no AI choice)
       const results = await doSearch(query)
+      results.sort((a, b) => Number(isLikelyOfficialResult(b, entityStr)) - Number(isLikelyOfficialResult(a, entityStr)))
       let context = results.map(sr => `[${sr.title}] ${sr.snippet} (${sr.url})`).join("\n")
       console.log(`[RunColumn] Row ${r} attempt ${attempt}: got ${results.length} results, context length=${context.length}`)
+
+      // A Website/Domain source is stronger evidence than a search result. Read it
+      // directly before trying ranked result pages.
+      const directUrl = sourceValue ? normalizeUrl(sourceValue) : null
+      if (directUrl) {
+        const directPage = await doScrape(directUrl)
+        if (directPage) context = `OFFICIAL SOURCE: ${directUrl}\n${directPage}\n\n${context}`
+      }
 
       // Step 2 Ã¢â‚¬â€ always scrape the top result to get full page content
       // (snippets rarely contain structured data like emails/phones)
       if (results[0]?.url) {
-        send({ type: "thinking", content: `Ã°Å¸â€œâ€ž Reading: ${results[0].url.replace(/^https?:\/\//, "").slice(0, 55)}` })
+        send({ type: "thinking", content: `Reading: ${results[0].url.replace(/^https?:\/\//, "").slice(0, 55)}` })
         const page = await doScrape(results[0].url)
         if (page) {
           context += "\n\n" + page
@@ -386,7 +501,8 @@ Return ONLY this JSON (no other text):
 ${context.slice(0, 3500)}
 ---
 
-Find the exact "${prompt}" for: ${rowValues.join(", ")}
+Find the exact "${resolvedPrompt}" for this row:
+${labeledValues.join(" | ")}
 
 Output rules:
 - Output the raw value only (e.g. email address only, not "Email: user@example.com")
@@ -394,10 +510,10 @@ Output rules:
 - If not found: N/A`,
       })
 
-      const candidate = text.trim() || "N/A"
+      const candidate = cleanExtractedValue(text) || "N/A"
 
       // Step 4 Ã¢â‚¬â€ validate the extracted value is real and format-correct
-      if (candidate !== "N/A" && validateExtracted(candidate, prompt, context)) {
+      if (candidate !== "N/A" && validateExtracted(candidate, resolvedPrompt, context)) {
         finalValue = candidate
         break // valid Ã¢â‚¬â€ stop retrying
       }
@@ -431,8 +547,8 @@ async function runScrapeColumn(
 
   const rowsToProcess =
     selectedRows && selectedRows.length > 0
-      ? selectedRows.filter((row) => row > 0 && row < numRows)
-      : Array.from({ length: Math.max(0, numRows - 1) }, (_, i) => i + 1)
+      ? [...new Set(selectedRows.filter((row) => row >= 0 && row < numRows))]
+      : Array.from({ length: Math.max(0, numRows) }, (_, i) => i)
 
   if (rowsToProcess.length === 0) {
     send({ type: "error", content: "No rows to process." })
@@ -479,6 +595,7 @@ function runRegexColumn(
   pattern: string,
   cells: { [key: string]: string },
   numRows: number,
+  selectedRows: number[] | undefined,
   send: (obj: object) => void
 ) {
   const updates: { [key: string]: string } = {}
@@ -489,7 +606,10 @@ function runRegexColumn(
     send({ type: "error", content: `Invalid regex pattern: ${pattern}` })
     return
   }
-  for (let r = 0; r < numRows; r++) {
+  const rowsToProcess = selectedRows?.length
+    ? [...new Set(selectedRows.filter(row => row >= 0 && row < numRows))]
+    : Array.from({ length: numRows }, (_, row) => row)
+  for (const r of rowsToProcess) {
     const val = cells[`${r}-${sourceCol}`] ?? ""
     const m = val.match(re)
     updates[`${r}-${colIdx}`] = m ? (m[1] ?? m[0]) : ""
@@ -503,10 +623,14 @@ function runNormalizeColumn(
   sourceCol: number,
   cells: { [key: string]: string },
   numRows: number,
+  selectedRows: number[] | undefined,
   send: (obj: object) => void
 ) {
   const updates: { [key: string]: string } = {}
-  for (let r = 0; r < numRows; r++) {
+  const rowsToProcess = selectedRows?.length
+    ? [...new Set(selectedRows.filter(row => row >= 0 && row < numRows))]
+    : Array.from({ length: numRows }, (_, row) => row)
+  for (const r of rowsToProcess) {
     const val = (cells[`${r}-${sourceCol}`] ?? "").trim()
     if (!val) continue
     if (colType === "Normalize Domain") {
@@ -530,6 +654,7 @@ async function runReadFileColumn(
   sourceCol: number,
   cells: { [key: string]: string },
   numRows: number,
+  selectedRows: number[] | undefined,
   send: (obj: object) => void
 ) {
   if (!process.env.OPENAI_API_KEY) {
@@ -540,13 +665,16 @@ async function runReadFileColumn(
   const updates: { [key: string]: string } = {}
   let processed = 0
 
-  send({ type: "thinking", content: `Ã°Å¸â€œâ€š Reading files from column ${getColLabel(sourceCol)}...` })
+  send({ type: "thinking", content: `Reading files from column ${getColLabel(sourceCol)}...` })
 
-  for (let r = 0; r < numRows; r++) {
+  const rowsToProcess = selectedRows?.length
+    ? [...new Set(selectedRows.filter(row => row >= 0 && row < numRows))]
+    : Array.from({ length: numRows }, (_, row) => row)
+  for (const r of rowsToProcess) {
     const fileRef = (cells[`${r}-${sourceCol}`] ?? "").trim()
     if (!fileRef) continue
 
-    send({ type: "thinking", content: `Ã°Å¸â€œâ€ž Row ${r + 1}: ${fileRef.slice(0, 60)}` })
+    send({ type: "thinking", content: `Row ${r + 1}: ${fileRef.slice(0, 60)}` })
 
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -626,7 +754,7 @@ async function runReadFileColumn(
 
 export async function POST(request: NextRequest) {
   const body: RunColumnRequest = await request.json()
-  const { colIdx, colType, prompt = "", sourceCol = 0, regex = "", cells, numRows, numCols, selectedRows } = body
+  const { colIdx, colType, prompt = "", sourceCol = 0, regex = "", cells, headers, numRows, numCols, selectedRows } = body
 
   const requiresOpenAI = colType === "AI Agent" || colType === "AI Web" || colType === "Read File"
   if (requiresOpenAI && !process.env.OPENAI_API_KEY) {
@@ -685,15 +813,15 @@ export async function POST(request: NextRequest) {
 
       try {
         if (colType === "AI Agent" || colType === "AI Web") {
-          await runAIColumn(colIdx, colType, prompt, cells, numRows, numCols, selectedRows, send)
+          await runAIColumn(colIdx, colType, prompt, cells, numRows, numCols, headers, sourceCol, selectedRows, send)
         } else if (colType === "Scrape Website") {
           await runScrapeColumn(colIdx, sourceCol, cells, numRows, selectedRows, send)
         } else if (colType === "Regex") {
-          runRegexColumn(colIdx, sourceCol, regex, cells, numRows, send)
+          runRegexColumn(colIdx, sourceCol, regex, cells, numRows, selectedRows, send)
         } else if (colType === "Normalize Company" || colType === "Normalize Domain") {
-          runNormalizeColumn(colIdx, colType, sourceCol, cells, numRows, send)
+          runNormalizeColumn(colIdx, colType, sourceCol, cells, numRows, selectedRows, send)
         } else if (colType === "Read File") {
-          await runReadFileColumn(colIdx, sourceCol, cells, numRows, send)
+          await runReadFileColumn(colIdx, sourceCol, cells, numRows, selectedRows, send)
         } else {
           send({ type: "error", content: `Unknown column type: ${colType}` })
         }
