@@ -800,11 +800,70 @@ const searchGoogleSerper = tool({
   },
 })
 
+// Google Places via Serper — returns actual local entities rather than web pages
+const searchGooglePlaces = tool({
+  description: "Search Google Maps for real local businesses and venues with structured phone, website, address, rating, and opening-hours data. Use this for physical-place lists when OpenStreetMap is unavailable or lacks contact details.",
+  inputSchema: z.object({
+    query: z.string().describe("Place type and location, e.g. 'restaurants in Lahore'"),
+    num: z.number().optional().describe("Number of places to return (default 20, max 40)"),
+    page: z.number().optional().describe("Result page, starting at 1"),
+  }),
+  execute: async ({ query, num = 20, page = 1 }) => {
+    const apiKey = process.env.SERPER_API_KEY
+    if (!apiKey) return { error: "SERPER_API_KEY not configured — skipping Google Places", results: [], success: false }
+
+    try {
+      const res = await fetch("https://google.serper.dev/maps", {
+        method: "POST",
+        headers: { "X-API-KEY": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ q: query, num: Math.min(Math.max(num, 1), 40), page: Math.max(page, 1) }),
+        signal: AbortSignal.timeout(12000),
+      })
+      if (!res.ok) return { error: `Serper Places HTTP ${res.status}`, results: [], success: false }
+
+      const data = await res.json() as {
+        places?: Array<{
+          title?: string
+          address?: string
+          phoneNumber?: string
+          website?: string
+          type?: string
+          rating?: number
+          ratingCount?: number
+          openingHours?: string | Record<string, string>
+          cid?: string
+        }>
+      }
+
+      const results = (data.places || []).map((place) => ({
+        name: place.title || "N/A",
+        address: place.address || "N/A",
+        phone: place.phoneNumber || "N/A",
+        website: place.website || "N/A",
+        openingHours: typeof place.openingHours === "string"
+          ? place.openingHours
+          : place.openingHours
+            ? Object.entries(place.openingHours).map(([day, hours]) => `${day}: ${hours}`).join("; ")
+            : "N/A",
+        type: place.type || "N/A",
+        rating: place.rating != null ? String(place.rating) : "N/A",
+        reviewCount: place.ratingCount != null ? String(place.ratingCount) : "N/A",
+        profileUrl: place.cid ? `https://www.google.com/maps?cid=${place.cid}` : "N/A",
+      }))
+
+      return { query, page, results, total: results.length, success: true }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "Google Places search failed", results: [], success: false }
+    }
+  },
+})
+
 const SCRAPER_TOOLS = {
   scrapeWebPage,
   searchWeb,
   searchBraveWeb,
   searchGoogleSerper,
+  searchGooglePlaces,
   searchWikipedia,
   searchOpenStreetMap,
   searchCompaniesHouse,
@@ -824,6 +883,7 @@ const GENERATE_ACTIVE_TOOLS: Array<keyof typeof SCRAPER_TOOLS> = [
   "searchWeb",
   "searchBraveWeb",
   "searchGoogleSerper",
+  "searchGooglePlaces",
   "searchWikipedia",
   "searchOpenStreetMap",
   "searchCompaniesHouse",
@@ -910,6 +970,7 @@ const SCRAPER_ENRICH_PROMPT = `You are GridMind Scraper — a universal data enr
 
 ■ PHYSICAL PLACES — restaurants, cafes, hotels, schools, gyms, hospitals, mosques, churches, museums, tourist attractions, cinemas, theatres, parks, sports centres, swimming pools, stadiums, zoos, libraries, shops, pharmacies, or ANY place that exists physically:
   → searchOpenStreetMap(placeType="...", location="...")
+  → If OpenStreetMap is empty or lacks contact details, call searchGooglePlaces(query="<place type> in <location>")
   → Works for EVERY city in the world — Dubai, London, Paris, New York, Lahore, Karachi, Riyadh, etc.
 
 ■ UK REGISTERED COMPANIES (any industry: ecommerce, software, marketing, retail, etc.)?
@@ -967,6 +1028,7 @@ const SCRAPER_GENERATE_PROMPT = `You are GridMind Scraper — a universal data r
 
 ■ ANY physical place in ANY city worldwide:
   → searchOpenStreetMap(placeType="...", location="...")
+  → If it returns 0 results or sparse contact fields, use searchGooglePlaces(query="<place type> in <location>")
   → placeType examples: "restaurant", "school", "hotel", "mosque", "gym", "hospital", "museum", "tourist attraction", "cinema", "park", "sports centre", "swimming pool", "university", "library", "church", "pharmacy", "supermarket", "spa", "nightclub", "zoo", "stadium", "car dealership", "petrol station", "bakery", "hairdresser"
   → location examples: "Leeds", "Dubai", "Karachi", "Paris", "New York", "Riyadh"
   → This is the FIRST choice for ANY place-based query regardless of country
@@ -985,7 +1047,7 @@ const SCRAPER_GENERATE_PROMPT = `You are GridMind Scraper — a universal data r
 
 ━━━ EXECUTION ━━━
 1. PLAN — state which tool you will use and why, then act immediately
-2. RESEARCH — call ALL needed tools. For places: searchOpenStreetMap once. For companies: Companies House or OpenCorporates. For facts: Wikipedia first. For web data: try Serper → Brave → searchWeb in order.
+2. RESEARCH — call ALL needed tools. For places: searchOpenStreetMap, then searchGooglePlaces when needed. For companies: Companies House or OpenCorporates. For facts: Wikipedia first. For web data: try Serper → Brave → searchWeb in order.
 3. FALLBACK — if first tool returns 0 results, immediately try the next best tool with a refined query
 4. FILL GAPS — after the main data call, look for N/A values in key columns (Phone, Website, Email, Hours, Price, Rating):
    → Entries with a website URL: scrapeWebPage(website) — structured JSON-LD data on the page usually has phone/hours/price
@@ -1166,6 +1228,8 @@ function sendStepUpdates(
       send({ type: "thinking", content: `📄 Scraping: ${short}` })
     } else if (tc.toolName === "searchOpenStreetMap") {
       send({ type: "thinking", content: `🗺️ OpenStreetMap: "${args.placeType || ""}" in ${args.location || "..."}` })
+    } else if (tc.toolName === "searchGooglePlaces") {
+      send({ type: "thinking", content: `📍 Google Places: "${args.query || "..."}"` })
     } else if (tc.toolName === "searchCompaniesHouse") {
       send({ type: "thinking", content: `🏢 Companies House: searching "${args.query || "..."}"` })
     } else if (tc.toolName === "searchOpenCorporates") {
@@ -1198,6 +1262,10 @@ function sendStepUpdates(
       const places = res.results as { name: string; address: string }[]
       const preview = places.slice(0, 4).map(p => `  • ${p.name}${p.address !== "N/A" ? " — " + p.address.slice(0, 40) : ""}`).join("\n")
       send({ type: "thinking", content: `✅ OpenStreetMap: ${places.length} places found\n${preview}${places.length > 4 ? `\n  ...+${places.length - 4} more` : ""}` })
+    } else if (tr.toolName === "searchGooglePlaces" && Array.isArray(res.results)) {
+      const places = res.results as { name: string; address: string }[]
+      const preview = places.slice(0, 4).map(p => `  • ${p.name}${p.address !== "N/A" ? " — " + p.address.slice(0, 40) : ""}`).join("\n")
+      send({ type: "thinking", content: `✅ Google Places: ${places.length} places found\n${preview}${places.length > 4 ? `\n  ...+${places.length - 4} more` : ""}` })
     } else if (tr.toolName === "searchCompaniesHouse" && Array.isArray(res.results)) {
       const companies = res.results as { name: string; address: string }[]
       const preview = companies.slice(0, 4).map(c => `  • ${c.name}${c.address !== "N/A" ? " — " + c.address.slice(0, 35) : ""}`).join("\n")
@@ -1324,6 +1392,70 @@ function inferLocation(prompt: string): string | null {
   return null
 }
 
+const GENERATION_FIELD_MATCHERS: Array<{ header: string; pattern: RegExp }> = [
+  { header: "Phone", pattern: /\bphone(?:s| numbers?)?|\btelephone(?:s)?|\bmobile(?:s)?/i },
+  { header: "Website", pattern: /\bwebsite(?:s)?|\bdomain(?:s)?|\burl(?:s)?/i },
+  { header: "Opening Hours", pattern: /\bopening hours|\bbusiness hours|\bworking hours|\bhours\b/i },
+  { header: "Email", pattern: /\bemail(?:s| addresses?)?|\be-mail/i },
+  { header: "Address", pattern: /\baddress(?:es)?|\blocation(?:s)?/i },
+  { header: "Country", pattern: /\bcountr(?:y|ies)\b|\bjurisdiction(?:s)?/i },
+  { header: "Status", pattern: /\bstatus(?:es)?\b/i },
+  { header: "Rating", pattern: /\brating(?:s)?|\breviews?\b/i },
+]
+
+function getRequestedGenerationHeaders(prompt: string, rows?: Array<Record<string, string>>): string[] {
+  const explicitlyRequested = GENERATION_FIELD_MATCHERS
+    .filter(({ pattern }) => pattern.test(prompt))
+    .map(({ header }) => header)
+
+  if (explicitlyRequested.length > 0) return ["Name", ...explicitlyRequested]
+
+  const defaultHeaders = ["Address", "Phone", "Website", "Opening Hours", "Email", "Country", "Status", "Rating"]
+  const populatedHeaders = rows
+    ? defaultHeaders.filter((header) => rows.some((row) => row[header] && row[header] !== "N/A"))
+    : []
+
+  return ["Name", ...populatedHeaders]
+}
+
+function generatedTableQuality(result: { table: GeneratedTable } | null, prompt: string): number {
+  if (!result) return -1
+
+  const requestedCount = extractRequestedCount(prompt)
+  const headers = result.table.headers
+  const requestedHeaders = getRequestedGenerationHeaders(prompt)
+  const requestedIndexes = requestedHeaders
+    .filter((header) => header !== "Name")
+    .map((header) => headers.indexOf(header))
+    .filter((index) => index >= 0)
+  const usefulCells = result.table.rows.reduce((count, row) => (
+    count + requestedIndexes.filter((index) => {
+      const value = row[index]?.trim()
+      return value && value !== "N/A"
+    }).length
+  ), 0)
+
+  // Meeting the requested row count is the primary requirement; populated
+  // requested fields break ties between equally complete entity lists.
+  return Math.min(result.table.rows.length, requestedCount) * 1000 + usefulCells
+}
+
+function needsStructuredFallback(result: { table: GeneratedTable } | null, prompt: string): boolean {
+  if (!result) return true
+  if (result.table.rows.length < extractRequestedCount(prompt)) return true
+
+  const requestedHeaders = getRequestedGenerationHeaders(prompt).filter((header) => header !== "Name")
+  if (requestedHeaders.length === 0) return false
+
+  return generatedTableQuality(result, prompt) === Math.min(result.table.rows.length, extractRequestedCount(prompt)) * 1000
+}
+
+function isEntityListPrompt(prompt: string): boolean {
+  if (inferPlaceType(prompt)) return true
+
+  return /\b(?:find|list|identify|get|generate|create|build|research)\b[\s\S]{0,100}\b(?:leads?|companies|businesses|brands|people|contacts|suppliers|vendors|agencies|stores|shops|products|prospects|organizations|organisations)\b/i.test(prompt)
+}
+
 async function runOpenStreetMapFallback(placeType: string, location: string, maxResults: number) {
   const osmTool = searchOpenStreetMap as unknown as {
     execute: (input: { placeType: string; location: string; maxResults?: number }) => Promise<{
@@ -1333,6 +1465,37 @@ async function runOpenStreetMapFallback(placeType: string, location: string, max
   }
 
   return osmTool.execute({ placeType, location, maxResults })
+}
+
+async function runGooglePlacesFallback(placeType: string, location: string, maxResults: number) {
+  const placesTool = searchGooglePlaces as unknown as {
+    execute: (input: { query: string; num?: number; page?: number }) => Promise<{
+      results?: Array<Record<string, string>>
+      error?: string
+    }>
+  }
+
+  const pageSize = 20
+  const pageCount = Math.max(1, Math.ceil(maxResults / pageSize))
+  const responses = await Promise.all(
+    Array.from({ length: pageCount }, (_, index) => placesTool.execute({
+      query: `${placeType}s in ${location}`,
+      num: Math.min(maxResults, pageSize),
+      page: index + 1,
+    }))
+  )
+  const seen = new Set<string>()
+  const results = responses
+    .flatMap((response) => response.results || [])
+    .filter((row) => {
+      const key = row.name?.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+      if (!key || seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+    .slice(0, maxResults)
+
+  return { results }
 }
 
 function buildSearchFallbackQueries(prompt: string): string[] {
@@ -1501,31 +1664,66 @@ async function tryDirectGenerateFallback(prompt: string, send: (obj: object) => 
   if (!placeType || !location) return null
 
   const requestedCount = extractRequestedCount(prompt)
-  send({ type: "thinking", content: `🛟 Fallback: directly searching ${placeType} in ${location}` })
+  const searchLimit = Math.min(Math.max(requestedCount * 2, requestedCount), 40)
+  send({ type: "thinking", content: `🛟 Fallback: directly searching real ${placeType} records in ${location}` })
 
-  const result = await runOpenStreetMapFallback(placeType, location, Math.min(Math.max(requestedCount * 2, requestedCount), 40))
-  const rows = (result.results || []).slice(0, requestedCount)
+  const [googleResult, osmResult] = await Promise.all([
+    runGooglePlacesFallback(placeType, location, requestedCount),
+    runOpenStreetMapFallback(placeType, location, searchLimit),
+  ])
+
+  const mergedByName = new Map<string, Record<string, string>>()
+  for (const row of [...(googleResult.results || []), ...(osmResult.results || [])]) {
+    const name = row.name?.trim()
+    if (!name || name === "N/A") continue
+
+    const key = name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()
+    const existing = mergedByName.get(key)
+    if (!existing) {
+      mergedByName.set(key, { ...row })
+      continue
+    }
+
+    for (const [field, value] of Object.entries(row)) {
+      if ((!existing[field] || existing[field] === "N/A") && value && value !== "N/A") {
+        existing[field] = value
+      }
+    }
+  }
+
+  const rows = Array.from(mergedByName.values()).slice(0, requestedCount)
 
   if (rows.length === 0) return null
 
   const intentRequested = requiresExplicitPurchaseEvidence(prompt)
-  const headers = ["Name", "Address", "Phone", "Website", "Opening Hours", "Source", ...(intentRequested ? ["Intent Evidence"] : [])]
+  const normalizedRows = rows.map((row) => ({
+    Name: row.name || "N/A",
+    Address: row.address || "N/A",
+    Phone: row.phone || "N/A",
+    Website: row.website || "N/A",
+    "Opening Hours": row.openingHours || "N/A",
+    Email: row.email || "N/A",
+    Rating: row.rating && row.rating !== "N/A"
+      ? `${row.rating}${row.reviewCount && row.reviewCount !== "N/A" ? ` (${row.reviewCount} reviews)` : ""}`
+      : "N/A",
+  }))
+  const headers = [
+    ...getRequestedGenerationHeaders(prompt, normalizedRows),
+    ...(intentRequested ? ["Intent Evidence"] : []),
+  ]
   return {
     table: {
       headers,
-      rows: rows.map((row) => [
-        row.name || "N/A",
-        row.address || "N/A",
-        row.phone || "N/A",
-        row.website || "N/A",
-        row.openingHours || "N/A",
-        "OpenStreetMap",
+      rows: normalizedRows.map((row) => [
+        ...headers
+          .filter((header) => header !== "Intent Evidence")
+          .map((header) => row[header as keyof typeof row] || "N/A"),
         ...(intentRequested ? ["Not verified — potential match only"] : []),
       ]),
     },
     summary: intentRequested
       ? `Found ${Math.min(rows.length, requestedCount)} real ${placeType}${rows.length === 1 ? "" : "s"} in ${location}. They are potential matches; buying intent is not verified.`
-      : `Found ${Math.min(rows.length, requestedCount)} ${placeType}${rows.length === 1 ? "" : "s"} in ${location} using OpenStreetMap fallback.`,
+      : `Found ${Math.min(rows.length, requestedCount)} real ${placeType}${rows.length === 1 ? "" : "s"} in ${location} from structured place sources.`,
   }
 }
 
@@ -1792,6 +1990,13 @@ function containsExplicitPurchaseEvidence(value: string): boolean {
   return /\b(?:tender|procurement|request for (?:proposal|quotation)|rfp|rfq|invitation to bid|seeking suppliers?|supplier required|looking to (?:buy|purchase|source|procure)|want(?:s|ed|ing)? to (?:buy|purchase)|purchase order|bid notice)\b/i.test(value)
 }
 
+const STRUCTURED_ENTITY_TOOLS = new Set([
+  "searchOpenStreetMap",
+  "searchGooglePlaces",
+  "searchCompaniesHouse",
+  "searchOpenCorporates",
+])
+
 function buildGenerateResultFromToolSteps(
   steps: unknown[],
   prompt: string
@@ -1817,6 +2022,8 @@ function buildGenerateResultFromToolSteps(
     for (const toolResult of toolResults) {
       if (!toolResult || typeof toolResult !== "object") continue
       const resultRecord = toolResult as { toolName?: string; output?: unknown; result?: unknown }
+      if (!resultRecord.toolName || !STRUCTURED_ENTITY_TOOLS.has(resultRecord.toolName)) continue
+
       const payload = resultRecord.output ?? resultRecord.result
       if (!payload || typeof payload !== "object") continue
       const records = (payload as { results?: unknown[] }).results
@@ -1844,6 +2051,8 @@ function buildGenerateResultFromToolSteps(
           Phone: textValue(record, ["phone", "telephone"]),
           Email: textValue(record, ["email"]),
           Website: website,
+          "Opening Hours": textValue(record, ["openingHours", "hours"]),
+          Rating: textValue(record, ["rating"]),
           Country: textValue(record, ["country", "jurisdiction"]),
           Status: textValue(record, ["status", "currentStatus"]),
           "Source Summary": textValue(record, ["snippet", "description", "type"]),
@@ -1866,10 +2075,10 @@ function buildGenerateResultFromToolSteps(
 
   if (normalizedRows.length === 0) return null
 
-  const candidateHeaders = ["Name", "Address", "Phone", "Email", "Website", "Country", "Status", "Source Summary", "Source", "Intent Evidence"]
-  const headers = candidateHeaders.filter((header) =>
-    header === "Name" || normalizedRows.some((row) => row[header] && row[header] !== "N/A")
-  )
+  const headers = [
+    ...getRequestedGenerationHeaders(prompt, normalizedRows),
+    ...(requiresExplicitPurchaseEvidence(prompt) ? ["Intent Evidence"] : []),
+  ]
 
   return {
     table: {
@@ -1964,10 +2173,16 @@ async function streamGenerateMode(
     send({ type: "thinking", content: "✅ Building rows only from verified scraper sources" })
   }
 
-  const verifiedData = toolEvidenceData
-    ?? await tryDirectGenerateFallback(prompt, send)
-    ?? await trySearchBackedGenerateFallback(prompt, send)
-    ?? await trySimpleWebSearchLastRetry(prompt, send)
+  const entityListRequested = isEntityListPrompt(prompt)
+  const structuredFallback = needsStructuredFallback(toolEvidenceData, prompt)
+    ? await tryDirectGenerateFallback(prompt, send)
+    : null
+  const bestStructuredData = generatedTableQuality(structuredFallback, prompt) > generatedTableQuality(toolEvidenceData, prompt)
+    ? structuredFallback
+    : toolEvidenceData
+  const verifiedData = bestStructuredData
+    ?? (entityListRequested ? null : await trySearchBackedGenerateFallback(prompt, send))
+    ?? (entityListRequested ? null : await trySimpleWebSearchLastRetry(prompt, send))
 
   if (!verifiedData?.table) {
     const intentNote = requiresExplicitPurchaseEvidence(prompt)
@@ -1978,7 +2193,9 @@ async function streamGenerateMode(
       data: {
         success: true,
         mode: "generate",
-        summary: `No verified results were found after the scraper and one simple web-search retry.${intentNote}`,
+        summary: entityListRequested
+          ? `No verified entity records were found. Search-result pages were intentionally excluded because they are not valid spreadsheet entities.${intentNote}`
+          : `No verified results were found after the scraper and one simple web-search retry.${intentNote}`,
         steps: result.steps.length,
       },
     })
